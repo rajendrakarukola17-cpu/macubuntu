@@ -59,9 +59,16 @@ check_cmd() {
         if [[ -n "$probe" ]]; then
             local -a probe_argv=()
             read -r -a probe_argv <<< "$probe"
-            if [[ ${#probe_argv[@]} -gt 0 ]] && ! "${probe_argv[@]}" >/dev/null 2>&1; then
-                report_status "FAILED" "$label" "(command exists but probe failed: $probe)" "$required"
-                return 0
+            if [[ ${#probe_argv[@]} -gt 0 ]]; then
+                if [[ "${DRY_RUN:-0}" == "1" ]]; then
+                    if ! DRY_RUN=1 CELINA_DRY_RUN=1 "${probe_argv[@]}" >/dev/null 2>&1; then
+                        report_status "FAILED" "$label" "(command exists but probe failed: $probe)" "$required"
+                        return 0
+                    fi
+                elif ! "${probe_argv[@]}" >/dev/null 2>&1; then
+                    report_status "FAILED" "$label" "(command exists but probe failed: $probe)" "$required"
+                    return 0
+                fi
             fi
         fi
         report_status "HEALTHY" "$label" "($(command -v "$cmd"))" "$required"

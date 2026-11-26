@@ -35,9 +35,8 @@ def _clear_bwrap_cache():
 def test_bwrap_unavailable_returns_false():
     """_probe_bwrap_runtime returns False when bwrap binary is not installed."""
     _clear_bwrap_cache()
-    with patch.object(shutil, "which", return_value=None):
-        result = landlock_policy._probe_bwrap_runtime("/usr/bin/bwrap", unshare_net=False)
-        assert result is False
+    result = landlock_policy._probe_bwrap_runtime("/nonexistent/bwrap", unshare_net=False)
+    assert result is False
 
 
 def test_bwrap_probe_exception_returns_false():

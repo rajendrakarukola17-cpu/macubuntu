@@ -90,7 +90,7 @@ def test_python_execution_error():
     """Python execution with non-zero exit should return error tag."""
     code = "raise ValueError('test error')"
     mock_cb = MagicMock(return_value=True)
-    with patch.object(code_sandbox.shutil, "which", return_value=None), patch.object(code_sandbox.command_runner, "run_command") as mock_run:
+    with patch.object(code_sandbox.shutil, "which", return_value="/usr/bin/bwrap"), patch.object(code_sandbox.command_runner, "run_command") as mock_run:
         mock_run.return_value = MagicMock(stdout="", stderr="Traceback (most recent call last):\n  ...\nValueError: test error", returncode=1, timed_out=False)
         result = code_sandbox.code_sandbox(code, language="python", timeout=5, approval_cb=mock_cb)
         assert "Error:" in result
@@ -102,7 +102,7 @@ def test_timeout_handling():
     """Timeout should return timeout error."""
     code = "import time; time.sleep(100)"
     mock_cb = MagicMock(return_value=True)
-    with patch.object(code_sandbox.shutil, "which", return_value=None), patch.object(code_sandbox.command_runner, "run_command") as mock_run:
+    with patch.object(code_sandbox.shutil, "which", return_value="/usr/bin/bwrap"), patch.object(code_sandbox.command_runner, "run_command") as mock_run:
         mock_run.return_value = MagicMock(stdout="", stderr="", returncode=124, timed_out=True)
         result = code_sandbox.code_sandbox(code, language="python", timeout=5, approval_cb=mock_cb)
         assert "timed out" in result.lower()
@@ -113,7 +113,7 @@ def test_output_cap():
     """Output should be capped at 3000 chars."""
     code = "print('x' * 5000)"
     mock_cb = MagicMock(return_value=True)
-    with patch.object(code_sandbox.shutil, "which", return_value=None), patch.object(code_sandbox.command_runner, "run_command") as mock_run:
+    with patch.object(code_sandbox.shutil, "which", return_value="/usr/bin/bwrap"), patch.object(code_sandbox.command_runner, "run_command") as mock_run:
         mock_run.return_value = MagicMock(stdout="x" * 5000, stderr="", returncode=0, timed_out=False)
         result = code_sandbox.code_sandbox(code, language="python", timeout=5, approval_cb=mock_cb)
         assert "[truncated" in result

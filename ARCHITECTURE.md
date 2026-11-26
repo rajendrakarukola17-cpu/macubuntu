@@ -829,20 +829,20 @@ End-to-end signed bundle verification using `scripts/pack-update.sh` (Ed25519 ke
 
 ---
 
-## 21. Remaining 8 Unwired Screens (Master Agent Prompt)
+## 21. Macubuntu Center Screens (`apps/macubuntu-center/main.py`)
 
-The following 8 screens exist in `NAV_SECTIONS` and await `_page_*()` implementations as specified in `AGENT_PROMPT_REMAINING_SCREENS.md`:
+All 16 screens in `NAV_SECTIONS` now have `_page_*()` implementations in `apps/macubuntu-center/main.py` (8 core pages + the 8 system/AI/trust pages specified in `AGENT_PROMPT_REMAINING_SCREENS.md`, pending live GTK4/Wayland UI verification on target hardware):
 
-| Screen ID | Title | Section | Backend Socket |
+| Screen ID | Title | Section | Backend Socket / Store |
 |---|---|---|---|
-| `performance` | Performance & App Nap | SYSTEM | `/run/user/$UID/celina/app_nap.sock` |
-| `appearance` | Appearance & Input | SYSTEM | (UI only) |
-| `continuity` | Continuity & Power | SYSTEM | cgroup v2 (`/sys/fs/cgroup/`) |
-| `recovery` | Snapshots & Recovery | SYSTEM | `/run/user/$UID/celina/snapshot.sock` |
-| `knowledge` | Knowledge & Memory | CELINA AI & MODELS | SQLite (`$HOME/.local/share/celina/db/memory.db`) |
-| `voice` | Voice & Live Playground | CELINA AI & MODELS | `/run/user/$UID/celina/voice.sock` |
-| `agents` | Agents & Shortcuts | ACCESS & TRUST | `/run/user/$UID/celina/agents.sock` |
-| `security` | 106 Tools & MCP03 | ACCESS & TRUST | `/run/user/$UID/celina/mcp.sock` |
+| `performance` | Performance & App Nap | SYSTEM | `/run/user/$UID/celina/app_nap.sock` (`_page_performance`) |
+| `appearance` | Appearance & Input | SYSTEM | UI controls (`_page_appearance`) |
+| `continuity` | Continuity & Power | SYSTEM | cgroup v2 `/sys/fs/cgroup/` (`_page_continuity`) |
+| `recovery` | Snapshots & Recovery | SYSTEM | `/run/user/$UID/celina/snapshot.sock` (`_page_recovery`) |
+| `knowledge` | Knowledge & Memory | CELINA AI & MODELS | SQLite `$HOME/.local/share/celina/db/memory.db` (`_page_knowledge`) |
+| `voice` | Voice & Live Playground | CELINA AI & MODELS | `/run/user/$UID/celina/voice.sock` (`_page_voice`) |
+| `agents` | Agents & Shortcuts | ACCESS & TRUST | `/run/user/$UID/celina/agents.sock` (`_page_agents`) |
+| `security` | 106 Tools & MCP03 | ACCESS & TRUST | `/run/user/$UID/celina/mcp.sock` (`_page_security`) |
 
 ---
 

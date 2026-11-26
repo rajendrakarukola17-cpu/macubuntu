@@ -20,7 +20,18 @@ echo "    Profile:      $PROFILE"
 echo "    Mode:         DRY_RUN=$DRY_RUN | Built-in Celina=$ENABLE_CELINA (${CELINA_NAME}/${CELINA_NICKNAME})"
 echo "    Desktop:      DOCK=$DOCK_CHOICE | LAUNCHER=$LAUNCHER_CHOICE | SEARCH=$SEARCH_BACKEND | POWER=$POWER_BACKEND"
 echo "    System:       Ubuntu $UBUNTU_VER | Session=$SESSION_TYPE | RAM ~${RAM_GB}GB | Free Disk ${DISK_FREE_GB}GB"
-if is_true "$ENABLE_CELINA" && command -v python3 >/dev/null 2>&1; then
+PREFLIGHT_PY=""
+for _cand in "python3" "$REPO_DIR/.venv/bin/python" "${TARGET_HOME:-$HOME}/.local/share/celina/venv/bin/python3"; do
+    if command -v "$_cand" >/dev/null 2>&1 || [[ -x "$_cand" ]]; then
+        if "$_cand" -c "import defusedxml, requests" >/dev/null 2>&1; then
+            PREFLIGHT_PY="$_cand"
+            break
+        fi
+    fi
+done
+PREFLIGHT_PY="${PREFLIGHT_PY:-python3}"
+
+if is_true "$ENABLE_CELINA" && (command -v "$PREFLIGHT_PY" >/dev/null 2>&1 || [[ -x "$PREFLIGHT_PY" ]]); then
     step "Verifying hard 7-way Celina tool-security & OS-capability parity gate..."
     GATE_TMP_HOME="$(mktemp -d)"
     gate_rc=0
@@ -30,7 +41,7 @@ if is_true "$ENABLE_CELINA" && command -v python3 >/dev/null 2>&1; then
     }
     trap cleanup_gate_tmp EXIT INT TERM
     HOME="$GATE_TMP_HOME" XDG_CONFIG_HOME="$GATE_TMP_HOME/.config" XDG_DATA_HOME="$GATE_TMP_HOME/.local/share" \
-    PYTHONDONTWRITEBYTECODE=1 REPO_DIR="$REPO_DIR" python3 - <<'PY' || gate_rc=$?
+    PYTHONDONTWRITEBYTECODE=1 REPO_DIR="$REPO_DIR" "$PREFLIGHT_PY" - <<'PY' || gate_rc=$?
 import hashlib
 import json
 import os

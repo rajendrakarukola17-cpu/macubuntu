@@ -224,8 +224,14 @@ def _deterministic_intent(goal: str) -> tuple[str, dict[str, str]] | None:
     return None
 
 
-# Initialize storage backend state at import time (P0-03)
-initialize_storage()
+# Initialize storage backend state at import time (P0-03), skipping dry-run and --help probes
+if (
+    os.environ.get("DRY_RUN") != "1"
+    and os.environ.get("CELINA_DRY_RUN") != "1"
+    and "--help" not in sys.argv
+    and "-h" not in sys.argv
+):
+    initialize_storage()
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
