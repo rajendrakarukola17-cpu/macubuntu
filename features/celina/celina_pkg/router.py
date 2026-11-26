@@ -3254,7 +3254,7 @@ def main() -> None:
     parser.add_argument("prompt", nargs="*", help=f"One-shot prompt to ask {config.get_assistant_name()}")
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--auto", action="store_true", help="Cloud + privacy firewall + offline local fallback")
-    mode_group.add_argument("--local", action="store_true", help="Force 100% offline local Ollama")
+    mode_group.add_argument("--local", action="store_true", help="Force 100%% offline local Ollama")
     mode_group.add_argument("--cloud", action="store_true", help="Force OpenRouter cloud (still privacy-gated)")
     parser.add_argument(
         "--lang",
