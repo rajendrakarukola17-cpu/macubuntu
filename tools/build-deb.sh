@@ -370,7 +370,7 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: macubuntu Maintainers <maintainers@macubuntu.org>
 Installed-Size: ${INSTALLED_KB}
-Depends: bash (>= 5.0), python3 (>= 3.10), systemd, dbus, libglib2.0-bin, bubblewrap, jq, curl
+Depends: bash (>= 5.0), python3 (>= 3.10), python3-defusedxml, systemd, dbus, libglib2.0-bin, bubblewrap, jq, curl
 Recommends: gnome-shell (>= 48), python3-gi, gir1.2-gtk-3.0, gir1.2-gtk-4.0, gir1.2-adw-1, python3-yaml, python3-jsonschema, python3-httpx, tesseract-ocr, wl-clipboard, pipewire
 Suggests: clang, bpftool, libbpf-dev, v4l2loopback-dkms
 Conflicts: macubuntu-old
