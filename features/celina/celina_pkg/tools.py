@@ -113,7 +113,7 @@ try:
     import celina_hardware as _celina_hardware_mod
     _celina_hardware = _celina_hardware_mod
 except Exception:
-    pass
+    _celina_hardware = None
 
 from typing import TypeAlias
 
@@ -2323,10 +2323,10 @@ def run_shell_command(
             target="bwrap(/work, no-home, no-dbus" + (", net-on" if allow_network else ", net-off") + ")",
         )
         if deny_err:
-            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(deny_err)
         ok, err = approval.verify_and_consume(token, "run_shell_command", args)
         if not ok:
-            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(err)
 
         with tempfile.TemporaryDirectory(prefix="celina_sandbox_") as tmp_work:
             os.chmod(tmp_work, 0o700)
@@ -2357,7 +2357,7 @@ def run_shell_command(
             return f"Refused unsandboxed fallback: {err1}"
         ok1, verr1 = approval.verify_and_consume(t1, "run_shell_command", first_args)
         if not ok1:
-            return verr1  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(verr1)
 
     host_args = {"command": cmd, "mode": "unsandboxed_host_shell"}
     t2, err2 = approval.request_bound_approval(
@@ -2369,10 +2369,10 @@ def run_shell_command(
         extra_warning="FINAL CONFIRMATION: This command runs UNSANDBOXED directly on your host OS.",
     )
     if err2:
-        return err2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err2)
     ok2, verr2 = approval.verify_and_consume(t2, "run_shell_command", host_args)
     if not ok2:
-        return verr2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(verr2)
 
     res = command_runner.run_command(["bash", "-lc", cmd], timeout=20.0)
     if res.timed_out:
@@ -2417,10 +2417,10 @@ def run_python_sandbox(
             target="bwrap(python3 -I, no-net, no-home)",
         )
         if deny_err:
-            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(deny_err)
         ok, err = approval.verify_and_consume(token, "run_python_sandbox", args)
         if not ok:
-            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(err)
 
         with tempfile.TemporaryDirectory(prefix="celina_pysandbox_") as tmp_work:
             work_path = Path(tmp_work).resolve()
@@ -2470,7 +2470,7 @@ def run_python_sandbox(
             return f"Refused unsandboxed fallback: {err1}"
         ok1, verr1 = approval.verify_and_consume(t1, "run_python_sandbox", first_args)
         if not ok1:
-            return verr1  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(verr1)
 
         second_args = {"command": src, "mode": "unsandboxed_host_python"}
         t2, err2 = approval.request_bound_approval(
@@ -2482,10 +2482,10 @@ def run_python_sandbox(
             extra_warning="FINAL CONFIRMATION: This script runs UNSANDBOXED directly on your host OS.",
         )
         if err2:
-            return err2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(err2)
         ok2, verr2 = approval.verify_and_consume(t2, "run_python_sandbox", second_args)
         if not ok2:
-            return verr2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(verr2)
 
         with tempfile.TemporaryDirectory(prefix="celina_pysandbox_") as tmp_work:
             script_file = Path(tmp_work) / "snippet.py"
@@ -2532,10 +2532,10 @@ def transcribe_system_audio_tool(
         target=f"pipewire-monitor ({dur}s, 100% offline faster-whisper)",
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "transcribe_system_audio", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     from . import voice
 
@@ -2651,10 +2651,10 @@ def trigger_iot_webhook(
         target=raw_url,
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "trigger_iot_webhook", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     try:
         resp = net_policy.safe_request(
@@ -2796,10 +2796,10 @@ def write_file(path: str, content: str, approval_cb: ApprovalCallback | None = N
         "write_file", args, approval_cb, title="Approve File Write?", target=str(target),
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "write_file", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     try:
         if _workspace_write_target(path) != (target, workspace_root):
@@ -2878,10 +2878,10 @@ def edit_file(
         "edit_file", args, approval_cb, title="Approve File Edit?", target=str(target),
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "edit_file", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     aid = state_ops.get_undo_journal().record_before_mutation("edit_file", target)
     try:
@@ -2942,10 +2942,10 @@ def libreoffice_edit(
         target=str(target),
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "libreoffice_edit", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     aid = state_ops.get_undo_journal().record_before_mutation("libreoffice_edit", target)
     try:
@@ -2999,10 +2999,10 @@ def move_file(src: str, dst: str, approval_cb: ApprovalCallback | None = None) -
         "move_file", args, approval_cb, title="Approve Move / Rename?", target=f"{src_p} -> {dst_p}",
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "move_file", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     aid = state_ops.get_undo_journal().record_before_mutation("move_file", src_p, dst_path=dst_p)
     try:
@@ -3038,10 +3038,10 @@ def trash_file(path: str, approval_cb: ApprovalCallback | None = None) -> str:
         "trash_file", args, approval_cb, title="Move File to Ubuntu Trash?", target=str(target),
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "trash_file", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     if shutil.which("gio"):
         # TOCTOU defense: re-validate target right before trash operation
@@ -3069,10 +3069,10 @@ def close_application(app_name: str, approval_cb: ApprovalCallback | None = None
         "close_application", args, approval_cb, title="Approve Closing Application?", target=proc,
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "close_application", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     if not shutil.which("pkill"):
         return "Error: pkill not available."
@@ -3095,10 +3095,10 @@ def compose_message(
         "compose_message", args, approval_cb, title="Approve Composing External Message?", target=f"{ch}:{recipient or 'clipboard'}",
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, "compose_message", args)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     if text and shutil.which("wl-copy"):
         set_clipboard(text)
@@ -4757,10 +4757,10 @@ def _execute_mcp_perception_actuation(
         extra_warning="External MCP server call — Tier-2 approval required by policy.",
     )
     if deny_err:
-        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(deny_err)
     ok, err = approval.verify_and_consume(token, celina_tool_name, arguments)
     if not ok:
-        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        return str(err)
 
     receipt = mcp_loader.get_mcp_loader().execute_domain_tool(celina_tool_name, arguments)
     if not receipt.ok:
@@ -5951,10 +5951,10 @@ def handle_fast_install_intent(
             target=f"flathub:{app_id}",
         )
         if deny_err:
-            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(deny_err)
         ok, err = approval.verify_and_consume(token, "run_shell_command", args)
         if not ok:
-            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(err)
 
         if status_cb:
             status_cb(f"Installing {display_name} ({app_id}) from Flathub...")
@@ -5981,10 +5981,10 @@ def handle_fast_install_intent(
             target=f"apt:{apt_pkg}",
         )
         if deny_err:
-            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(deny_err)
         ok, err = approval.verify_and_consume(token, "run_shell_command", args)
         if not ok:
-            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+            return str(err)
 
         if status_cb:
             status_cb(f"Installing '{apt_pkg}' via APT...")

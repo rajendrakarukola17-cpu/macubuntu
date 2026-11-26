@@ -46,8 +46,12 @@ def test_disabled_evaluator_does_not_create_state(tmp_path: Path) -> None:
     assert not state.exists()
 
 
-def test_real_suite_repeatability_and_routing_diagnostics(tmp_path: Path) -> None:
+def test_real_suite_repeatability_and_routing_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """All 24 tasks use real probes and the real L3 runner without falsifying results."""
+    monkeypatch.setenv("SELFIMPROVE_ENABLED", "1")
+    monkeypatch.setenv("SELFIMPROVE_EVAL_HARNESS", "1")
     state = tmp_path / "state"
     flags = SelfImproveFlags(enabled=True, eval_harness=True, verifiers=True)
     budget = _budget()
@@ -156,8 +160,12 @@ def test_fresh_process_keeps_home_empty_and_checks_real_schema(tmp_path: Path) -
     assert not list(home.iterdir())
 
 
-def test_repeated_fresh_workers_can_use_same_state_directory(tmp_path: Path) -> None:
+def test_repeated_fresh_workers_can_use_same_state_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Persistent state roots can host distinct bounded fixture runs without collisions."""
+    monkeypatch.setenv("SELFIMPROVE_ENABLED", "1")
+    monkeypatch.setenv("SELFIMPROVE_EVAL_HARNESS", "1")
     flags = SelfImproveFlags(enabled=True, eval_harness=True)
     state = tmp_path / "state"
     task = next(item for item in load_benchmark_suite() if item.spec.task_id == "routing-01")

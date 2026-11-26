@@ -50,6 +50,8 @@ def test_facade_evaluation_failure_boundaries(
     isolated: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Inactive, missing, unsafe, failed, oversized and malformed paths fail closed."""
+    monkeypatch.setenv("SELFIMPROVE_ENABLED", "1")
+    monkeypatch.setenv("SELFIMPROVE_EVAL_HARNESS", "1")
     with pytest.raises(PermissionError):
         facade.SelfImproveRuntime(SelfImproveFlags(), isolated).evaluate()
     with pytest.raises(ValueError, match="state-dir"):
@@ -181,6 +183,8 @@ def test_worker_rejects_loaded_target_mismatch(
 ) -> None:
     """A previously imported config with a different target is rejected."""
     target = isolated / "target"
+    monkeypatch.setenv("SELFIMPROVE_ENABLED", "1")
+    monkeypatch.setenv("SELFIMPROVE_EVAL_HARNESS", "1")
     monkeypatch.setenv("TARGET_HOME", str(target))
     monkeypatch.setenv("CELINA_STORAGE_DIR", str(isolated / "storage"))
     monkeypatch.setattr(celina_pkg, "config", SimpleNamespace(HOME=isolated), raising=False)
@@ -213,6 +217,8 @@ def test_runtime_worker_real_evaluation(
     from celina_pkg import config  # noqa: PLC0415  # Explicit active isolation test.
 
     target = isolated / "target"
+    monkeypatch.setenv("SELFIMPROVE_ENABLED", "1")
+    monkeypatch.setenv("SELFIMPROVE_EVAL_HARNESS", "1")
     monkeypatch.setenv("TARGET_HOME", str(target))
     monkeypatch.setenv("CELINA_STORAGE_DIR", str(isolated / "storage"))
     monkeypatch.setattr(config, "HOME", target)
