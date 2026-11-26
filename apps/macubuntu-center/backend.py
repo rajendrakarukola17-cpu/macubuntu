@@ -23,7 +23,11 @@ from pathlib import Path
 from typing import Any
 
 import gi
-import httpx
+
+try:
+    import httpx
+except ImportError:  # Optional UDS llama-server telemetry client
+    httpx = None  # type: ignore[assignment]
 
 gi.require_version("Secret", "1")
 gi.require_version("GLib", "2.0")
@@ -31,7 +35,10 @@ from gi.repository import GLib, Secret  # noqa: E402  (gi must be required first
 
 # Stages directory — overridable via MACUBUNTU_STAGES_DIR env var.
 STAGES_DIR = Path(
-    os.environ.get("MACUBUNTU_STAGES_DIR", "/home/user/macubuntu/stages")
+    os.environ.get(
+        "MACUBUNTU_STAGES_DIR",
+        str(Path(__file__).resolve().parents[2] / "stages"),
+    )
 )
 
 API_KEY_SCHEMA = Secret.Schema.new(
@@ -217,8 +224,10 @@ def list_local_models(snap: SystemSnapshot) -> list[dict[str, Any]]:
     return results
 
 
-def _llama_uds_client() -> httpx.Client | None:
+def _llama_uds_client() -> Any:
     """Return an httpx client connected to llama-server over UDS, or None."""
+    if httpx is None:
+        return None
     sock = Path(f"/run/user/{os.getuid()}/celina/llama.sock")
     if not sock.exists():
         return None

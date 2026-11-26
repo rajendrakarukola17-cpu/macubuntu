@@ -211,7 +211,7 @@ if [[ -f "$CHOREOGRAPHY_JS" ]]; then
     fi
 
     # Guard: disable() restores slow_down_factor
-    if grep -q 'slow-down-factor' "$CHOREOGRAPHY_JS" && grep -q 'disable' "$CHOREOGRAPHY_JS"; then
+    if grep -qE 'slow_down_factor|slow-down-factor' "$CHOREOGRAPHY_JS" && grep -q 'disable' "$CHOREOGRAPHY_JS"; then
         ok "choreography.js disable() references slow_down_factor restore"
     else
         fail "choreography.js disable() must restore slow_down_factor"
