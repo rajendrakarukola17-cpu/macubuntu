@@ -1,13 +1,13 @@
 [Unit]
 Description=macubuntu Boot-Time RAM Change Detector
-Documentation=file:///home/user/macubuntu/tools/macubuntu-ram-change-detector
+Documentation=file:///usr/share/macubuntu/tools/macubuntu-ram-change-detector
 After=macubuntu-hw-probe.service systemd-hwdb-update.service
 Before=display-manager.service graphical-session.target
 Wants=macubuntu-hw-probe.service
 
 [Service]
 Type=oneshot
-ExecStart=/home/user/macubuntu/tools/macubuntu-ram-change-detector
+ExecStart=/usr/share/macubuntu/tools/macubuntu-ram-change-detector
 RemainAfterExit=yes
 # Run as root so it can read /etc/macubuntu/hardware.json and invoke sudo-free reconfigure
 User=root

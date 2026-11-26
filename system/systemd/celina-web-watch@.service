@@ -1,12 +1,12 @@
 [Unit]
 Description=Celina Active Web Watching (Tier 1 self-healing watchers)
-Documentation=file:///home/user/macubuntu/celina/tools/web_watch.py
+Documentation=file:///home/%i/macubuntu/celina/tools/web_watch.py
 After=network-online.target macubuntu-hw-probe.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /home/user/macubuntu/celina/tools/web_watch.py --run-once
+ExecStart=/usr/bin/python3 /home/%i/macubuntu/celina/tools/web_watch.py --run-once
 # Run as the desktop user so it can read ~/.local/share/celina/web_watch and
 # send desktop notifications via notify-send / busctl.
 User=%i

@@ -12,7 +12,7 @@
 
 [Unit]
 Description=Celina Single-Owner NPU Worker (instance %i)
-Documentation=file:///home/user/macubuntu/features/celina/celina_pkg/neural/npu_worker.py
+Documentation=file:///home/%i/macubuntu/features/celina/celina_pkg/neural/npu_worker.py
 After=graphical-session.target
 Wants=graphical-session.target
 
@@ -22,8 +22,8 @@ User=%i
 Group=render
 RuntimeDirectory=celina
 RuntimeDirectoryMode=0700
-WorkingDirectory=/home/user/macubuntu
-Environment=PYTHONPATH=/home/user/macubuntu/features/celina
+WorkingDirectory=/home/%i/macubuntu
+Environment=PYTHONPATH=/home/%i/macubuntu/features/celina
 ExecStart=/usr/bin/python3 -m celina_pkg.neural.npu_worker --whisper-model-dir /home/%i/.cache/celina/models/whisper --hw-profile /etc/macubuntu/hardware.json --cache-dir /home/%i/.cache/celina/npu_blobs
 Restart=on-failure
 RestartSec=5

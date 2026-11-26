@@ -1,6 +1,6 @@
 [Unit]
 Description=Run Celina Active Web Watching periodically
-Documentation=file:///home/user/macubuntu/celina/tools/web_watch.py
+Documentation=file:///usr/share/macubuntu/celina/tools/web_watch.py
 Requires=network-online.target
 After=network-online.target
 
