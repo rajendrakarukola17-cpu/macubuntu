@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Voice Pipeline (Update 19)
+"""Celina AI (Celly) - Gear 0 Voice Pipeline (Update 19)
 
 Local-only voice I/O — zero cloud audio transmission, sub-100ms latency.
 Components:
@@ -16,7 +15,6 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
 
 # Voice component availability
 try:
@@ -26,7 +24,6 @@ except Exception:
     _HAS_PORCUPINE = False
 
 try:
-    import onnxruntime  # type: ignore
     _HAS_ONNX = True
 except Exception:
     _HAS_ONNX = False
@@ -53,7 +50,7 @@ except Exception:
 @dataclass
 class VoiceResult:
     text: str
-    intent: Optional[str] = None
+    intent: str | None = None
     confidence: float = 0.0
     source: str = "voice"
     latency_ms: int = 0
@@ -62,7 +59,7 @@ class VoiceResult:
 class WakeWordDetector:
     """Porcupine-based local wake word detection."""
 
-    def __init__(self, access_key: Optional[str] = None, keyword_paths: Optional[list[str]] = None):
+    def __init__(self, access_key: str | None = None, keyword_paths: list[str] | None = None):
         self.access_key = access_key
         self.keyword_paths = keyword_paths or []
         self._porcupine = None
@@ -98,7 +95,7 @@ class WakeWordDetector:
 class VADDetector:
     """Silero VAD-based voice activity detection."""
 
-    def __init__(self, model_path: Optional[Path] = None):
+    def __init__(self, model_path: Path | None = None):
         self.model_path = model_path or Path.home() / ".celina" / "models" / "silero_vad.onnx"
         self._session = None
         self._initialized = False
@@ -131,7 +128,7 @@ class VADDetector:
 class STTEngine:
     """Local speech-to-text via Whisper.cpp or Vosk."""
 
-    def __init__(self, model_path: Optional[Path] = None):
+    def __init__(self, model_path: Path | None = None):
         self.model_path = model_path or Path.home() / ".celina" / "models"
         self._whisper = None
         self._vosk = None
@@ -186,7 +183,7 @@ class STTEngine:
 class TTSEngine:
     """Local text-to-speech via Piper or Kokoro."""
 
-    def __init__(self, model_path: Optional[Path] = None):
+    def __init__(self, model_path: Path | None = None):
         self.model_path = model_path or Path.home() / ".celina" / "models"
         self._piper = None
         self._initialized = False
@@ -204,13 +201,11 @@ class TTSEngine:
             self._piper = None
         return False
 
-    def speak(self, text: str, output_device: Optional[str] = None) -> bool:
+    def speak(self, text: str, output_device: str | None = None) -> bool:
         """Speak text via local TTS. Returns True if spoken."""
         if not self._initialized or self._piper is None:
             return False
         try:
-            import io
-            import soundfile as sf  # type: ignore
             import sounddevice as sd  # type: ignore
 
             audio = self._piper.synthesize(text)
@@ -225,10 +220,10 @@ class TTSEngine:
 
 
 # Global voice components (lazy-initialized)
-_wake_word: Optional[WakeWordDetector] = None
-_vad: Optional[VADDetector] = None
-_stt: Optional[STTEngine] = None
-_tts: Optional[TTSEngine] = None
+_wake_word: WakeWordDetector | None = None
+_vad: VADDetector | None = None
+_stt: STTEngine | None = None
+_tts: TTSEngine | None = None
 _voice_lock = threading.Lock()
 
 
@@ -275,14 +270,14 @@ def voice_pipeline_available() -> dict[str, bool]:
 
 
 __all__ = [
-    "WakeWordDetector",
-    "VADDetector",
     "STTEngine",
     "TTSEngine",
+    "VADDetector",
     "VoiceResult",
-    "get_wake_word",
-    "get_vad",
+    "WakeWordDetector",
     "get_stt",
     "get_tts",
+    "get_vad",
+    "get_wake_word",
     "voice_pipeline_available",
 ]

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Ponytail Skill Integration (v4.5, Update 18)
+"""Celina AI (Celly) - Ponytail Skill Integration (v4.5, Update 18)
 
 Ponytail — "The best code is the code you never wrote."
 An AI agent skill that guides code generation toward minimalism using a
@@ -13,14 +12,12 @@ License: MIT
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 log = logging.getLogger("celina.ponytail")
 
@@ -36,27 +33,24 @@ PONYTAIL_LADDER = [
 
 
 class PonytailSkill:
-    """
-    Ponytail skill integration for Celina.
+    """Ponytail skill integration for Celina.
 
     Provides code-generation guidance that favors minimalism over
     over-engineering. When Celina needs to write code, Ponytail's
     decision ladder is consulted first to avoid unnecessary code.
     """
 
-    def __init__(self, ponytail_path: Optional[str] = None):
+    def __init__(self, ponytail_path: str | None = None):
         self.ponytail_path = ponytail_path or self._find_ponytail()
         self._installed = self.ponytail_path is not None
 
     @staticmethod
-    def _find_ponytail() -> Optional[str]:
+    def _find_ponytail() -> str | None:
         """Find Ponytail installation on the system."""
         candidates = [
-            "/home/jtcviza/.config/claude/skills/ponytail",
             os.path.expanduser("~/.config/claude/skills/ponytail"),
             os.path.expanduser("~/.local/share/ponytail"),
             "/opt/ponytail",
-            "/home/jtcviza/Downloads/ponytail",
         ]
         for path in candidates:
             if Path(path).exists():
@@ -69,8 +63,7 @@ class PonytailSkill:
         return self._installed
 
     def evaluate_code_need(self, task_description: str) -> dict[str, Any]:
-        """
-        Run the Ponytail decision ladder on a code-generation task.
+        """Run the Ponytail decision ladder on a code-generation task.
 
         Returns a dict with the ladder answers and a recommendation:
         - "write_minimal": Write the minimum code
@@ -141,4 +134,4 @@ Expected results: 54% less code, 22% fewer tokens, 27% faster development.
             return False, f"Failed to install Ponytail: {exc}"
 
 
-__all__ = ["PonytailSkill", "PONYTAIL_LADDER"]
+__all__ = ["PONYTAIL_LADDER", "PonytailSkill"]

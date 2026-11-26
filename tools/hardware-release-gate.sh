@@ -25,7 +25,7 @@
 #   ./tools/hardware-release-gate.sh --test concurrent-db
 #   ./tools/hardware-release-gate.sh --test all --minutes 60
 # ==============================================================================
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -39,6 +39,24 @@ MAX_SLOPE_MB_PER_HR="${CELINA_GATE_MAX_SLOPE_MB_HR:-2.0}"
 MAX_WAL_BYTES="${CELINA_GATE_MAX_WAL_BYTES:-10485760}"
 MODEL_LARGE="${CELINA_GATE_LARGE_MODEL:-qwen3:4b}"
 MODEL_SMALL="${CELINA_GATE_SMALL_MODEL:-qwen3:1.7b}"
+
+# P0: No predictable /tmp paths — all temp files via mktemp, cleaned by EXIT trap
+declare -a GATE_TEMP_FILES=()
+_cleanup() {
+    local f
+    for f in "${GATE_TEMP_FILES[@]:-}"; do
+        [[ -n "$f" && -f "$f" ]] && rm -f "$f" 2>/dev/null || true
+    done
+    [[ -n "${SOAK_SAMPLES_FILE:-}" && -f "$SOAK_SAMPLES_FILE" ]] && rm -f "$SOAK_SAMPLES_FILE" 2>/dev/null || true
+}
+trap _cleanup EXIT
+
+_mktemp() {
+    local f
+    f="$(mktemp)"
+    GATE_TEMP_FILES+=("$f")
+    echo "$f"
+}
 
 usage() {
     cat <<'EOF'
@@ -91,6 +109,12 @@ run_model_load_gate() {
         return 0
     fi
 
+    # P0: celina-cli must exist — Gate 1 must never silently skip the tasks.db check
+    if ! command -v celina-cli >/dev/null 2>&1; then
+        log_fail "celina-cli not found — Gate 1 cannot complete tasks.db 'running' check. Install celina-cli before tagging."
+        return 1
+    fi
+
     local shell_pid eventd_pid
     shell_pid="$(pgrep -x gnome-shell | head -n 1 || true)"
     eventd_pid="$(systemctl --user show -p MainPID --value celina-eventd.service 2>/dev/null || echo 0)"
@@ -99,18 +123,21 @@ run_model_load_gate() {
     [[ -r /proc/pressure/memory ]] && log_info "PSI memory: $(tr '\n' ' ' </proc/pressure/memory)"
 
     # Force model resident for 15 minutes so it DOES NOT unload before autonomy pressure builds
-    echo "" | ollama run "$MODEL_LARGE" --keepalive 15m >/tmp/celina-gate-keepalive.log 2>&1 &
+    local keepalive_log plan_log ollama_log
+    keepalive_log="$(_mktemp)"
+    plan_log="$(_mktemp)"
+    ollama_log="$(_mktemp)"
+
+    echo "" | ollama run "$MODEL_LARGE" --keepalive 15m >"$keepalive_log" 2>&1 &
     local keep_pid=$!
     sleep 5
     log_info "Resident models (ollama ps): $(ollama ps 2>/dev/null | tail -n +2 | tr '\n' ';' || true)"
 
     local plan_pid=""
-    if command -v celina-cli >/dev/null 2>&1; then
-        celina-cli "run a 5-step local system audit and summarize results" >/tmp/celina-gate-plan.log 2>&1 &
-        plan_pid=$!
-    fi
+    celina-cli "run a 5-step local system audit and summarize results" >"$plan_log" 2>&1 &
+    plan_pid=$!
 
-    ollama run "$MODEL_LARGE" --keepalive 15m "Explain Linux cgroup v2 PSI and OOM prioritization in 250 words." >/tmp/celina-gate-ollama.log 2>&1 || true
+    ollama run "$MODEL_LARGE" --keepalive 15m "Explain Linux cgroup v2 PSI and OOM prioritization in 250 words." >"$ollama_log" 2>&1 || true
     [[ -n "$plan_pid" ]] && wait "$plan_pid" || true
     wait "$keep_pid" || true
 
@@ -164,6 +191,8 @@ PY
         else
             log_fail "tasks.db has ${stuck_cnt} agent task(s) stuck in 'running' state!"
         fi
+    else
+        log_info "tasks.db not present at ${tasks_db} (skipping P1-3 stuck-task check)"
     fi
 }
 
@@ -187,8 +216,7 @@ run_soak_gate() {
     fi
     log_info "Soak start: MainPID=${initial_pid}, NRestarts=${initial_restarts}"
 
-    local samples_file
-    samples_file="$(mktemp)"
+    SOAK_SAMPLES_FILE="$(_mktemp)"
     local base_rss base_fds max_rss max_fds drops=0 i rss fds cur_pid
     base_rss="$(awk '/VmRSS/{print $2}' "/proc/$initial_pid/status")"
     base_fds="$(ls "/proc/$initial_pid/fd" 2>/dev/null | wc -l)"
@@ -198,13 +226,12 @@ run_soak_gate() {
     for ((i = 1; i <= SOAK_MINUTES; i++)); do
         cur_pid="$(systemctl --user show -p MainPID --value celina-eventd.service 2>/dev/null || echo 0)"
         if [[ "$cur_pid" != "$initial_pid" ]]; then
-            rm -f "$samples_file"
             log_fail "celina-eventd.service crashed/restarted at sample ${i} (PID ${initial_pid} -> ${cur_pid})"
             return 0
         fi
         rss="$(awk '/VmRSS/{print $2}' "/proc/$initial_pid/status")"
         fds="$(ls "/proc/$initial_pid/fd" 2>/dev/null | wc -l)"
-        printf "%s %s\n" "$i" "$rss" >> "$samples_file"
+        printf "%s %s\n" "$i" "$rss" >> "$SOAK_SAMPLES_FILE"
         (( rss > max_rss )) && max_rss="$rss"
         (( fds > max_fds )) && max_fds="$fds"
         if ! busctl --user status org.macubuntu.Celina >/dev/null 2>&1; then
@@ -225,7 +252,7 @@ run_soak_gate() {
 
     # Linear regression RSS leak slope check (catches slow 5 MB/hr leaks hiding inside ±10% at 1h)
     local slope_status
-    slope_status="$(python3 - "$samples_file" "$SOAK_INTERVAL_SEC" "$MAX_SLOPE_MB_PER_HR" <<'PY'
+    slope_status="$(python3 - "$SOAK_SAMPLES_FILE" "$SOAK_INTERVAL_SEC" "$MAX_SLOPE_MB_PER_HR" <<'PY'
 import sys
 path, interval_sec, max_mb_hr = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
 pts = []
@@ -245,7 +272,6 @@ slope = sum((x - mx) * (y - my) for x, y in pts) / denom if denom > 0 else 0.0
 print(f"{'FAIL' if slope > max_mb_hr else 'OK'} {slope:.2f}")
 PY
 )"
-    rm -f "$samples_file"
     local slope_verdict slope_val
     read -r slope_verdict slope_val <<< "$slope_status"
     if [[ "$slope_verdict" == "FAIL" ]]; then

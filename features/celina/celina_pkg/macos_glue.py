@@ -1,5 +1,4 @@
-"""
-Celina AI — macOS Muscle-Memory & System-Polish Coordination Glue (`macos_glue.py`)
+"""Celina AI — macOS Muscle-Memory & System-Polish Coordination Glue (`macos_glue.py`)
 
 Unifies the four cross-subsystem orchestration contracts that make Linux feel as
 coherent as macOS without replacing native tools:
@@ -26,7 +25,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config
 
@@ -104,8 +103,8 @@ class FocusModeController:
     def __init__(
         self,
         *,
-        profiles: Optional[dict[str, FocusProfile]] = None,
-        gsettings_runner: Optional[Any] = None,
+        profiles: dict[str, FocusProfile] | None = None,
+        gsettings_runner: Any | None = None,
     ):
         self.profiles = dict(DEFAULT_FOCUS_PROFILES)
         if profiles:
@@ -149,9 +148,8 @@ class FocusModeController:
         }
 
     def allow_notification(self, app_name: str, *, urgency: int = 1) -> bool:
-        """
-        Per-app filter for `org.freedesktop.Notifications` interception:
-          - urgency: 0=low, 1=normal, 2=critical
+        """Per-app filter for `org.freedesktop.Notifications` interception:
+        - urgency: 0=low, 1=normal, 2=critical
         """
         prof = self.profiles.get(self.active_mode, DEFAULT_FOCUS_PROFILES["off"])
         if prof.show_banners:
@@ -183,7 +181,7 @@ class FocusModeController:
 class WorkspaceMemoryManager:
     """Records which application belongs to which fixed GNOME workspace and restores on login."""
 
-    def __init__(self, state_path: Optional[Path] = None, *, num_workspaces: int = 4):
+    def __init__(self, state_path: Path | None = None, *, num_workspaces: int = 4):
         self.state_path = (
             Path(state_path)
             if state_path is not None
@@ -218,13 +216,12 @@ class WorkspaceMemoryManager:
             self._save()
         return {"app_class": app, "workspace": ws}
 
-    def workspace_for_app(self, app_class: str) -> Optional[int]:
+    def workspace_for_app(self, app_class: str) -> int | None:
         with self._lock:
             return self._map.get((app_class or "").strip().lower())
 
     def build_restore_plan(self, running_windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """
-        Given currently open windows (`[{"id": "...", "app_class": "firefox", "workspace": 0}]`),
+        """Given currently open windows (`[{"id": "...", "app_class": "firefox", "workspace": 0}]`),
         returns deterministic workspace-move actions to restore macOS Spaces spatial memory.
         """
         actions: list[dict[str, Any]] = []
@@ -240,7 +237,7 @@ class WorkspaceMemoryManager:
                             "app_class": app,
                             "from_workspace": cur_ws,
                             "to_workspace": target_ws,
-                        }
+                        },
                     )
         return actions
 
@@ -250,16 +247,15 @@ class WorkspaceMemoryManager:
 #    File Action Suggestions (`FileHabitAdvisor`)
 # ---------------------------------------------------------------------------
 class FinderTagStore:
-    """
-    FrostFinder / macOS Finder-compatible colored file tags:
-      - Stores tags in Linux extended attribute `user.xdg.tags` whenever supported.
-      - Automatically falls back to local SQLite (`finder_tags.db`) for FAT32/exFAT,
-        network mounts (SMB/WebDAV), or containers without user xattr support.
+    """FrostFinder / macOS Finder-compatible colored file tags:
+    - Stores tags in Linux extended attribute `user.xdg.tags` whenever supported.
+    - Automatically falls back to local SQLite (`finder_tags.db`) for FAT32/exFAT,
+      network mounts (SMB/WebDAV), or containers without user xattr support.
     """
 
     XATTR_KEY = "user.xdg.tags"
 
-    def __init__(self, db_path: Optional[Path] = None, *, prefer_xattr: bool = True):
+    def __init__(self, db_path: Path | None = None, *, prefer_xattr: bool = True):
         self.db_path = Path(db_path) if db_path is not None else (config.BASE_DIR / "finder_tags.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.prefer_xattr = bool(prefer_xattr)
@@ -282,7 +278,7 @@ class FinderTagStore:
                     opened_at REAL NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_foe_path ON file_open_events (file_path, opened_at);
-                """
+                """,
             )
             self._conn.commit()
 
@@ -349,8 +345,7 @@ class FinderTagStore:
         suggest_threshold: int = 3,
         window_sec: float = 86400.0 * 7,
     ) -> dict[str, Any]:
-        """
-        File habit tracker: when a file is opened >= `suggest_threshold` times within
+        """File habit tracker: when a file is opened >= `suggest_threshold` times within
         the rolling window and has no Finder tag yet, proposes a colored tag / Quick Action.
         """
         p = self._canonical_path(path)
@@ -362,7 +357,7 @@ class FinderTagStore:
                 self._conn.execute(
                     "SELECT COUNT(*) FROM file_open_events WHERE file_path = ? AND opened_at >= ?",
                     (p, now - float(window_sec)),
-                ).fetchone()[0]
+                ).fetchone()[0],
             )
         cur_tags = self.get_tags(p)
         suggestion = None
@@ -390,12 +385,11 @@ def is_terminal_window(active_window: str) -> bool:
 
 
 def resolve_cmd_c_behavior(active_window: str, *, terminal_mode: str = "insert") -> dict[str, Any]:
-    """
-    Returns the exact key-remapping contract for the focused window:
-      - Inside terminals: physical Ctrl+C ALWAYS remains SIGINT; Cmd+C/V/X map to
-        either universal `C-insert` / `S-insert` / `S-delete` (`terminal_mode='insert'`)
-        or `C-S-c` / `C-S-v` (`terminal_mode='ctrl_shift'`).
-      - Outside terminals: Cmd+C -> Ctrl+C, Cmd+V -> Ctrl+V, Cmd+X -> Ctrl+X.
+    """Returns the exact key-remapping contract for the focused window:
+    - Inside terminals: physical Ctrl+C ALWAYS remains SIGINT; Cmd+C/V/X map to
+      either universal `C-insert` / `S-insert` / `S-delete` (`terminal_mode='insert'`)
+      or `C-S-c` / `C-S-v` (`terminal_mode='ctrl_shift'`).
+    - Outside terminals: Cmd+C -> Ctrl+C, Cmd+V -> Ctrl+V, Cmd+X -> Ctrl+X.
     """
     in_term = is_terminal_window(active_window)
     use_insert = (terminal_mode or "insert").strip().lower() == "insert"
@@ -419,8 +413,7 @@ def resolve_cmd_c_behavior(active_window: str, *, terminal_mode: str = "insert")
 #    - Dual-Timer Backup Health Monitor (Timeshift + Borgmatic/Borg > 48h Island Badge)
 # ---------------------------------------------------------------------------
 def check_gnome_sushi_version(version_str: str) -> dict[str, Any]:
-    """
-    Ubuntu 26.04 (Resolute) Launchpad SRU contract:
+    """Ubuntu 26.04 (Resolute) Launchpad SRU contract:
     `gnome-sushi` < 50.0 is incompatible with Nautilus 50 ("not usable at all").
     Requires version >= 50.0 (or FrostFinder's built-in Quick Look).
     """
@@ -489,8 +482,7 @@ PINNED_MACOS_EXTENSIONS: dict[str, ExtensionPin] = {
 
 
 def validate_simple_taskbar_config(*, mode: str, show_app_labels: bool) -> dict[str, Any]:
-    """
-    Simple Taskbar 7.3.0 constraint: macOS icon magnification is ONLY active in
+    """Simple Taskbar 7.3.0 constraint: macOS icon magnification is ONLY active in
     Dock mode with application labels hidden (unavailable in Default GNOME Panel mode).
     """
     m = (mode or "").strip().lower()
@@ -522,8 +514,7 @@ def check_extension_abi(ext_key: str, gnome_major: int) -> dict[str, Any]:
 
 
 class BackupHealthMonitor:
-    """
-    Celina Backup Health contract:
+    """Celina Backup Health contract:
     Inspects `systemctl list-timers` (Timeshift + Borgmatic / `celina-borg-backup.timer`)
     and emits a Dynamic Island warning badge if either backup timer has not fired in > 48 hours.
     """
@@ -535,10 +526,9 @@ class BackupHealthMonitor:
         self,
         timers: list[dict[str, Any]],
         *,
-        now_epoch: Optional[float] = None,
+        now_epoch: float | None = None,
     ) -> dict[str, Any]:
-        """
-        `timers`: list of dicts such as `[{"unit": "celina-borg-backup.timer", "last_epoch": ...}]`
+        """`timers`: list of dicts such as `[{"unit": "celina-borg-backup.timer", "last_epoch": ...}]`
         (matching `systemctl list-timers --output=json` after converting usec -> epoch sec).
         """
         now = float(now_epoch) if now_epoch is not None else time.time()
@@ -571,7 +561,7 @@ class BackupHealthMonitor:
                         "family": family,
                         "reason": "stale_over_48h",
                         "hours_since_last": round(age_sec / 3600.0, 1),
-                    }
+                    },
                 )
             else:
                 healthy.append(family)

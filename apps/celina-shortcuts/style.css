@@ -1,0 +1,76 @@
+/* macubuntu Celina Shortcuts — GTK4 / Libadwaita 1.x stylesheet */
+
+window {
+    background-color: @window_bg_color;
+}
+
+.card {
+    background-color: @card_bg_color;
+    border: 1px solid @borders;
+    border-radius: 10px;
+    padding: 12px;
+    transition: border-color 150ms ease, background-color 150ms ease;
+}
+
+.card:hover {
+    border-color: alpha(@accent_bg_color, 0.65);
+    background-color: alpha(@accent_bg_color, 0.05);
+}
+
+.card.step-running {
+    border: 2px solid @accent_bg_color;
+    background-color: alpha(@accent_bg_color, 0.10);
+}
+
+.card.step-error {
+    border: 2px solid @error_bg_color;
+    background-color: alpha(@error_bg_color, 0.08);
+}
+
+.tier-badge {
+    background-color: alpha(@accent_bg_color, 0.20);
+    color: @accent_fg_color;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.8em;
+    font-weight: 700;
+}
+
+.tier-badge.tier-2 {
+    background-color: @warning_bg_color;
+    color: @warning_fg_color;
+}
+
+.shortcut-name {
+    font-weight: 600;
+    font-size: 1.0em;
+}
+
+.caption {
+    font-size: 0.85em;
+    color: @window_fg_color;
+    opacity: 0.7;
+}
+
+.heading {
+    font-size: 1.05em;
+    font-weight: 600;
+}
+
+.sidebar {
+    background-color: @sidebar_bg_color;
+    border-right: 1px solid @borders;
+}
+
+.magic-chip {
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.8em;
+    background-color: alpha(@accent_bg_color, 0.14);
+}
+
+list row:selected {
+    background-color: alpha(@accent_bg_color, 0.22);
+    color: @window_fg_color;
+    border-radius: 8px;
+}

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Dual-Backend Switch (Update 19)
+"""Celina AI (Celly) - Gear 0 Dual-Backend Switch (Update 19)
 
 Switches between Edge0-35B-A3B (local MoE) and Ollama qwen3:1.7b backends
 based on detected system resources. Zero cloud for Gear 0 itself.
@@ -10,7 +9,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 _BACKEND_STATE = Path.home() / ".config" / "celina" / "gear0_dual_backend.json"
 _MIN_RAM_GB = 4   # Edge0-35B-A3B needs ~2-3 GiB active, recommend 4+ GB free
@@ -69,7 +67,7 @@ def ollama_available() -> bool:
         return False
     try:
         result = subprocess.run(
-            ["ollama", "list"], capture_output=True, text=True, timeout=5
+            ["ollama", "list"], capture_output=True, text=True, timeout=5,
         )
         return "qwen3:1.7b" in result.stdout
     except Exception:
@@ -100,7 +98,7 @@ _SHOW_BACKEND_RE = __import__("re").compile(
 )
 
 
-def gear0_dual_classify(query: str) -> Optional[str]:
+def gear0_dual_classify(query: str) -> str | None:
     """Classify query into a dual-backend handler name, or None."""
     low = query.strip().lower()
     if _SWITCH_BACKEND_RE.match(low):
@@ -110,10 +108,9 @@ def gear0_dual_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_dual_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_dual_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Dual-Backend handler."""
     try:
-        import re
         if handler == "switch_backend":
             m = _SWITCH_BACKEND_RE.match(query.lower())
             if m:
@@ -132,11 +129,11 @@ def gear0_dual_execute(handler: str, query: str, dry_run: bool = False) -> Optio
 
 
 __all__ = [
-    "select_backend",
     "current_backend",
-    "set_backend",
-    "ollama_available",
     "edge0_available",
     "gear0_dual_classify",
     "gear0_dual_execute",
+    "ollama_available",
+    "select_backend",
+    "set_backend",
 ]

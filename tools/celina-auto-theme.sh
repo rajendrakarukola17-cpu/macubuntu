@@ -6,7 +6,7 @@
 # - Diff-gates gsettings: ONLY calls `gsettings set` when the current color-scheme
 #   differs from the target, preventing GTK/icon theme engine thrashing on every tick!
 # ==============================================================================
-set -euo pipefail
+set -Eeuo pipefail
 
 DRY_RUN=0
 CONFIG_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/auto-theme-switcher/config.json"
@@ -17,15 +17,62 @@ NIGHT_SCHEME="prefer-dark"
 OVERRIDE_HOUR=""
 OVERRIDE_CURRENT=""
 
+usage() {
+    cat <<'EOF'
+Usage: celina-auto-theme.sh [options]
+
+Options:
+  --dry-run      Preview the theme switch without calling gsettings
+  --hour <N>     Override current hour (integer 0..23) for testing
+  --current <scheme>  Override detected current color-scheme (prefer-light|prefer-dark)
+  --config <path>   Path to auto-theme-switcher config.json
+  -h, --help      Show this help
+
+Exit codes: 0 no-change | 1 error | 2 misuse
+EOF
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run) DRY_RUN=1; shift ;;
-        --hour) OVERRIDE_HOUR="${2:-}"; shift 2 ;;
-        --current) OVERRIDE_CURRENT="${2:-}"; shift 2 ;;
-        --config) CONFIG_JSON="${2:-}"; shift 2 ;;
-        *) echo "Unknown arg: $1" >&2; exit 2 ;;
+        --hour)
+            if [[ $# -lt 2 ]]; then echo "❌ --hour requires an integer argument" >&2; usage; exit 2; fi
+            OVERRIDE_HOUR="$2"; shift 2 ;;
+        --current)
+            if [[ $# -lt 2 ]]; then echo "❌ --current requires a scheme argument" >&2; usage; exit 2; fi
+            OVERRIDE_CURRENT="$2"; shift 2 ;;
+        --config)
+            if [[ $# -lt 2 ]]; then echo "❌ --config requires a path argument" >&2; usage; exit 2; fi
+            CONFIG_JSON="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown arg: $1" >&2; usage; exit 2 ;;
     esac
 done
+
+# --- P0: Strict hour validation (rejects arithmetic injection, fixes 08/09 octal) ---
+validate_hour() {
+    local label="$1" raw="$2"
+    if [[ ! "$raw" =~ ^[0-9]{1,2}$ ]]; then
+        echo "❌ Invalid $label: '$raw' (expected integer 0..23)" >&2
+        exit 2
+    fi
+    local val
+    val=$((10#$raw))  # force base-10 (prevents 08/09 octal parse crash)
+    if (( val < 0 || val > 23 )); then
+        echo "❌ Out-of-range $label: $val (expected 0..23)" >&2
+        exit 2
+    fi
+    echo "$val"
+}
+
+# Validate override hour if provided
+if [[ -n "$OVERRIDE_HOUR" ]]; then
+    OVERRIDE_HOUR="$(validate_hour "--hour" "$OVERRIDE_HOUR")"
+fi
+
+# Validate env-provided hours
+DAY_START_HOUR="$(validate_hour "CELINA_DAY_START_HOUR" "$DAY_START_HOUR")"
+NIGHT_START_HOUR="$(validate_hour "CELINA_NIGHT_START_HOUR" "$NIGHT_START_HOUR")"
 
 # Optional offline lat/lon or explicit hour config (~/.config/auto-theme-switcher/config.json)
 # Parsed safely via tab-delimited read (never `eval`).
@@ -49,8 +96,8 @@ except Exception:
 print(f"{d}\t{n}\t{ds}\t{ns}")
 PY
     ) || true
-    [[ -n "${cfg_day:-}" ]] && DAY_START_HOUR="$cfg_day"
-    [[ -n "${cfg_night:-}" ]] && NIGHT_START_HOUR="$cfg_night"
+    [[ -n "${cfg_day:-}" ]] && DAY_START_HOUR="$(validate_hour "config.day_start_hour" "$cfg_day")"
+    [[ -n "${cfg_night:-}" ]] && NIGHT_START_HOUR="$(validate_hour "config.night_start_hour" "$cfg_night")"
     [[ -n "${cfg_day_scheme:-}" ]] && DAY_SCHEME="$cfg_day_scheme"
     [[ -n "${cfg_night_scheme:-}" ]] && NIGHT_SCHEME="$cfg_night_scheme"
 fi
@@ -58,10 +105,21 @@ fi
 CUR_HOUR="${OVERRIDE_HOUR:-$(date +%H | sed 's/^0//')}"
 [[ -n "$CUR_HOUR" ]] || CUR_HOUR=0
 
-if (( CUR_HOUR >= DAY_START_HOUR && CUR_HOUR < NIGHT_START_HOUR )); then
-    TARGET="$DAY_SCHEME"
+# --- P0: Handle wrap-around schedules (DAY_START_HOUR >= NIGHT_START_HOUR) ---
+if (( DAY_START_HOUR < NIGHT_START_HOUR )); then
+    # Normal schedule: day from DAY_START to NIGHT_START
+    if (( CUR_HOUR >= DAY_START_HOUR && CUR_HOUR < NIGHT_START_HOUR )); then
+        TARGET="$DAY_SCHEME"
+    else
+        TARGET="$NIGHT_SCHEME"
+    fi
 else
-    TARGET="$NIGHT_SCHEME"
+    # Wrap-around schedule (e.g., day=22, night=6): night from NIGHT_START to DAY_START
+    if (( CUR_HOUR >= NIGHT_START_HOUR && CUR_HOUR < DAY_START_HOUR )); then
+        TARGET="$NIGHT_SCHEME"
+    else
+        TARGET="$DAY_SCHEME"
+    fi
 fi
 
 CURRENT="$OVERRIDE_CURRENT"
@@ -82,4 +140,7 @@ fi
 
 if command -v gsettings >/dev/null 2>&1; then
     gsettings set org.gnome.desktop.interface color-scheme "$TARGET"
+else
+    echo "⚠️  gsettings not found; cannot set color-scheme to '$TARGET'" >&2
+    exit 1
 fi

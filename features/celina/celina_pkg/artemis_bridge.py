@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Google Artemis Bridge (v4.5, Update 18)
+"""Celina AI (Celly) - Google Artemis Bridge (v4.5, Update 18)
 
 Integrates Google ARTEMIS (Apache 2.0) for Android device automation:
 - Natural-language task execution on real Android phones or emulators via ADB
@@ -19,44 +18,54 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-log = logging.get_logger = logging.getLogger("celina.artemis")
+from . import approval, evidence
+
+log = logging.getLogger("celina.artemis")
 
 
 class ArtemisBridge:
-    """
-    Bridge to Google ARTEMIS for Android device automation.
+    """Bridge to Google ARTEMIS for Android device automation.
 
     ARTEMIS turns natural-language instructions into reliable Android automation
     on real phones or emulators via ADB. Operates entirely on-device via ADB,
     with no data leaving the local environment.
+
+    run_task() is gated behind Tier-2 approval via approval.request_bound_approval
+    + approval.verify_and_consume (fail-closed). Without an approval callback,
+    all mutating Android actions are denied.
     """
 
-    def __init__(self, artemis_path: Optional[str] = None):
+    def __init__(self, artemis_path: str | None = None):
         self.artemis_path = artemis_path or self._find_artemis()
-        self._server_proc: Optional[subprocess.Popen] = None
+        self._server_proc: subprocess.Popen | None = None
         self._mcp_port = 8000
         self._started = False
 
     @staticmethod
-    def _find_artemis() -> Optional[str]:
-        """Find the Artemis installation on the system."""
+    def _find_artemis() -> str | None:
+        """Find the Artemis installation on the system.
+
+        Returns a directory path (containing start.sh), never a bare binary path,
+        so downstream consumers can safely do Path(self.artemis_path) / "start.sh".
+        """
         candidates = [
-            "/home/jtcviza/Downloads/artemis",
             os.path.expanduser("~/artemis"),
             os.path.expanduser("~/.local/share/artemis"),
             "/opt/artemis",
         ]
         for path in candidates:
-            if Path(path).exists() and Path(path, "start.sh").exists():
+            if Path(path).is_dir() and Path(path, "start.sh").exists():
                 return path
-        # Check if artemis is on PATH
-        if shutil.which("artemis"):
-            return shutil.which("artemis")
+        # Check if artemis is on PATH — return its parent directory as a fallback
+        binary = shutil.which("artemis")
+        if binary:
+            return str(Path(binary).resolve().parent)
         return None
 
     @property
@@ -70,8 +79,7 @@ class ArtemisBridge:
         return self._server_proc is not None and self._server_proc.poll() is None
 
     def start(self, profile: str = "flash") -> tuple[bool, str]:
-        """
-        Start the Artemis server.
+        """Start the Artemis server.
 
         profile: "flash" (fast, single-model) or "pro" (planner/operator/checker)
         """
@@ -84,6 +92,13 @@ class ArtemisBridge:
         if self.is_running:
             return True, "Artemis server already running."
 
+        # artemis_path must be a directory (contains start.sh)
+        if not Path(self.artemis_path).is_dir():
+            return False, (
+                f"Artemis path is not a directory: {self.artemis_path}. "
+                "Expected a directory containing start.sh."
+            )
+
         try:
             start_script = Path(self.artemis_path) / "start.sh"
             if start_script.exists():
@@ -93,6 +108,7 @@ class ArtemisBridge:
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=self.artemis_path,
+                    start_new_session=True,
                     env={**os.environ, "ARTEMIS_PROFILE": profile},
                 )
             else:
@@ -102,6 +118,7 @@ class ArtemisBridge:
                     stderr=subprocess.PIPE,
                     text=True,
                     cwd=self.artemis_path,
+                    start_new_session=True,
                     env={**os.environ, "ARTEMIS_PROFILE": profile},
                 )
 
@@ -115,17 +132,51 @@ class ArtemisBridge:
             return True, f"Artemis server started (profile: {profile})"
 
         except Exception as exc:
+            if self._server_proc is not None:
+                try:
+                    self._server_proc.kill()
+                    self._server_proc.wait(timeout=2.0)
+                except Exception:
+                    pass
+                self._server_proc = None
             log.exception("Failed to start Artemis")
             return False, f"Failed to start Artemis: {exc}"
 
     def stop(self) -> None:
-        """Stop the Artemis server."""
+        """Stop the Artemis server and its entire process group.
+
+        Uses start_new_session=True in Popen so the Artemis server runs in its
+        own process group; killing the group ensures grandchild processes
+        (e.g. the actual server spawned by bash start.sh) are also terminated,
+        preventing port 8000 from staying bound.
+        """
         if self._server_proc and self.is_running:
-            self._server_proc.terminate()
+            try:
+                os.killpg(os.getpgid(self._server_proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                # Fall back to terminate/kill on the direct child
+                try:
+                    self._server_proc.terminate()
+                except Exception:
+                    pass
             try:
                 self._server_proc.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
-                self._server_proc.kill()
+                try:
+                    os.killpg(os.getpgid(self._server_proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except Exception:
+                    try:
+                        self._server_proc.kill()
+                    except Exception:
+                        pass
+                try:
+                    self._server_proc.wait(timeout=2.0)
+                except Exception:
+                    pass
         self._server_proc = None
         self._started = False
 
@@ -134,14 +185,21 @@ class ArtemisBridge:
         instruction: str,
         *,
         profile: str = "flash",
-        device_serial: Optional[str] = None,
+        device_serial: str | None = None,
+        approval_cb: approval.ApprovalCallback | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
-        """
-        Run a natural-language task on an Android device via Artemis.
+        """Run a natural-language task on an Android device via Artemis.
 
         instruction: Natural language task (e.g., "open Chrome and search weather")
         profile: "flash" (fast) or "pro" (planner/operator/checker)
         device_serial: ADB device serial number (optional, uses default if not specified)
+        approval_cb: Interactive Tier-2 approval callback (required for mutating actions)
+        dry_run: If True, return success without executing
+
+        All mutating Android actions (install APK, send SMS, place calls, delete data,
+        change settings) require Tier-2 approval via approval.request_bound_approval +
+        approval.verify_and_consume. Without an approval callback, the call is denied.
         """
         if not self.is_available:
             return {
@@ -150,20 +208,101 @@ class ArtemisBridge:
                 "instruction": instruction,
             }
 
+        if dry_run:
+            return {
+                "success": True,
+                "dry_run": True,
+                "instruction": instruction,
+                "profile": profile,
+                "method": "dry_run",
+            }
+
+        if approval_cb is None:
+            return {
+                "success": False,
+                "error": "Denied: Artemis tasks require interactive Tier-2 approval.",
+                "instruction": instruction,
+                "profile": profile,
+                "method": "denied",
+            }
+
+        safe_args = {
+            "instruction": instruction,
+            "profile": profile,
+            "device_serial": device_serial,
+        }
+        tok, deny_err = approval.request_bound_approval(
+            "artemis_run_task",
+            safe_args,
+            approval_cb,
+            title=f"Approve Android automation ({profile}): '{instruction[:80]}'?",
+            target=f"adb://{device_serial or 'default'}",
+        )
+        if deny_err:
+            evidence.EvidenceLedger().record_execution(
+                tool_name="artemis_run_task",
+                arguments=safe_args,
+                result_text=deny_err[:240],
+                policy_decision="denied",
+            )
+            return {
+                "success": False,
+                "error": deny_err,
+                "instruction": instruction,
+                "profile": profile,
+                "method": "denied",
+            }
+        ok, err = approval.verify_and_consume(tok, "artemis_run_task", safe_args)
+        if not ok:
+            evidence.EvidenceLedger().record_execution(
+                tool_name="artemis_run_task",
+                arguments=safe_args,
+                result_text="Denied: " + err[:240],
+                policy_decision="denied",
+            )
+            return {
+                "success": False,
+                "error": err,
+                "instruction": instruction,
+                "profile": profile,
+                "method": "denied",
+            }
+
         # Try MCP server first, fall back to CLI
         result = self._run_via_mcp(instruction, profile=profile, device_serial=device_serial)
         if result.get("success") is not False:
+            evidence.EvidenceLedger().record_execution(
+                tool_name="artemis_run_task",
+                arguments=safe_args,
+                result_text=f"Artemis task executed via MCP (profile={profile})",
+                policy_decision="ok",
+            )
             return result
 
         # Fall back to CLI
-        return self._run_via_cli(instruction, profile=profile, device_serial=device_serial)
+        result = self._run_via_cli(instruction, profile=profile, device_serial=device_serial)
+        if result.get("success"):
+            evidence.EvidenceLedger().record_execution(
+                tool_name="artemis_run_task",
+                arguments=safe_args,
+                result_text=f"Artemis task executed via CLI (profile={profile})",
+                policy_decision="ok",
+            )
+        else:
+            evidence.EvidenceLedger().record_execution(
+                tool_name="artemis_run_task",
+                arguments=safe_args,
+                result_text=result.get("error", "")[:240],
+                policy_decision="error",
+            )
+        return result
 
     def _run_via_mcp(
         self,
         instruction: str,
         *,
         profile: str = "flash",
-        device_serial: Optional[str] = None,
+        device_serial: str | None = None,
     ) -> dict[str, Any]:
         """Run task via Artemis MCP server."""
         try:
@@ -186,10 +325,10 @@ class ArtemisBridge:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=60.0) as resp:
+            with urllib.request.urlopen(req, timeout=60.0) as resp:  # nosec B310 — localhost MCP endpoint, scheme fixed to http
                 result = json.loads(resp.read().decode("utf-8"))
                 return {
-                    "success": "error" not in result,
+                    "success": result.get("error") is None,
                     "result": result.get("result"),
                     "error": result.get("error"),
                     "instruction": instruction,
@@ -205,14 +344,30 @@ class ArtemisBridge:
         instruction: str,
         *,
         profile: str = "flash",
-        device_serial: Optional[str] = None,
+        device_serial: str | None = None,
     ) -> dict[str, Any]:
-        """Run task via Artemis CLI."""
-        try:
-            cmd = ["uv", "run", "artemis", "run", instruction, "--profile", profile]
-            if device_serial:
-                cmd.extend(["--device", device_serial])
+        """Run task via Artemis CLI.
 
+        Prefers `uv run artemis` if uv is available; falls back to the bare
+        `artemis` binary on PATH. Never raises FileNotFoundError.
+        """
+        if shutil.which("uv"):
+            cmd = ["uv", "run", "artemis", "run", instruction, "--profile", profile]
+        elif shutil.which("artemis"):
+            cmd = ["artemis", "run", instruction, "--profile", profile]
+        else:
+            return {
+                "success": False,
+                "error": "Neither 'uv' nor 'artemis' is on PATH. Cannot run Artemis CLI.",
+                "instruction": instruction,
+                "profile": profile,
+                "method": "cli",
+            }
+
+        if device_serial:
+            cmd.extend(["--device", device_serial])
+
+        try:
             result = subprocess.run(
                 cmd,
                 cwd=self.artemis_path,

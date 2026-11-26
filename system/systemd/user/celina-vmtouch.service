@@ -1,0 +1,9 @@
+[Unit]
+Description=PSI-guarded touch-only page cache warmer (reclaimable)
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/celina-vmtouch-ctl warm
+Nice=15
+IOSchedulingClass=idle

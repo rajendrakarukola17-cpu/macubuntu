@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# ============================================================================
+# macubuntu-ram-change-detector — boot-time RAM tier change detector
+#
+# Runs early in boot (after macubuntu-hw-probe.service writes
+# /etc/macubuntu/hardware.json). Compares the current ram_tier to the last
+# applied profile (/etc/macubuntu/last_applied_profile). If they differ
+# (e.g. physical RAM was added/removed between boots), triggers
+# macubuntu-reconfigure --auto --user <desktop-user> to re-apply the matching
+# profile to the REAL desktop user's $HOME (never /root/).
+#
+# Idempotent: same tier on consecutive boots = no-op.
+# Fail-closed: if hardware.json is absent or unreadable, exits 0 silently.
+# P2: tier validation, --dry-run, --help, --user support
+# ============================================================================
+set -Eeuo pipefail
+
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+HW_DIR="/etc/macubuntu"
+HW_FILE="$HW_DIR/hardware.json"
+APPLIED_FILE="$HW_DIR/last_applied_profile"
+RECONFIGURE="$REPO_DIR/tools/macubuntu-reconfigure"
+
+DRY_RUN="${DRY_RUN:-0}"
+TARGET_USER=""
+
+log() { echo "[ram-change-detector] $*"; }
+
+usage() {
+    cat <<'EOF'
+Usage: macubuntu-ram-change-detector [options]
+
+  --dry-run      Preview detection logic, make zero mutations
+  --user <name>  Target desktop user (auto-detected when run as root)
+  -h, --help     Show this help
+
+Exit codes: 0 no-change-or-skipped | 1 error | 2 misuse
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --dry-run) DRY_RUN=1; export DRY_RUN=1; shift ;;
+        --user) TARGET_USER="${2:?Missing --user value}"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+# P2: Validate tier name against known profiles
+valid_tier() {
+    local t="$1"
+    [[ "$t" == "8gb" || "$t" == "16gb" || "$t" == "32gb" ]]
+}
+
+# P0: Resolve real desktop user so reconfigure never writes to /root/ at boot
+resolve_desktop_user() {
+    if [[ -n "$TARGET_USER" ]]; then
+        echo "$TARGET_USER"
+        return 0
+    fi
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER:-}" != "root" ]]; then
+        echo "${SUDO_USER}"
+        return 0
+    fi
+    local desktop_user
+    desktop_user="$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}' /etc/passwd 2>/dev/null || true)"
+    if [[ -n "$desktop_user" ]]; then
+        echo "$desktop_user"
+        return 0
+    fi
+    echo ""
+}
+
+# No hardware.json yet → nothing to detect (hw-probe hasn't run or failed).
+if [[ ! -f "$HW_FILE" ]]; then
+    log "no hardware.json yet; skipping"
+    exit 0
+fi
+
+# Read current ram_tier from hardware.json (fail-closed on any failure)
+CURRENT_TIER=""
+if command -v jq >/dev/null 2>&1; then
+    CURRENT_TIER="$(jq -r '.ram_tier // empty' "$HW_FILE" 2>/dev/null || true)"
+fi
+if [[ -z "$CURRENT_TIER" ]]; then
+    # Fallback: probe directly from /proc/meminfo
+    local_ram_mb="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+    if (( local_ram_mb < 12000 )); then CURRENT_TIER="8gb"
+    elif (( local_ram_mb < 24000 )); then CURRENT_TIER="16gb"
+    else CURRENT_TIER="32gb"; fi
+fi
+
+# P2: Tier validation — fail-closed on unrecognized tier
+if [[ -z "$CURRENT_TIER" ]]; then
+    log "could not determine ram_tier; skipping"
+    exit 0
+fi
+if ! valid_tier "$CURRENT_TIER"; then
+    log "invalid ram_tier '$CURRENT_TIER' in $HW_FILE; skipping (fail-closed)"
+    exit 1
+fi
+
+# Read last applied profile (may not exist on first boot)
+LAST_TIER=""
+if [[ -f "$APPLIED_FILE" ]]; then
+    LAST_TIER="$(cat "$APPLIED_FILE" 2>/dev/null || true)"
+fi
+
+if [[ "$CURRENT_TIER" == "$LAST_TIER" ]]; then
+    log "RAM tier unchanged ($CURRENT_TIER); no reconfigure needed"
+    exit 0
+fi
+
+log "RAM tier changed: ${LAST_TIER:-<none>} -> $CURRENT_TIER; reconfiguring"
+
+# P0: Pass --user to reconfigure so user-level files go to the real desktop user's HOME
+RECONFIGURE_ARGS=(--auto)
+DESKTOP_USER="$(resolve_desktop_user)"
+if [[ -n "$DESKTOP_USER" ]]; then
+    RECONFIGURE_ARGS+=(--user "$DESKTOP_USER")
+    log "target desktop user: $DESKTOP_USER"
+else
+    log "WARNING: no desktop user detected; user-level files may go to /root/" >&2
+fi
+
+if [[ "$DRY_RUN" == "1" ]]; then
+    log "[dry-run] would run: $RECONFIGURE ${RECONFIGURE_ARGS[*]}"
+    exit 0
+fi
+
+# macubuntu-reconfigure writes its own last_applied_profile on success
+"$RECONFIGURE" "${RECONFIGURE_ARGS[@]}"

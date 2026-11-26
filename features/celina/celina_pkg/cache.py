@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Privacy-Safe 2-Tier Response & Tool Cache with Timely Offload (v4.2)
+"""Celina AI (Celly) - Privacy-Safe 2-Tier Response & Tool Cache with Timely Offload (v4.2)
 - Hot Layer: Tiny bounded in-RAM LRU dict (auto-offloaded to 0 MB after idle timeout)
 - Warm Layer: Dedicated SQLite WAL cache.db with per-category TTLs + incremental_vacuum
 - Privacy Rule: NEVER caches prompts/outputs containing detected secrets or PII
@@ -14,7 +13,7 @@ import threading
 import time
 from collections import OrderedDict
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config, embeddings, privacy
 
@@ -94,7 +93,7 @@ _LIVE_PROMPT_KEYWORDS = (
 
 def _hash_key(namespace: str, raw_key: str) -> str:
     norm = " ".join(raw_key.strip().lower().split())
-    return hashlib.sha256(f"{namespace}::{norm}".encode("utf-8")).hexdigest()
+    return hashlib.sha256(f"{namespace}::{norm}".encode()).hexdigest()
 
 
 def is_cacheable_prompt(prompt: str) -> bool:
@@ -135,7 +134,7 @@ class SmartCache:
         self._last_access = time.time()
         self._hits = 0
         self._misses = 0
-        self._last_embed_pair: Optional[tuple[str, list[float]]] = None
+        self._last_embed_pair: tuple[str, list[float]] | None = None
         self._conn = sqlite3.connect(str(self.db_path), timeout=4.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL;")
@@ -178,7 +177,7 @@ class SmartCache:
                 );
                 CREATE INDEX IF NOT EXISTS idx_cache_expires ON cache_entries(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_cache_lru ON cache_entries(last_hit_at);
-                """
+                """,
             )
             cols = {r["name"] for r in self._conn.execute("PRAGMA table_info(cache_entries)").fetchall()}
             if "prompt_vec" not in cols:
@@ -194,7 +193,7 @@ class SmartCache:
             return f"{parts[0]}:{parts[1]}", parts[2]
         return "", raw_key
 
-    def _embed_prompt_cached(self, clean_text: str) -> Optional[list[float]]:
+    def _embed_prompt_cached(self, clean_text: str) -> list[float] | None:
         """Memoizes the most recent query embedding so a get() miss -> set() embeds only once."""
         norm = " ".join((clean_text or "").strip().split())
         if not norm:
@@ -220,7 +219,7 @@ class SmartCache:
         }
         return int(ttls.get(category, defaults.get(category, 1800)))
 
-    def get(self, namespace: str, raw_key: str) -> Optional[tuple[str, str]]:
+    def get(self, namespace: str, raw_key: str) -> tuple[str, str] | None:
         """Returns (cached_value, meta) if valid and unexpired, else None."""
         if not config.CACHE_ENABLED:
             return None
@@ -307,7 +306,7 @@ class SmartCache:
         namespace: str,
         raw_key: str,
         value: str,
-        ttl_seconds: Optional[int] = None,
+        ttl_seconds: int | None = None,
         meta: str = "",
     ) -> bool:
         """Stores non-sensitive value with strict TTL. Returns True if cached."""
@@ -335,7 +334,7 @@ class SmartCache:
         expires_at = now + ttl
         size_bytes = len(value.encode("utf-8"))
         lang_prefix, prompt_body = self._split_lang_prefix(raw_key)
-        prompt_blob: Optional[bytes] = None
+        prompt_blob: bytes | None = None
         if config.SEMANTIC_CACHE_ENABLED and namespace.startswith("llm_") and is_cacheable_prompt(prompt_body):
             q_vec = self._embed_prompt_cached(prompt_body)
             if q_vec:
@@ -382,12 +381,11 @@ class SmartCache:
             return 0
 
     def offload_and_prune(self, force_vacuum: bool = True) -> dict[str, int]:
-        """
-        Timely maintenance:
-          1. Drops in-RAM hot entries if idle
-          2. Deletes expired TTL rows from SQLite
-          3. LRU-evicts oldest rows exceeding max_entries or max_size_mb
-          4. Runs PRAGMA incremental_vacuum to keep cache.db tiny on disk
+        """Timely maintenance:
+        1. Drops in-RAM hot entries if idle
+        2. Deletes expired TTL rows from SQLite
+        3. LRU-evicts oldest rows exceeding max_entries or max_size_mb
+        4. Runs PRAGMA incremental_vacuum to keep cache.db tiny on disk
         """
         now = time.time()
         ram_cleared = self.offload_ram_if_idle(force=False)
@@ -414,11 +412,11 @@ class SmartCache:
 
             # Cap total byte footprint (LRU eviction)
             total_bytes = int(
-                self._conn.execute("SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries").fetchone()[0]
+                self._conn.execute("SELECT COALESCE(SUM(size_bytes), 0) FROM cache_entries").fetchone()[0],
             )
             if total_bytes > self._max_size_bytes:
                 rows = self._conn.execute(
-                    "SELECT cache_key, size_bytes FROM cache_entries ORDER BY last_hit_at ASC"
+                    "SELECT cache_key, size_bytes FROM cache_entries ORDER BY last_hit_at ASC",
                 ).fetchall()
                 to_drop: list[tuple[str]] = []
                 for r in rows:
@@ -454,7 +452,7 @@ class SmartCache:
     def stats(self) -> dict[str, Any]:
         with self._lock:
             row = self._conn.execute(
-                "SELECT COUNT(*) AS cnt, COALESCE(SUM(size_bytes), 0) AS sz FROM cache_entries"
+                "SELECT COUNT(*) AS cnt, COALESCE(SUM(size_bytes), 0) AS sz FROM cache_entries",
             ).fetchone()
             disk_entries = int(row["cnt"])
             disk_kb = round(int(row["sz"]) / 1024.0, 1)
@@ -482,7 +480,7 @@ class SmartCache:
         )
 
 
-_DEFAULT_CACHE: Optional[SmartCache] = None
+_DEFAULT_CACHE: SmartCache | None = None
 
 
 def get_cache() -> SmartCache:

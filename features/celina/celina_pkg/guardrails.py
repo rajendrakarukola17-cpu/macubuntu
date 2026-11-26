@@ -1,17 +1,16 @@
-"""
-Celina AI — Capabilities #3 & #4 (The "Forge" Reliability Guardrail Layer):
-  3. Generic, Tool-Agnostic Guardrail Stack (`ForgeGuardrailStack`):
-       - Retry nudges on malformed/failed tool calls
-       - Hard step-count enforcement
-       - Error-class classification & recovery directives
-       - Deterministic context compaction preserving goal + latest observations
-       - Hardware-aware RAM/VRAM token budgeting
-  4. Per-Tool Circuit Breaker with Bulkheads, Loop Detection & Schema Validation:
-       - Same-error-code tracking: 3 consecutive identical error-code failures
-         disables that tool for the session (`session_disabled`)
-       - Domain Bulkheads (`ToolBulkhead`) bounding per-domain concurrency
-       - Action Loop Detector (`ActionLoopDetector`) catching A->A->A & A->B->A->B cycles
-       - Strict JSON-Schema / optional Pydantic v2 argument validation before execution
+"""Celina AI — Capabilities #3 & #4 (The "Forge" Reliability Guardrail Layer):
+3. Generic, Tool-Agnostic Guardrail Stack (`ForgeGuardrailStack`):
+- Retry nudges on malformed/failed tool calls
+- Hard step-count enforcement
+- Error-class classification & recovery directives
+- Deterministic context compaction preserving goal + latest observations
+- Hardware-aware RAM/VRAM token budgeting
+4. Per-Tool Circuit Breaker with Bulkheads, Loop Detection & Schema Validation:
+- Same-error-code tracking: 3 consecutive identical error-code failures
+disables that tool for the session (`session_disabled`)
+- Domain Bulkheads (`ToolBulkhead`) bounding per-domain concurrency
+- Action Loop Detector (`ActionLoopDetector`) catching A->A->A & A->B->A->B cycles
+- Strict JSON-Schema / optional Pydantic v2 argument validation before execution
 """
 
 from __future__ import annotations
@@ -23,7 +22,8 @@ import json
 import re
 import threading
 import time
-from typing import Any, Iterator, Optional
+from collections.abc import Iterator
+from typing import Any
 
 from . import config
 
@@ -59,8 +59,7 @@ def extract_error_code(error_text: str) -> str:
 
 
 class SessionCircuitBreaker:
-    """
-    Capability #4: Per-tool circuit breaker tracking consecutive SAME-ERROR-CODE failures.
+    """Capability #4: Per-tool circuit breaker tracking consecutive SAME-ERROR-CODE failures.
     After `same_error_threshold` (default 3) consecutive failures with the same error code
     on a tool, disables that tool for the remainder of the session (`session_disabled`).
     Also maintains general cooldown protection for mixed errors.
@@ -83,11 +82,11 @@ class SessionCircuitBreaker:
         self._open_until: dict[str, float] = {}
         self._session_disabled: dict[str, str] = {}  # tool_name -> reason
 
-    def is_session_disabled(self, tool_name: str) -> Optional[str]:
+    def is_session_disabled(self, tool_name: str) -> str | None:
         with self._lock:
             return self._session_disabled.get(tool_name)
 
-    def check_open(self, tool_name: str, now: Optional[float] = None) -> Optional[float]:
+    def check_open(self, tool_name: str, now: float | None = None) -> float | None:
         """Returns remaining open seconds (float('inf') if session-disabled), or None if closed."""
         ts = time.monotonic() if now is None else now
         with self._lock:
@@ -113,13 +112,12 @@ class SessionCircuitBreaker:
     def record_failure(
         self,
         tool_name: str,
-        error_code: Optional[str] = None,
+        error_code: str | None = None,
         *,
         error_text: str = "",
-        now: Optional[float] = None,
+        now: float | None = None,
     ) -> bool:
-        """
-        Records a failure. Returns True if circuit opened OR tool was session-disabled.
+        """Records a failure. Returns True if circuit opened OR tool was session-disabled.
         """
         ts = time.monotonic() if now is None else now
         code = (error_code or extract_error_code(error_text)).strip().lower()
@@ -164,7 +162,7 @@ class SessionCircuitBreaker:
                 }
             return out
 
-    def reset(self, tool_name: Optional[str] = None) -> None:
+    def reset(self, tool_name: str | None = None) -> None:
         with self._lock:
             if tool_name is None:
                 self._failures.clear()
@@ -198,7 +196,7 @@ class ToolBulkhead:
         "mcp_system": 2,
     }
 
-    def __init__(self, limits: Optional[dict[str, int]] = None):
+    def __init__(self, limits: dict[str, int] | None = None):
         merged = dict(self.DEFAULT_LIMITS)
         if limits:
             merged.update({k: max(1, int(v)) for k, v in limits.items()})
@@ -224,7 +222,7 @@ class ToolBulkhead:
         acquired = sem.acquire(timeout=max(0.0, float(timeout)))
         if not acquired:
             raise BulkheadRejectedError(
-                f"Bulkhead saturated for domain '{dom}' (limit={self._limits.get(dom, 2)})."
+                f"Bulkhead saturated for domain '{dom}' (limit={self._limits.get(dom, 2)}).",
             )
         with self._lock:
             self._in_flight[dom] = self._in_flight.get(dom, 0) + 1
@@ -288,21 +286,39 @@ _JSON_TYPE_MAP: dict[str, tuple[type, ...]] = {
 }
 
 
+def validate_tool_argument_names(
+    tool_name: str,
+    arguments: dict[str, Any],
+    schema_by_name: dict[str, dict[str, Any]],
+) -> tuple[bool, str]:
+    """Reject unknown fields before coercion or tool dispatch can discard them."""
+    if not isinstance(arguments, dict):
+        return False, f"Schema validation error ({tool_name}): arguments must be a JSON object."
+    schema = schema_by_name.get(tool_name)
+    if not isinstance(schema, dict) or not schema:
+        return False, f"Schema validation error ({tool_name}): tool schema is unavailable."
+    params = schema.get("parameters") or {}
+    if not isinstance(params, dict) or not isinstance(params.get("properties", {}), dict):
+        return False, f"Schema validation error ({tool_name}): malformed properties."
+    props = params.get("properties") or {}
+    for key in arguments:
+        if key not in props:
+            return False, f"Schema validation error ({tool_name}): undeclared argument {key!r}."
+    return True, ""
+
+
 def validate_tool_arguments(
     tool_name: str,
     arguments: dict[str, Any],
     schema_by_name: dict[str, dict[str, Any]],
 ) -> tuple[bool, str]:
-    """
-    Validates tool arguments against the declared JSON Schema (using Pydantic v2
+    """Validates tool arguments against the declared JSON Schema (using Pydantic v2
     TypeAdapter when available, with a strict zero-dependency schema validator always active).
     """
-    if not isinstance(arguments, dict):
-        return False, f"Schema validation error ({tool_name}): arguments must be a JSON object."
-    fn_schema = schema_by_name.get(tool_name)
-    if not fn_schema:
-        return True, ""
-
+    names_ok, names_error = validate_tool_argument_names(tool_name, arguments, schema_by_name)
+    if not names_ok:
+        return False, names_error
+    fn_schema = schema_by_name[tool_name]
     params = fn_schema.get("parameters") or {}
     props = params.get("properties") or {}
     required = list(params.get("required") or [])
@@ -314,7 +330,7 @@ def validate_tool_arguments(
             return False, f"Schema validation error ({tool_name}): missing required field '{req_key}'."
 
     for key, val in arguments.items():
-        if key not in props or val is None:
+        if val is None:
             continue
         p_spec = props[key]
         expected_type = p_spec.get("type")
@@ -354,12 +370,11 @@ class ForgeBudget:
 
 
 class ForgeGuardrailStack:
-    """
-    Tool-agnostic reliability guardrail stack closing the self-hosted vs. frontier gap:
-      1. Step enforcement (hard cap + loop check)
-      2. Retry nudges & structured error-recovery directives
-      3. Deterministic context compaction
-      4. Hardware-aware RAM/VRAM token budgeting
+    """Tool-agnostic reliability guardrail stack closing the self-hosted vs. frontier gap:
+    1. Step enforcement (hard cap + loop check)
+    2. Retry nudges & structured error-recovery directives
+    3. Deterministic context compaction
+    4. Hardware-aware RAM/VRAM token budgeting
     """
 
     def __init__(self, *, max_steps: int = 8, max_context_chars: int = 14000):
@@ -367,7 +382,7 @@ class ForgeGuardrailStack:
         self.base_max_context_chars = max(2000, int(max_context_chars))
         self.loop_detector = ActionLoopDetector()
 
-    def compute_hardware_budget(self, *, avail_ram_mb: Optional[int] = None) -> ForgeBudget:
+    def compute_hardware_budget(self, *, avail_ram_mb: int | None = None) -> ForgeBudget:
         avail = int(avail_ram_mb) if avail_ram_mb is not None else int(config.detect_available_ram_mb())
         if avail < 1200:
             return ForgeBudget(
@@ -393,7 +408,7 @@ class ForgeGuardrailStack:
         tool_name: str,
         arguments: dict[str, Any],
         *,
-        budget: Optional[ForgeBudget] = None,
+        budget: ForgeBudget | None = None,
     ) -> tuple[bool, str]:
         b = budget or self.compute_hardware_budget()
         if step_index >= b.max_steps:
@@ -424,10 +439,9 @@ class ForgeGuardrailStack:
         self,
         messages: list[dict[str, Any]],
         *,
-        budget: Optional[ForgeBudget] = None,
+        budget: ForgeBudget | None = None,
     ) -> tuple[list[dict[str, Any]], bool]:
-        """
-        Deterministically compacts stale middle tool messages when total prompt size
+        """Deterministically compacts stale middle tool messages when total prompt size
         exceeds the hardware-aware character budget while preserving system prompt,
         original user goal, and the 2 most recent turns verbatim.
         """

@@ -1,0 +1,8 @@
+{
+  "schema": "celina.protected_hashes.v1",
+  "generated": "2026-11-24",
+  "files": {
+    "features/celina/celina_pkg/landlock_policy.py": "1ae8540a951dbff682b4352c757abc2e0ec091bd5fa2e80d787a87f0fff07b22",
+    "features/celina/celina_pkg/autonomy/self_healing.py": "ffed6c9490db83310e02b198e89607eb15cd5565c9d29f13cd62b372dea2731b"
+  }
+}

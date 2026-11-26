@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Connectors (Update 23)
+"""Celina AI (Celly) - Connectors (Update 23)
 
 App connectors adapted from MausBot concepts (Apache-2.0, github.com/milind-soni/OpenMausBot)
 to Python. Connectors live OUTSIDE Gear 0 and are NOT in the Gear 0 dispatch chain.
@@ -14,16 +13,23 @@ Hard refusals (must respect):
 
 from __future__ import annotations
 
-from .base import BaseConnector, ConnectorConfig, ConnectorStatus, ConnectorAction, ActionResult, AllowDenyGate
+from .base import (
+    ActionResult,
+    AllowDenyGate,
+    BaseConnector,
+    ConnectorAction,
+    ConnectorConfig,
+    ConnectorStatus,
+)
 from .registry import ConnectorRegistry, get_registry
 
 __all__ = [
-    "BaseConnector",
-    "ConnectorConfig",
-    "ConnectorStatus",
-    "ConnectorAction",
     "ActionResult",
     "AllowDenyGate",
+    "BaseConnector",
+    "ConnectorAction",
+    "ConnectorConfig",
     "ConnectorRegistry",
+    "ConnectorStatus",
     "get_registry",
 ]

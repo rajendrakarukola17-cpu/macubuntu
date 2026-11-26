@@ -53,6 +53,43 @@ if is_true "$ENABLE_BATTERY_CHARGE_LIMIT"; then
     fi
 fi
 
+# --- Battery-aware power profile (hardware.json driven) ---
+if [[ -f /etc/macubuntu/hardware.json ]] && command -v jq >/dev/null 2>&1; then
+    HW_HAS_BATTERY="$(jq -r '.has_battery // false' /etc/macubuntu/hardware.json)"
+else
+    HW_HAS_BATTERY="false"
+    # Fallback: probe directly
+    if compgen -G "/sys/class/power_supply/BAT*" >/dev/null 2>&1; then
+        HW_HAS_BATTERY="true"
+    fi
+fi
+
+# P0-2: PPD vs TLP are strictly mutually exclusive. Never start PPD when tlp is
+# selected; never invoke tuned-adm alongside PPD.
+if [[ "$HW_HAS_BATTERY" == "true" ]]; then
+    step "Battery detected — configuring AC/Battery profile for POWER_BACKEND=$POWER_BACKEND..."
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] active backend=$POWER_BACKEND manages AC/Battery transitions"
+    elif [[ "$POWER_BACKEND" == "ppd" ]] && command -v powerprofilesctl >/dev/null 2>&1; then
+        run_as_user powerprofilesctl set balanced 2>/dev/null || true
+        echo "      ✅ AC/Battery profile set to balanced via power-profiles-daemon"
+    elif [[ "$POWER_BACKEND" == "tlp" ]]; then
+        echo "      ✅ AC/Battery switching managed exclusively by TLP"
+    fi
+else
+    step "Desktop detected (no battery) — skipping battery charge limits, applying desktop low-latency profile..."
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] active backend=$POWER_BACKEND manages desktop CPU profile"
+    elif [[ "$POWER_BACKEND" == "ppd" ]] && command -v powerprofilesctl >/dev/null 2>&1; then
+        # PPD on desktop: never invoke tuned-adm alongside PPD
+        run_as_user powerprofilesctl set performance 2>/dev/null || true
+        echo "      ✅ Desktop performance profile via power-profiles-daemon"
+    elif [[ "$POWER_BACKEND" == "tlp" ]] && command -v cpupower >/dev/null 2>&1; then
+        run sudo cpupower frequency-set -g performance 2>/dev/null || true
+        echo "      ✅ CPU governor: performance (desktop, TLP-exclusive)"
+    fi
+fi
+
 if is_true "$ENABLE_VAAPI_GPU_DECODE"; then
     step "Installing hardware-accelerated VA-API video decode & Mesa Vulkan drivers (Mac-grade video + AMD Radeon AI offload)..."
     apt_install_each vainfo mesa-va-drivers mesa-vulkan-drivers vulkan-tools || true
@@ -88,7 +125,7 @@ if is_true "$ENABLE_SAFE_SLEEP"; then
         fi
     elif detect_has_luks_swap && ! detect_luks_swap_resume_ready; then
         copy_root_file "$REPO_DIR/system/systemd/sleep-instant-suspend.conf" /etc/systemd/sleep.conf.d/99-macubuntu-safesleep.conf
-        echo "      ⚠️  LUKS swap detected without verified crypttab + initramfs resume hook — hibernate disabled safely."
+        record_manual "LUKS swap: hibernate disabled safely (verified crypttab + initramfs resume hook required for Safe Sleep)"
     elif detect_has_hibernate_resume; then
         copy_root_file "$REPO_DIR/system/systemd/sleep-safesleep.conf" /etc/systemd/sleep.conf.d/99-macubuntu-safesleep.conf
         echo "      Safe Sleep active: instant suspend -> automatic hibernate after 3h on battery (real_swap >= RAM + ZRAM verified)."
@@ -96,6 +133,76 @@ if is_true "$ENABLE_SAFE_SLEEP"; then
         copy_root_file "$REPO_DIR/system/systemd/sleep-instant-suspend.conf" /etc/systemd/sleep.conf.d/99-macubuntu-safesleep.conf
         echo "      Pure-ZRAM or undersized swap detected (< RAM + ZRAM): enabled instant-wake suspend guard (add swap >= RAM+ZRAM + resume= for Safe Sleep)."
     fi
+fi
+
+# --- Phase A: S0ix suspend-then-hibernate (macOS-style instant sleep + auto-hibernate) ---
+# Single authoritative sleep.conf.d file: 99-macubuntu-safesleep.conf (shared with Safe Sleep).
+# Invalid keys (HibernateOnACPower=no, SuspendMode=s2idle) removed.
+# AllowHibernation/AllowSuspendThenHibernate gated on hibernate resume readiness + LUKS swap safety.
+if is_true "$ENABLE_S0IX_SLEEP"; then
+    step "Configuring S0ix suspend-then-hibernate (HibernateDelaySec=90min, never hibernate on AC)..."
+    HW_HAS_BATTERY="false"
+    if [[ -f /etc/macubuntu/hardware.json ]] && command -v jq >/dev/null 2>&1; then
+        HW_HAS_BATTERY="$(jq -r '.has_battery // false' /etc/macubuntu/hardware.json)"
+    elif compgen -G "/sys/class/power_supply/BAT*" >/dev/null 2>&1; then
+        HW_HAS_BATTERY="true"
+    fi
+
+    # Determine if hibernate is safe: hibernate-viable resume AND not (LUKS swap without resume readiness)
+    HIBERNATE_SAFE=0
+    if detect_has_hibernate_resume && ! ( detect_has_luks_swap && ! detect_luks_swap_resume_ready ); then
+        HIBERNATE_SAFE=1
+    fi
+
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] deploy /etc/systemd/sleep.conf.d/99-macubuntu-safesleep.conf (HibernateDelaySec=90min, AllowHibernation=$HIBERNATE_SAFE)"
+        echo "      [dry-run] deploy /etc/systemd/logind.conf.d/99-macubuntu-lid.conf (HandleLidSwitchExternalPower=lock)"
+        echo "      [dry-run] log mem_sleep + fwupdmgr get-version to /var/log/macubuntu/s0ix-sleep.log"
+    else
+        # Single authoritative sleep.conf — valid systemd keys only
+        {
+            echo "# macubuntu — S0ix suspend-then-hibernate (macOS-style instant sleep)"
+            echo "# Hibernate after 90 min on battery; never auto-hibernate while on AC power"
+            echo "[Sleep]"
+            echo "AllowSuspend=yes"
+            if [[ "$HIBERNATE_SAFE" -eq 1 ]]; then
+                echo "AllowHibernation=yes"
+                echo "AllowSuspendThenHibernate=yes"
+                echo "HibernateDelaySec=90min"
+            else
+                echo "AllowHibernation=no"
+                echo "AllowSuspendThenHibernate=no"
+                echo "HibernateDelaySec=0"
+            fi
+        } | write_root_file /etc/systemd/sleep.conf.d/99-macubuntu-safesleep.conf 644
+
+        # Lid switch -> suspend-then-hibernate only when hibernate is viable (swap/resume exists)
+        if [[ "$HIBERNATE_SAFE" -eq 1 ]]; then
+            {
+                echo "# macubuntu — Lid switch: suspend-then-hibernate (hibernate-viable swap detected)"
+                echo "[Login]"
+                echo "HandleLidSwitch=suspend-then-hibernate"
+                echo "HandleLidSwitchExternalPower=lock"
+                echo "HandleLidSwitchDocked=suspend-then-hibernate"
+            } | write_root_file /etc/systemd/logind.conf.d/99-macubuntu-lid.conf 644
+            echo "      Lid switch -> suspend-then-hibernate enabled (hibernate-viable swap present). Logind drop-in applies on next login/reboot."
+        else
+            echo "      ℹ️  No hibernate-viable swap detected — lid switch left at default (no auto-hibernate on lid close)"
+        fi
+
+        # mem_sleep + fwupdmgr firmware status logging (fwupdmgr get-version only — no network refresh)
+        run sudo install -d -m 755 /var/log/macubuntu
+        S0IX_LOG="/var/log/macubuntu/s0ix-sleep.log"
+        {
+            echo "=== macubuntu S0ix sleep log initialized $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+            echo "mem_sleep available: $(cat /sys/power/mem_sleep 2>/dev/null || echo unknown)"
+            echo "fwupdmgr device versions: $(fwupdmgr get-version 2>/dev/null | head -1 || echo 'fwupdmgr unavailable')"
+        } | write_root_file "$S0IX_LOG" 644
+        run sudo systemctl daemon-reload 2>/dev/null || true
+        echo "      ✅ S0ix suspend-then-hibernate configured (HibernateDelaySec=90min, AllowHibernation=$HIBERNATE_SAFE)"
+    fi
+else
+    echo "    ℹ️  S0ix suspend-then-hibernate skipped (ENABLE_S0IX_SLEEP=false)"
 fi
 
 if is_true "$ENABLE_SILENT_BOOT"; then
@@ -112,6 +219,10 @@ if is_true "$ENABLE_SILENT_BOOT"; then
         echo "      [dry-run] render /etc/default/grub.d/99-macubuntu-boot.cfg (cpu=$CPU_VENDOR, arg='${PSTATE_ARG:-none}', dualboot_windows=$DUALBOOT_WIN) & run update-grub"
     elif [[ -d /etc/default/grub.d ]] && command -v update-grub >/dev/null 2>&1; then
         run sudo install -d -m 755 /etc/default/grub.d
+        GRUB_DROPIN="/etc/default/grub.d/99-macubuntu-boot.cfg"
+        snapshot_file "$GRUB_DROPIN"
+        tmp_grub_dropin="$(mktemp "$WORKDIR/grub-dropin.XXXXXX")"
+        trap 'rm -f "$tmp_grub_dropin" 2>/dev/null' EXIT
         {
             sed "s/@CPU_PSTATE_ARG@/${PSTATE_ARG}/g" "$REPO_DIR/system/grub/99-macubuntu-boot.cfg"
             if [[ "$DUALBOOT_WIN" -eq 1 ]]; then
@@ -119,13 +230,18 @@ if is_true "$ENABLE_SILENT_BOOT"; then
                 echo "# Dual-boot Windows EFI detected — preserve Windows Boot Manager entry"
                 echo "GRUB_DISABLE_OS_PROBER=false"
             fi
-        } | sudo tee /etc/default/grub.d/99-macubuntu-boot.cfg >/dev/null
-        sudo chmod 644 /etc/default/grub.d/99-macubuntu-boot.cfg
+        } > "$tmp_grub_dropin"
+        # Validate GRUB drop-in syntax before atomic commit
+        if ! bash -n "$tmp_grub_dropin"; then
+            log_error "Generated GRUB drop-in failed shell syntax check; aborting."
+            exit 1
+        fi
+        write_root_file "$GRUB_DROPIN" 644 < "$tmp_grub_dropin"
         if [[ "$DUALBOOT_WIN" -eq 1 ]]; then
             apt_install os-prober || true
             echo "      ✅ Windows dual-boot entry preserved (GRUB_DISABLE_OS_PROBER=false + os-prober)."
         fi
-        run sudo update-grub || record_manual "Run 'sudo update-grub' to activate flicker-free boot drop-in"
+        run sudo update-grub || record_fail "update-grub failed to apply boot drop-in"
     else
         record_manual "GRUB drop-in directory (/etc/default/grub.d) or update-grub not found; skipped silent boot"
     fi

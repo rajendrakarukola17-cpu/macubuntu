@@ -32,7 +32,8 @@ case "$LAUNCHER_CHOICE" in
 esac
 
 step "Installing Quick Look (gnome-sushi + PDF/HEIC/WebP/video thumbnailers), Timeshift, BorgBackup, Mission Center & Pika Backup..."
-apt_install_each gnome-sushi evince-thumbnailer ffmpegthumbnailer heif-gdk-pixbuf heif-thumbnailer webp-pixbuf-loader timeshift borgbackup
+apt_install_each gnome-sushi evince-thumbnailer ffmpegthumbnailer heif-gdk-pixbuf heif-thumbnailer webp-pixbuf-loader borgbackup
+# timeshift is owned solely by Stage 61 (recovery-polish) — installed there btrfs-only.
 install_flatpak io.missioncenter.MissionCenter
 install_flatpak org.gnome.World.PikaBackup
 if ! command -v frostfinder >/dev/null 2>&1; then
@@ -91,6 +92,68 @@ else
     if command -v timeshift >/dev/null 2>&1; then
         run sudo timeshift --check >/dev/null 2>&1 || true
     fi
+fi
+
+# Snapper: APFS-style btrfs pre/post snapshots with GRUB bootable rollback
+if is_true "$ENABLE_BTRFS_SNAPPER"; then
+    step "Deploying Snapper (APFS-style btrfs pre/post snapshots + GRUB rollback)..."
+    ROOT_FS="$(detect_root_fstype)"
+    if [[ "$ROOT_FS" != "btrfs" ]]; then
+        log_info "Snapper requires btrfs root; current root is ${ROOT_FS}. Skipping."
+        record_manual "To enable Snapper: reinstall on btrfs root with subvolumes @, @home, @var_log, @var_cache"
+    elif apt_has snapper; then
+        apt_install snapper || record_fail "apt: snapper"
+        # Create snapper config directory and copy default config
+        run sudo mkdir -p /etc/snapper/configs
+        copy_root_file "$REPO_DIR/system/snapper/configs/root" /etc/snapper/configs/root 644
+        # Install apt dpkg pre/post hook for automatic snapshots around package changes
+        copy_root_file "$REPO_DIR/system/snapper/apt-dpkg-hook" /etc/apt/apt.conf.d/99-macubuntu-snapper 644
+        # Install macubuntu stage wrapper for pre/post snapshots around stage installs
+        run sudo install -Dm 755 "$REPO_DIR/system/snapper/pre-post-hooks/macubuntu-stage-wrapper" \
+            /usr/local/bin/macubuntu-stage-wrapper
+        # Enable snapper-timeline for automated time-based snapshots
+        if [[ "$DRY_RUN" != "1" ]]; then
+            sudo systemctl enable --now snapper-timeline.timer 2>/dev/null || \
+                record_manual "Enable snapper-timeline.timer manually: sudo systemctl enable --now snapper-timeline.timer"
+        fi
+        echo "      ✅ Snapper installed — pre/post snapshots around apt + stage installs"
+        record_manual "Create first snapshot: sudo snapper create --description 'macubuntu baseline' --cleanup-algorithm number"
+        record_manual "List snapshots: sudo snapper list | rollback: sudo snapper rollback <number>"
+    else
+        record_manual "snapper not in APT; add pinned package to download-locks.sha256"
+    fi
+
+    # --- Btrfs subvolume detection (@, @home, @var_log, @var_cache) ---
+    step "Detecting btrfs subvolumes for Snapper layout..."
+    if [[ "$ROOT_FS" == "btrfs" ]]; then
+        for subvol in @ @home @var_log @var_cache; do
+            if btrfs subvolume show "/$subvol" >/dev/null 2>&1; then
+                echo "      ✅ Btrfs subvolume found: /$subvol"
+            else
+                echo "      ℹ️  Btrfs subvolume not found: /$subvol (Snapper will use default subvolume layout)"
+            fi
+        done
+    fi
+
+    # --- chattr +C (nodatacow) on ~/.cache/celina/models ---
+    step "Applying nodatacow (+C) to Celina model cache directory..."
+    if [[ "$ROOT_FS" == "btrfs" ]]; then
+        MODEL_CACHE_DIR="$HOME/.cache/celina/models"
+        if [[ "$DRY_RUN" == "1" ]]; then
+            echo "      [dry-run] would chattr +C $MODEL_CACHE_DIR"
+        else
+            mkdir -p "$MODEL_CACHE_DIR"
+            if chattr +C "$MODEL_CACHE_DIR" 2>/dev/null; then
+                echo "      ✅ nodatacow set on $MODEL_CACHE_DIR"
+            else
+                echo "      ⚠️  chattr +C failed on $MODEL_CACHE_DIR (may already be set or unsupported)"
+            fi
+        fi
+    else
+        echo "      ℹ️  chattr +C skipped (not on btrfs root)"
+    fi
+else
+    echo "    ℹ️  Snapper skipped (ENABLE_BTRFS_SNAPPER=false)"
 fi
 
 step "Installing pinned macOS keyboard remap repo & accessibility tools..."

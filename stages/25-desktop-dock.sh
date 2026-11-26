@@ -12,6 +12,9 @@ init_runtime_state
 section "[25] Desktop Extensions, Dock ($DOCK_CHOICE), Polish & Shortcuts"
 
 step "Installing core macOS-feel GNOME Shell extensions..."
+# Disable stock Ubuntu tiling-assistant@ubuntu.com before enabling the leleat fork
+# to avoid duplicate tiling daemons fighting for window management.
+run gnome-extensions disable tiling-assistant@ubuntu.com >/dev/null 2>&1 || true
 install_ext "blur-my-shell@aunetx"                    "Blur My Shell"
 install_ext "tiling-assistant@leleat-on-github"       "Tiling Assistant"
 install_ext "just-perfection-desktop@just-perfection" "Just Perfection"
@@ -146,6 +149,33 @@ elif command -v dconf >/dev/null 2>&1; then
     dconf write /org/gnome/shell/extensions/just-perfection/switcher-popup-delay false || true
     dconf write /org/gnome/shell/extensions/just-perfection/startup-status 0 || true
 
+    # --- GPU-adaptive blur sigma (hardware.json driven, overrides Stage 20 defaults) ---
+    if [[ -f /etc/macubuntu/hardware.json ]] && command -v jq >/dev/null 2>&1; then
+        HW_GPU_VENDOR="$(jq -r '.gpu_vendor // "cpu"' /etc/macubuntu/hardware.json)"
+        HW_VRAM_MB="$(jq -r '.vram_mb // 0' /etc/macubuntu/hardware.json)"
+        HW_VRAM_MB="${HW_VRAM_MB:-0}"
+        HW_VRAM_MB="$(printf '%d' "$HW_VRAM_MB" 2>/dev/null || echo 0)"
+        HW_TIER="$(jq -r '.tier // "balanced"' /etc/macubuntu/hardware.json 2>/dev/null || echo balanced)"
+    else
+        HW_GPU_VENDOR="cpu"
+        HW_VRAM_MB=0
+        HW_TIER="balanced"
+    fi
+
+    if [[ "$HW_TIER" == "lite" ]] || [[ "$HW_GPU_VENDOR" == "intel" && "$HW_VRAM_MB" -lt 4096 ]]; then
+        BLUR_SIGMA=15
+        DISABLE_PER_FRAME="true"
+        echo "    ℹ️  Lite/Intel iGPU — Blur My Shell sigma=15, per-frame blur disabled"
+    elif [[ "$HW_GPU_VENDOR" == "nvidia" || "$HW_GPU_VENDOR" == "amd" ]] && [[ "$HW_VRAM_MB" -ge 4096 ]]; then
+        BLUR_SIGMA=25
+        DISABLE_PER_FRAME="false"
+        echo "    ℹ️  Discrete GPU >=4GB VRAM — Blur My Shell sigma=25, full glass blur"
+    else
+        BLUR_SIGMA=20
+        DISABLE_PER_FRAME="false"
+        echo "    ℹ️  Balanced hardware — Blur My Shell sigma=20"
+    fi
+
     # GPU Overdraw Protection for Blur My Shell (smooth 60-144 FPS on integrated Intel/AMD GPUs):
     # - Keep live per-window application blur OFF (biggest GNOME Shell FPS killer)
     # - Use GPU-cached static blur for the dock & unblur redundant layers in Overview
@@ -156,11 +186,47 @@ elif command -v dconf >/dev/null 2>&1; then
     dconf write /org/gnome/shell/extensions/blur-my-shell/dash-to-dock/unblur-in-overview true || true
     dconf write /org/gnome/shell/extensions/blur-my-shell/panel/unblur-in-overview true || true
     dconf write /org/gnome/shell/extensions/blur-my-shell/lockscreen/blur true || true
+    # Apply hardware-adaptive blur sigma per surface
+    for sigma_path in \
+        "/org/gnome/shell/extensions/blur-my-shell/panel/sigma" \
+        "/org/gnome/shell/extensions/blur-my-shell/dash-to-dock/sigma" \
+        "/org/gnome/shell/extensions/blur-my-shell/window/sigma"; do
+        dconf write "$sigma_path" "$BLUR_SIGMA" 2>/dev/null || true
+    done
+    if [[ "$DISABLE_PER_FRAME" == "true" ]]; then
+        for pf_path in \
+            "/org/gnome/shell/extensions/blur-my-shell/panel/disable-per-frame-blur" \
+            "/org/gnome/shell/extensions/blur-my-shell/dash-to-dock/disable-per-frame-blur" \
+            "/org/gnome/shell/extensions/blur-my-shell/window/disable-per-frame-blur"; do
+            dconf write "$pf_path" "true" 2>/dev/null || true
+        done
+    fi
 fi
 
 if is_true "$ENABLE_WAYLAND_FRACTIONAL_SCALING"; then
     step "Enabling crisp Wayland fractional scaling, native XWayland HiDPI & Variable Refresh Rate (VRR)..."
-    gset org.gnome.mutter experimental-features "['scale-monitor-framebuffer', 'xwayland-native-scaling', 'variable-refresh-rate']"
+    # Idempotent merge: preserve features set by other stages (e.g. VRR) instead of clobbering
+    run_as_user gsettings set org.gnome.mutter experimental-features \
+        "$(python3 - "scale-monitor-framebuffer" "xwayland-native-scaling" "variable-refresh-rate" <<'PY'
+import ast, sys
+raw = "[]"
+try:
+    import subprocess
+    raw = subprocess.check_output(["gsettings", "get", "org.gnome.mutter", "experimental-features"], text=True).strip()
+except Exception:
+    pass
+if raw.startswith("@as "):
+    raw = raw[4:].strip()
+try:
+    vals = list(ast.literal_eval(raw))
+except Exception:
+    vals = []
+for feat in sys.argv[1:]:
+    if feat not in vals:
+        vals.append(feat)
+print(repr(vals))
+PY
+)" 2>/dev/null || record_manual "Set org.gnome.mutter experimental-features via dconf-editor"
 fi
 
 if [[ "$DRY_RUN" == "1" ]]; then
@@ -186,4 +252,43 @@ if is_true "$ENABLE_CELINA"; then
     register_gnome_shortcut "celina-writing-tools" "${CELINA_NAME} Writing Tools"    "$HOME/.local/bin/celina-writing-tools"             "<Super><Shift>w"
     register_gnome_shortcut "celina-live-text"     "${CELINA_NAME} Live Text OCR"    "$HOME/.local/bin/celina-live-text"                 "<Super><Shift>t"
     register_gnome_shortcut "celina-autonomy"      "${CELINA_NAME} Autonomy Status"  "$HOME/.local/bin/celina-autonomy --status-notify"  "<Super><Shift>a"
+    register_gnome_shortcut "celina-visual-intelligence" "${CELINA_NAME} Visual Intelligence" "$HOME/.local/bin/celina-visual-intelligence" "<Super><Shift>v"
+fi
+
+# --- Visual Intelligence script (macOS Visual Intelligence equivalent) ---
+if is_true "$ENABLE_CELINA"; then
+    step "Installing Celina Visual Intelligence script (Super+Shift+V)..."
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] would install $HOME/.local/bin/celina-visual-intelligence"
+    else
+        run_as_user install -Dm 755 "$REPO_DIR/tools/celina-visual-intelligence" \
+            "$HOME/.local/bin/celina-visual-intelligence"
+        echo "      ✅ celina-visual-intelligence installed — bound to Super+Shift+V"
+    fi
+else
+    echo "    ℹ️  Visual Intelligence script skipped (ENABLE_CELINA=false)"
+fi
+
+# Note: gnome-sushi is owned SOLELY by Stage 45 (apps-backups-search).
+# Stage 25 does NOT install it to preserve the single-owner package invariant.
+
+# --- EasyEffects (PipeWire DSP — Voice Isolation, speaker EQ, loudness compensation) ---
+if is_true "$ENABLE_EASYEFFECTS"; then
+    step "Installing EasyEffects (PipeWire DSP — macOS Voice Isolation + speaker acoustics)..."
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] apt install easyeffects"
+        echo "      [dry-run] deploy PipeWire DSP presets for speaker EQ + neural mic noise suppression"
+    else
+        apt_install easyeffects || record_manual "Install EasyEffects manually for PipeWire DSP"
+        # Deploy macubuntu EasyEffects presets
+        EASYEFFECTS_DIR="$HOME/.config/easyeffects"
+        if [[ -d "$REPO_DIR/system/pipewire/easyeffects-presets" ]]; then
+            ensure_dir "$EASYEFFECTS_DIR"
+            cp -r "$REPO_DIR/system/pipewire/easyeffects-presets"/* "$EASYEFFECTS_DIR/" 2>/dev/null || true
+            echo "      ✅ EasyEffects presets deployed"
+        fi
+        echo "      ✅ EasyEffects installed — configure RNNoise/DeepFilterNet mic suppression + speaker EQ in EasyEffects UI"
+    fi
+else
+    echo "    ℹ️  EasyEffects skipped (ENABLE_EASYEFFECTS=false)"
 fi

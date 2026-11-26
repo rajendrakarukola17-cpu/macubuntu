@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0-Brain: Unified Local SQLite Brain (Update 19)
+"""Celina AI (Celly) - Gear 0-Brain: Unified Local SQLite Brain (Update 19)
 
 Single local SQLite database backing all Gear 0 personal assistant features:
   - habits      (date, category, value, note)
@@ -18,7 +17,7 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 _BRAIN_DB_PATH = Path.home() / ".celina" / "storage" / "shared" / "assistant.db"
 
@@ -129,7 +128,7 @@ def brain_log_habit(category: str, value: float = 1.0, note: str = "") -> str:
         return f"Failed to log habit: {exc}"
 
 
-def brain_get_habits(category: Optional[str] = None, days: int = 7) -> list[dict[str, Any]]:
+def brain_get_habits(category: str | None = None, days: int = 7) -> list[dict[str, Any]]:
     """Get habit entries for the last N days."""
     try:
         conn = _get_conn()
@@ -173,7 +172,7 @@ def brain_log_expense(amount: float, category: str, note: str = "") -> str:
         return f"Failed to log expense: {exc}"
 
 
-def brain_get_expenses(category: Optional[str] = None, days: int = 30) -> list[dict[str, Any]]:
+def brain_get_expenses(category: str | None = None, days: int = 30) -> list[dict[str, Any]]:
     """Get expense entries for the last N days."""
     try:
         conn = _get_conn()
@@ -223,7 +222,7 @@ def brain_set_alias(name: str, kind: str, value: str) -> str:
         return f"Failed to save alias: {exc}"
 
 
-def brain_get_alias(name: str) -> Optional[dict[str, str]]:
+def brain_get_alias(name: str) -> dict[str, str] | None:
     """Look up an alias."""
     try:
         conn = _get_conn()
@@ -265,7 +264,7 @@ def brain_set_macro(trigger: str, action_text: str, kind: str = "text") -> str:
         return f"Failed to save macro: {exc}"
 
 
-def brain_get_macro(trigger: str) -> Optional[dict[str, str]]:
+def brain_get_macro(trigger: str) -> dict[str, str] | None:
     """Look up a macro by trigger."""
     try:
         conn = _get_conn()
@@ -372,7 +371,7 @@ def brain_list_triggers() -> list[dict[str, Any]]:
     try:
         conn = _get_conn()
         rows = conn.execute(
-            "SELECT id, kind, condition_json, action_json, active FROM triggers WHERE active = 1"
+            "SELECT id, kind, condition_json, action_json, active FROM triggers WHERE active = 1",
         ).fetchall()
         conn.close()
         return [
@@ -425,19 +424,19 @@ def brain_summary() -> dict[str, Any]:
 
 
 __all__ = [
-    "brain_log_habit",
-    "brain_get_habits",
-    "brain_log_expense",
-    "brain_get_expenses",
-    "brain_set_alias",
+    "brain_add_trigger",
+    "brain_clipboard_add",
+    "brain_clipboard_clear",
+    "brain_clipboard_last",
     "brain_get_alias",
-    "brain_set_macro",
+    "brain_get_expenses",
+    "brain_get_habits",
     "brain_get_macro",
     "brain_list_macros",
-    "brain_clipboard_add",
-    "brain_clipboard_last",
-    "brain_clipboard_clear",
-    "brain_add_trigger",
     "brain_list_triggers",
+    "brain_log_expense",
+    "brain_log_habit",
+    "brain_set_alias",
+    "brain_set_macro",
     "brain_summary",
 ]

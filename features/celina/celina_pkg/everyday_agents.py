@@ -1,5 +1,4 @@
-"""
-Celina AI — 6 Specialized Everyday Desktop Agents (Update 03)
+"""Celina AI — 6 Specialized Everyday Desktop Agents (Update 03)
 Fast, deterministic, zero-hallucination everyday automation covering:
   1. MediaAgent        — Play songs/videos (YouTube autoplay, Spotify, JioSaavn, Netflix...), volume, brightness, media controls
   2. WebAgent          — Open any URL/domain/site, search 15+ sites, login pages, Maps directions, Google Translate, weather
@@ -22,11 +21,21 @@ import re
 import shutil
 import socket
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 from urllib.parse import quote
 
-from . import approval, command_runner, config, keychain_login, memory, os_events, spotlight_index, tools, turbo_mode
+from . import (
+    approval,
+    command_runner,
+    config,
+    keychain_login,
+    memory,
+    os_events,
+    tools,
+    turbo_mode,
+)
 
 ApprovalCallback = Callable[[str, str], bool]
 StatusCallback = Callable[[str], None]
@@ -111,11 +120,11 @@ _INFO_QUESTION_RE = re.compile(
 # ---------------------------------------------------------------------------
 # Persistent Quick Notes & To-Do Store (~/.local/share/celina/notes.json)
 # ---------------------------------------------------------------------------
-def _notes_path(base_dir: Optional[Path] = None) -> Path:
+def _notes_path(base_dir: Path | None = None) -> Path:
     return (base_dir or config.BASE_DIR) / "notes.json"
 
 
-def _load_notes_store(base_dir: Optional[Path] = None) -> dict[str, list[dict[str, Any]]]:
+def _load_notes_store(base_dir: Path | None = None) -> dict[str, list[dict[str, Any]]]:
     p = _notes_path(base_dir)
     if not p.exists():
         return {"todos": [], "notes": []}
@@ -131,12 +140,12 @@ def _load_notes_store(base_dir: Optional[Path] = None) -> dict[str, list[dict[st
     return {"todos": [], "notes": []}
 
 
-def _save_notes_store(data: dict[str, list[dict[str, Any]]], base_dir: Optional[Path] = None) -> None:
+def _save_notes_store(data: dict[str, list[dict[str, Any]]], base_dir: Path | None = None) -> None:
     p = _notes_path(base_dir)
     config.atomic_write_private_text(p, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
-def add_todo(task_text: str, *, dry_run: bool = False, base_dir: Optional[Path] = None) -> str:
+def add_todo(task_text: str, *, dry_run: bool = False, base_dir: Path | None = None) -> str:
     clean = task_text.strip().rstrip(".")
     if not clean:
         return "Tell me what task to add (e.g., 'add todo buy milk')."
@@ -151,10 +160,10 @@ def add_todo(task_text: str, *, dry_run: bool = False, base_dir: Optional[Path] 
     })
     _save_notes_store(store, base_dir)
     open_cnt = sum(1 for t in store["todos"] if not t.get("done"))
-    return f"✅ Added to-do: \"{clean}\" ({open_cnt} pending task(s))."
+    return f'✅ Added to-do: "{clean}" ({open_cnt} pending task(s)).'
 
 
-def list_todos(*, base_dir: Optional[Path] = None) -> str:
+def list_todos(*, base_dir: Path | None = None) -> str:
     store = _load_notes_store(base_dir)
     pending = [t for t in store["todos"] if not t.get("done")]
     done_cnt = len(store["todos"]) - len(pending)
@@ -168,7 +177,7 @@ def list_todos(*, base_dir: Optional[Path] = None) -> str:
     return "\n".join(lines)
 
 
-def complete_todo(selector: str, *, dry_run: bool = False, base_dir: Optional[Path] = None) -> str:
+def complete_todo(selector: str, *, dry_run: bool = False, base_dir: Path | None = None) -> str:
     sel = selector.strip().lower()
     if dry_run:
         return f"🧪 Dry-Run [FilesNotesAgent]: Would mark to-do '{selector.strip()}' completed."
@@ -191,10 +200,10 @@ def complete_todo(selector: str, *, dry_run: bool = False, base_dir: Optional[Pa
     target["done"] = True
     target["completed_at"] = datetime.datetime.now().isoformat(timespec="minutes")
     _save_notes_store(store, base_dir)
-    return f"✅ Completed to-do: \"{target.get('text', '')}\"."
+    return f'✅ Completed to-do: "{target.get('text', '')}".'
 
 
-def add_note(note_text: str, *, dry_run: bool = False, base_dir: Optional[Path] = None) -> str:
+def add_note(note_text: str, *, dry_run: bool = False, base_dir: Path | None = None) -> str:
     clean = note_text.strip()
     if not clean:
         return "Tell me what to save (e.g., 'take a note: call dentist at 4pm')."
@@ -206,10 +215,10 @@ def add_note(note_text: str, *, dry_run: bool = False, base_dir: Optional[Path] 
         "created_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
     })
     _save_notes_store(store, base_dir)
-    return f"📝 Saved note ({len(store['notes'])} total): \"{clean}\""
+    return f'📝 Saved note ({len(store['notes'])} total): "{clean}"'
 
 
-def list_notes(*, base_dir: Optional[Path] = None) -> str:
+def list_notes(*, base_dir: Path | None = None) -> str:
     store = _load_notes_store(base_dir)
     notes = store["notes"]
     if not notes:
@@ -247,8 +256,8 @@ def _plan_downloads_organization(downloads_dir: Path) -> list[tuple[Path, Path]]
 
 def organize_downloads(
     *,
-    downloads_dir: Optional[Path] = None,
-    approval_cb: Optional[ApprovalCallback] = None,
+    downloads_dir: Path | None = None,
+    approval_cb: ApprovalCallback | None = None,
     dry_run: bool = False,
 ) -> str:
     dl = downloads_dir or (Path.home() / "Downloads")
@@ -333,17 +342,16 @@ def _format_rel_mtime(mtime: float) -> str:
 def locate_files_smart(
     query: str,
     *,
-    base_dir: Optional[Path] = None,
+    base_dir: Path | None = None,
     include_content: bool = True,
     limit: int = 8,
     reveal_first: bool = False,
     dry_run: bool = False,
 ) -> str:
-    """
-    3-Stage Full-Home File Locator Pipeline:
-      Stage A: Exact & fuzzy filename scan across ALL extensions up to depth 8 (via fd/fdfind or bounded os.walk).
-      Stage B: Content search via ripgrep (`rg -i --files-with-matches`) + `spotlight_index` FTS5 if < 3 hits.
-      Stage C: Rich location receipt (~/relative path, folder breadcrumb, file size, modified age) + optional Nautilus reveal.
+    """3-Stage Full-Home File Locator Pipeline:
+    Stage A: Exact & fuzzy filename scan across ALL extensions up to depth 8 (via fd/fdfind or bounded os.walk).
+    Stage B: Content search via ripgrep (`rg -i --files-with-matches`) + `spotlight_index` FTS5 if < 3 hits.
+    Stage C: Rich location receipt (~/relative path, folder breadcrumb, file size, modified age) + optional Nautilus reveal.
     """
     raw_q = query.strip().strip("\"'?.!")
     # Strip natural filler like "the file about ", "my ", "file called ", "file named "
@@ -612,7 +620,7 @@ def run_daily_routine(routine: str, *, dry_run: bool = False) -> str:
 
     if routine == "good_morning":
         if dry_run:
-            return f"🧪 Dry-Run [RoutineAgent]: Would run Good Morning routine (Focus->default, Brightness->70%, unmute, time + battery + to-dos)."
+            return "🧪 Dry-Run [RoutineAgent]: Would run Good Morning routine (Focus->default, Brightness->70%, unmute, time + battery + to-dos)."
         os_events.set_focus_mode("default")
         tools.set_brightness(70)
         tools.set_volume(mute=False)
@@ -627,7 +635,7 @@ def run_daily_routine(routine: str, *, dry_run: bool = False) -> str:
 
     if routine == "good_night":
         if dry_run:
-            return f"🧪 Dry-Run [RoutineAgent]: Would run Good Night routine (Focus->sleep, pause media, Brightness->20%, Volume->15%, battery + to-dos)."
+            return "🧪 Dry-Run [RoutineAgent]: Would run Good Night routine (Focus->sleep, pause media, Brightness->20%, Volume->15%, battery + to-dos)."
         os_events.set_focus_mode("sleep")
         tools.control_media("pause")
         tools.set_brightness(20)
@@ -696,7 +704,7 @@ def teach_custom_skill(
     trigger_phrase: str,
     action_phrase: str,
     *,
-    db: Optional[memory.MemoryDB] = None,
+    db: memory.MemoryDB | None = None,
     dry_run: bool = False,
 ) -> str:
     trig = trigger_phrase.strip().strip("\"'").lower()
@@ -719,14 +727,14 @@ def teach_custom_skill(
     return (
         f"🧠 Learned & saved permanently to memory.db!\n"
         f"• Skill: `{slug}` (visible in `/skills` & `/kg`)\n"
-        f"• Trigger: say **\"{trig}\"** anytime → runs `{steps[0]['tool']}({steps[0]['args']})`."
+        f'• Trigger: say **"{trig}"** anytime → runs `{steps[0]['tool']}({steps[0]['args']})`.'
     )
 
 
 def remember_user_fact(
     fact_text: str,
     *,
-    db: Optional[memory.MemoryDB] = None,
+    db: memory.MemoryDB | None = None,
     dry_run: bool = False,
 ) -> str:
     clean = fact_text.strip().rstrip(".")
@@ -747,17 +755,19 @@ def remember_user_fact(
             mdb.add_knowledge_triple("user", "favorite_music_app", plat)
             return f"🧠 Saved permanently: your default music app is **{plat}** (saved in `/facts` & `/kg`). Future 'play <song>' requests will use {plat}!"
 
-    key = f"learned_{hashlib.sha1(low.encode('utf-8')).hexdigest()[:8]}"
+    key = f"learned_{hashlib.sha1(low.encode('utf-8'), usedforsecurity=False).hexdigest()[:8]}"
     if dry_run:
         return f"🧪 Dry-Run [LearningAgent]: Would save fact '{clean}' into memory.db facts & Knowledge Graph."
     mdb = db or memory.get_db()
     mdb.set_fact(key, clean)
     mdb.add_knowledge_triple("user", "remembered", clean)
-    return f"🧠 Saved permanently to memory & Knowledge Graph (`/facts` & `/kg`): \"{clean}\""
+    return f'🧠 Saved permanently to memory & Knowledge Graph (`/facts` & `/kg`): "{clean}"'
 
 
-def enable_local_zero_login_mcp(*, mcp_path: Optional[Path] = None, dry_run: bool = False) -> str:
-    """Enables installed zero-login local MCP servers (swadb-memory, playwright, git, sqlite, time) in mcp-servers.json."""
+def enable_local_zero_login_mcp(*, mcp_path: Path | None = None, dry_run: bool = False) -> str:
+    """Simulate enabling local MCP servers; live config changes require a broker."""
+    if not dry_run:
+        return "Denied: enabling MCP servers requires a trusted approval broker, which is not available."
     cfg_path = mcp_path or config.MCP_CONFIG_FILE
     if not cfg_path.exists():
         return f"MCP config not found at {cfg_path}."
@@ -805,16 +815,19 @@ def enable_local_zero_login_mcp(*, mcp_path: Optional[Path] = None, dry_run: boo
 def dispatch_everyday_task(
     text: str,
     *,
-    approval_cb: Optional[ApprovalCallback] = None,
-    status_cb: Optional[StatusCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
+    status_cb: StatusCallback | None = None,
     dry_run: bool = False,
-    db: Optional[memory.MemoryDB] = None,
-) -> Optional[tuple[str, str]]:
+    db: memory.MemoryDB | None = None,
+) -> tuple[str, str] | None:
+    """Route everyday requests in simulation only while no trusted broker exists.
+
+    For live requests, return None without executing an everyday handler. This
+    only disables this route: callers may still try other routing paths. A
+    dry-run is not an OS isolation boundary and may inspect local state.
     """
-    Routes everyday desktop requests across all 6 specialist agents cleanly.
-    Returns `(agent_name, response)` on match, or `None` to fall through to LLM.
-    Never hijacks conceptual/informational 'how do I...' questions.
-    """
+    if not dry_run:
+        return None
     clean = (text or "").strip()
     if not clean:
         return None

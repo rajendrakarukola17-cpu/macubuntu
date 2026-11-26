@@ -1,5 +1,4 @@
-"""
-Celina Phase 1: Asynchronous Supervisor-Worker Swarm (`autonomy/supervisor.py`)
+"""Celina Phase 1: Asynchronous Supervisor-Worker Swarm (`autonomy/supervisor.py`)
 
 Non-blocking Supervisor-Worker topology built purely on Python stdlib `asyncio`
 (0 MB extra dependency overhead, no LangGraph/JVM bloat):
@@ -20,8 +19,8 @@ import re
 import threading
 import time
 import uuid
-from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from .. import evidence
 from ..planner.task_graph import TaskGraph
@@ -52,24 +51,23 @@ class SwarmJob:
     worker_kind: str  # "reflex" | "research" | "draft" | "audit"
     status: str = "dispatched"  # "dispatched" | "running" | "done" | "failed"
     created_at: float = dataclasses.field(default_factory=time.time)
-    finished_at: Optional[float] = None
+    finished_at: float | None = None
     result: str = ""
     error: str = ""
     evidence_hash: str = ""
 
 
 class AsyncSupervisor:
-    """
-    Non-blocking Supervisor-Worker dispatcher with single-writer TaskGraph & EvidenceLedger lock.
+    """Non-blocking Supervisor-Worker dispatcher with single-writer TaskGraph & EvidenceLedger lock.
     """
 
     def __init__(
         self,
-        graph: Optional[TaskGraph] = None,
-        router: Optional[Any] = None,
+        graph: TaskGraph | None = None,
+        router: Any | None = None,
         *,
-        ledger: Optional[evidence.EvidenceLedger] = None,
-        worker_handlers: Optional[dict[str, WorkerHandler]] = None,
+        ledger: evidence.EvidenceLedger | None = None,
+        worker_handlers: dict[str, WorkerHandler] | None = None,
     ):
         self.graph = graph
         self.router = router
@@ -93,7 +91,7 @@ class AsyncSupervisor:
             return "audit"
         return "reflex"
 
-    async def _speak_safe(self, speak_cb: Optional[SpeakCallback], text: str) -> None:
+    async def _speak_safe(self, speak_cb: SpeakCallback | None, text: str) -> None:
         if speak_cb is None:
             return
         try:
@@ -107,16 +105,15 @@ class AsyncSupervisor:
         self,
         job: SwarmJob,
         *,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
         exit_code: int = 0,
     ) -> str:
-        """
-        Single-writer serialized commit for TaskGraph (SQLite WAL) + EvidenceLedger.
+        """Single-writer serialized commit for TaskGraph (SQLite WAL) + EvidenceLedger.
         Concurrent background workers NEVER race on SQLite writes or evidence hash chains!
         """
         async with self._writer_lock:
             ev_hash = ""
-            args_hash = hashlib.sha256(f"{job.worker_kind}:{job.goal}".encode("utf-8")).hexdigest()[:16]
+            args_hash = hashlib.sha256(f"{job.worker_kind}:{job.goal}".encode()).hexdigest()[:16]
             if self.graph is not None and task_id:
                 try:
                     ev_hash = self.graph.append_evidence(
@@ -165,8 +162,8 @@ class AsyncSupervisor:
         self,
         job: SwarmJob,
         *,
-        task_id: Optional[str],
-        notify_cb: Optional[SpeakCallback],
+        task_id: str | None,
+        notify_cb: SpeakCallback | None,
     ) -> SwarmJob:
         job.status = "running"
         try:
@@ -188,16 +185,15 @@ class AsyncSupervisor:
         self,
         goal: str,
         *,
-        speak_cb: Optional[SpeakCallback] = None,
-        notify_cb: Optional[SpeakCallback] = None,
+        speak_cb: SpeakCallback | None = None,
+        notify_cb: SpeakCallback | None = None,
         force_background: bool = False,
     ) -> SwarmJob:
-        """
-        Dispatches a goal through the Supervisor:
-          - Background kinds (`research` / `draft` / `audit`, or `force_background=True`):
-            launches `asyncio.create_task`, returns IMMEDIATELY, and calls `speak_cb` right away!
-          - Reflex kinds (`reflex` without `force_background`):
-            executes directly and commits cleanly through the single writer lock.
+        """Dispatches a goal through the Supervisor:
+        - Background kinds (`research` / `draft` / `audit`, or `force_background=True`):
+          launches `asyncio.create_task`, returns IMMEDIATELY, and calls `speak_cb` right away!
+        - Reflex kinds (`reflex` without `force_background`):
+          executes directly and commits cleanly through the single writer lock.
         """
         clean = (goal or "").strip()
         kind = self.classify_goal(clean)
@@ -205,7 +201,7 @@ class AsyncSupervisor:
         job = SwarmJob(job_id=job_id, goal=clean, worker_kind=kind, status="dispatched")
         self._jobs[job_id] = job
 
-        task_id: Optional[str] = None
+        task_id: str | None = None
         if self.graph is not None:
             async with self._writer_lock:
                 try:
@@ -252,13 +248,13 @@ class AsyncSupervisor:
         self,
         job: SwarmJob,
         *,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
         exit_code: int = 0,
     ) -> str:
         """Thread-safe single-writer commit mirror for synchronous CLI/chat `/bg` workers."""
         with self._sync_writer_lock:
             ev_hash = ""
-            args_hash = hashlib.sha256(f"{job.worker_kind}:{job.goal}".encode("utf-8")).hexdigest()[:16]
+            args_hash = hashlib.sha256(f"{job.worker_kind}:{job.goal}".encode()).hexdigest()[:16]
             if self.graph is not None and task_id:
                 try:
                     ev_hash = self.graph.append_evidence(
@@ -296,10 +292,9 @@ class AsyncSupervisor:
         self,
         goal: str,
         *,
-        notify_cb: Optional[SpeakCallback] = None,
+        notify_cb: SpeakCallback | None = None,
     ) -> SwarmJob:
-        """
-        Non-blocking sync entrypoint for CLI / interactive chat (`/bg <goal>`):
+        """Non-blocking sync entrypoint for CLI / interactive chat (`/bg <goal>`):
         returns immediately with `SwarmJob` while the worker runs in a daemon thread
         and commits through the single-writer SQLite WAL + EvidenceLedger lock.
         """
@@ -309,7 +304,7 @@ class AsyncSupervisor:
         job = SwarmJob(job_id=job_id, goal=clean, worker_kind=kind, status="dispatched")
         self._jobs[job_id] = job
 
-        task_id: Optional[str] = None
+        task_id: str | None = None
         if self.graph is not None:
             with self._sync_writer_lock:
                 try:

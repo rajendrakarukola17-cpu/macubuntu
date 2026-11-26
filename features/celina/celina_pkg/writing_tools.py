@@ -1,5 +1,4 @@
-"""
-Celina AI - Apple Intelligence Writing Tools, Live Text Region OCR & Active Context (v4.3)
+"""Celina AI - Apple Intelligence Writing Tools, Live Text Region OCR & Active Context (v4.3)
 Privacy-first local-by-default desktop intelligence:
   - Writing Tools (`Super+Shift+W`): grabs Wayland primary selection / clipboard, transforms text
     locally via Ollama (proofread, rewrite, concise, friendly, professional, summarize, key_points,
@@ -16,8 +15,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -42,17 +42,18 @@ _DEICTIC_HINTS = (
 
 
 def read_wayland_selection() -> str:
-    """Reads the Wayland primary selection first, falling back to the standard clipboard."""
+    """Reads ONLY the Wayland primary selection (highlighted text).
+
+    Deliberately does NOT read the standard clipboard (Ctrl+C buffer) —
+    users copy API keys, passwords, and 2FA codes there, and auto-reading
+    leaks them into the model's KV cache and request logs.
+    """
     if shutil.which("wl-paste"):
-        for args in (["wl-paste", "--primary", "--no-newline"], ["wl-paste", "--no-newline"]):
-            res = command_runner.run_command(args, timeout=2.0)
-            if res.ok and res.stdout.strip():
-                return res.stdout.strip()
-    if shutil.which("xclip"):
-        for sel in ("primary", "clipboard"):
-            res = command_runner.run_command(["xclip", "-o", "-selection", sel], timeout=2.0)
-            if res.ok and res.stdout.strip():
-                return res.stdout.strip()
+        res = command_runner.run_command(
+            ["wl-paste", "--primary", "--no-newline"], timeout=2.0,
+        )
+        if res.ok and res.stdout.strip():
+            return res.stdout.strip()
     return ""
 
 
@@ -75,7 +76,23 @@ def write_wayland_clipboard(text: str) -> bool:
 
 
 def _default_local_llm(system_prompt: str, user_text: str) -> tuple[bool, str]:
-    """Runs strictly on local Ollama (127.0.0.1) so Writing Tools text never leaves the machine."""
+    """Runs strictly on local Ollama (127.0.0.1) so Writing Tools text never leaves the machine.
+
+    Enforces loopback-only OLLAMA_API_BASE — a user-configured remote endpoint
+    would otherwise silently leak all Writing Tools text off-device.
+    """
+    parsed = urlparse(config.OLLAMA_API_BASE)
+    host = parsed.hostname or ""
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = host in ("localhost", "localhost.localdomain")
+    if not is_loopback:
+        return (
+            False,
+            f"Writing Tools refused: OLLAMA_API_BASE ({parsed.netloc}) is not loopback. "
+            "Local-only policy — text must never leave the machine.",
+        )
     url = f"{config.OLLAMA_API_BASE.rstrip('/')}/api/chat"
     payload = {
         "model": config.LOCAL_MODEL,
@@ -100,15 +117,39 @@ def _default_local_llm(system_prompt: str, user_text: str) -> tuple[bool, str]:
         return False, f"Local Ollama unavailable: {exc}"
 
 
+def inject_text_via_ydotool(text: str) -> bool:
+    """Inject transformed text directly into the active Wayland text field via ydotool.
+    System-wide text injection (no clipboard required) — macOS-style "replace in place".
+    Fail-closed: returns False if ydotool is unavailable or injection fails.
+    Never logs or leaks the injected text.
+    """
+    if not text:
+        return False
+    if not shutil.which("ydotool"):
+        return False
+    try:
+        proc = subprocess.run(
+            ["ydotool", "type", "--", text],
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        return proc.returncode == 0
+    except Exception:
+        return False
+
+
 def writing_tool_transform(
     mode: str = "proofread",
     text: str = "",
     copy_result: bool = True,
-    llm_fn: Optional[Callable[[str, str], tuple[bool, str]]] = None,
+    inject: bool = False,
+    llm_fn: Callable[[str, str], tuple[bool, str]] | None = None,
 ) -> str:
-    """
-    Apple Intelligence Writing Tools equivalent (100% local Ollama by default).
+    """Apple Intelligence Writing Tools equivalent (100% local Ollama by default).
     If `text` is omitted, reads the currently highlighted Wayland selection / clipboard.
+    When `inject=True`, types the transformed text directly into the active Wayland
+    field via ydotool (system-wide text injection, Stage 30 / ENABLE_WAYLAND_TEXT_INJECTION).
     """
     m = (mode or "proofread").strip().lower()
     if m not in WRITING_MODES:
@@ -128,23 +169,34 @@ def writing_tool_transform(
         return f"Writing Tool ({m}) error: {result}"
 
     copied_note = ""
+    injected_note = ""
     if copy_result and write_wayland_clipboard(result):
         copied_note = "\n\n📋 Copied transformed text to clipboard (press Ctrl+V to replace)."
-    return f"✍️ Writing Tool [{m}] (local):\n{result}{copied_note}"
+    if inject:
+        # P0: Never inject into password fields — refuse password-field typing.
+        if automation.is_focused_password_field():
+            injected_note = "\n\n🔒 Injection blocked: active field is a password field (refused to type secrets)."
+        else:
+            injected_ok = inject_text_via_ydotool(result)
+            if injected_ok:
+                injected_note = "\n\n⌨️  Injected transformed text directly into the active field (ydotool)."
+            else:
+                injected_note = "\n\n⚠️  ydotool injection unavailable (install ydotool + enable ENABLE_WAYLAND_TEXT_INJECTION)."
+
+    return f"✍️ Writing Tool [{m}] (local):\n{result}{copied_note}{injected_note}"
 
 
 def live_text_ocr_region(
     copy_to_clipboard: bool = True,
     lang: str = "eng",
-    capture_fn: Optional[Callable[[Path], bool]] = None,
-    ocr_fn: Optional[Callable[[Path, str], tuple[bool, str]]] = None,
+    capture_fn: Callable[[Path], bool] | None = None,
+    ocr_fn: Callable[[Path, str], tuple[bool, str]] | None = None,
 ) -> str:
-    """
-    macOS Live Text equivalent (`Super+Shift+T`):
-      1. Captures an interactive screen region into a private 0600 temp PNG
-      2. Runs local Tesseract OCR
-      3. Copies extracted text straight to the Wayland clipboard
-      4. Deletes the temporary screenshot immediately (zero disk trail!)
+    """MacOS Live Text equivalent (`Super+Shift+T`):
+    1. Captures an interactive screen region into a private 0600 temp PNG
+    2. Runs local Tesseract OCR
+    3. Copies extracted text straight to the Wayland clipboard
+    4. Deletes the temporary screenshot immediately (zero disk trail!)
     """
     if ocr_fn is None and not shutil.which("tesseract"):
         return "Error: tesseract-ocr is not installed (run Stage 10 or `sudo apt install tesseract-ocr`)."
@@ -203,8 +255,7 @@ def _capture_region_png(out_path: Path) -> bool:
 
 
 def get_lightweight_active_context(user_prompt: str = "") -> str:
-    """
-    Returns a tiny non-sensitive context header (`Active app: ... | Window: ...`) when the user
+    """Returns a tiny non-sensitive context header (`Active app: ... | Window: ...`) when the user
     references on-screen context ("summarize this", "rewrite this", etc.), without taking screenshots.
     """
     low = (user_prompt or "").strip().lower()
@@ -215,8 +266,12 @@ def get_lightweight_active_context(user_prompt: str = "") -> str:
         return ""
     app = str(info.get("app") or "").strip()
     title = str(info.get("title") or "").strip()
-    # Never leak password-manager window titles into prompts
-    if any(kw in f"{app} {title}".lower() for kw in ("keepass", "bitwarden", "1password", "password")):
+    # Never leak password-manager window titles into prompts.
+    # Reuse the AT-SPI2-aware password-field detector instead of a fragile denylist.
+    if automation.is_focused_password_field():
+        return ""
+    # Also suppress known password-manager window titles as a defense-in-depth hint.
+    if any(kw in f"{app} {title}".lower() for kw in ("keepass", "bitwarden", "1password", "password", "passwd")):
         return ""
     if not app and not title:
         return ""

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Plugin #5: Self-Healing Fallback Chain (Update 19)
+"""Celina AI (Celly) - Plugin #5: Self-Healing Fallback Chain (Update 19)
 
 Every Gear 0 action has a primary, secondary, and fallback execution path.
 If the primary tool fails, Gear 0 instantly tries secondary, then fallback,
@@ -12,14 +11,14 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
-
+from typing import Any
 
 _DB_PATH = Path(os.environ.get("CELINA_SELFHEAL_DB", Path.home() / ".celina" / "storage" / "shared" / "self_heal.db"))
 
@@ -27,24 +26,27 @@ _DB_PATH = Path(os.environ.get("CELINA_SELFHEAL_DB", Path.home() / ".celina" / "
 @dataclass
 class FallbackStep:
     """A single fallback step: tool name, command, and args."""
+
     name: str
     command: str  # shell command or tool identifier
     args: list[str] = field(default_factory=list)
-    required_tool: Optional[str] = None  # external binary that must exist
+    required_tool: str | None = None  # external binary that must exist
 
 
 @dataclass
 class FallbackChain:
     """A complete fallback chain for an action."""
+
     action: str
     primary: FallbackStep
-    secondary: Optional[FallbackStep] = None
-    fallback: Optional[FallbackStep] = None
+    secondary: FallbackStep | None = None
+    fallback: FallbackStep | None = None
 
 
 @dataclass
 class ExecutionResult:
     """Result of executing a fallback chain."""
+
     success: bool
     step_used: str
     output: str
@@ -53,8 +55,7 @@ class ExecutionResult:
 
 
 class SelfHealingFallback:
-    """
-    Executes actions with automatic fallback chains.
+    """Executes actions with automatic fallback chains.
 
     Example:
       chain = FallbackChain(
@@ -64,6 +65,7 @@ class SelfHealingFallback:
         fallback=FallbackStep("okular", "okular", ["file.pdf"], required_tool="okular"),
       )
       result = healer.execute(chain)
+
     """
 
     # Pre-defined fallback chains for common actions
@@ -82,9 +84,9 @@ class SelfHealingFallback:
         ),
         "empty_trash": FallbackChain(
             action="empty_trash",
-            primary=FallbackStep("python_shim", "python"),
-            secondary=FallbackStep("send2trash", "python", ["-m", "send2trash", "~/.local/share/Trash/files/*"]),
-            fallback=FallbackStep("send2trash_info", "python", ["-m", "send2trash", "~/.local/share/Trash/info/*"]),
+            primary=FallbackStep("trash_empty", "trash-empty", [], required_tool="trash-empty"),
+            secondary=FallbackStep("send2trash_files", "python", ["-m", "send2trash", str(Path.home() / ".local" / "share" / "Trash" / "files")]),
+            fallback=FallbackStep("send2trash_info", "python", ["-m", "send2trash", str(Path.home() / ".local" / "share" / "Trash" / "info")]),
         ),
         "take_screenshot": FallbackChain(
             action="take_screenshot",
@@ -171,7 +173,7 @@ class SelfHealingFallback:
         """Register a custom fallback chain."""
         self._custom_chains[chain.action] = chain
 
-    def get_chain(self, action: str) -> Optional[FallbackChain]:
+    def get_chain(self, action: str) -> FallbackChain | None:
         """Get a fallback chain by action name (custom first, then defaults)."""
         if action in self._custom_chains:
             return self._custom_chains[action]
@@ -216,9 +218,8 @@ class SelfHealingFallback:
             duration_ms = (time.monotonic() - t0) * 1000
             return False, f"Execution error: {exc}", duration_ms
 
-    def execute(self, action: str, *positional_args: str, chain: Optional[FallbackChain] = None) -> ExecutionResult:
-        """
-        Execute an action with automatic fallback.
+    def execute(self, action: str, *positional_args: str, chain: FallbackChain | None = None) -> ExecutionResult:
+        """Execute an action with automatic fallback.
 
         Tries primary → secondary → fallback until one succeeds.
         Returns ExecutionResult with details of which step succeeded.
@@ -232,7 +233,7 @@ class SelfHealingFallback:
         if chain is None:
             total_ms = (time.monotonic() - t0) * 1000
             return ExecutionResult(
-                False, "none", f"No fallback chain registered for action: {action}", total_ms, attempts
+                False, "none", f"No fallback chain registered for action: {action}", total_ms, attempts,
             )
 
         steps = [chain.primary]
@@ -255,7 +256,7 @@ class SelfHealingFallback:
                 total_ms = (time.monotonic() - t0) * 1000
                 self._record_attempt(action, step.name, True, "", total_ms)
                 return ExecutionResult(
-                    True, step.name, output, total_ms, attempts
+                    True, step.name, output, total_ms, attempts,
                 )
 
         # All steps failed
@@ -284,7 +285,7 @@ class SelfHealingFallback:
         """Lock screen with fallback chain."""
         return self.execute("lock_screen")
 
-    def execute_screenshot(self, output_path: str = "/tmp/celina_screenshot.png") -> ExecutionResult:
+    def execute_screenshot(self, output_path: str = "/tmp/celina_screenshot.png") -> ExecutionResult:  # nosec B108 — default output path (user-overridable), not temp file creation
         """Take a screenshot with fallback chain."""
         return self.execute("take_screenshot", output_path)
 
@@ -309,7 +310,7 @@ class SelfHealingFallback:
         try:
             c = sqlite3.connect(str(_DB_PATH))
             rows = c.execute(
-                "SELECT action, COUNT(*) as total, SUM(success) as succeeded FROM fallback_history GROUP BY action ORDER BY total DESC"
+                "SELECT action, COUNT(*) as total, SUM(success) as succeeded FROM fallback_history GROUP BY action ORDER BY total DESC",
             ).fetchall()
             c.close()
             report = {}
@@ -330,7 +331,7 @@ class SelfHealingFallback:
 # Global singleton
 # ---------------------------------------------------------------------------
 
-_healer: Optional[SelfHealingFallback] = None
+_healer: SelfHealingFallback | None = None
 
 
 def get_healer() -> SelfHealingFallback:
@@ -347,14 +348,14 @@ def execute_with_fallback(action: str, *args: str) -> ExecutionResult:
 
 
 __all__ = [
-    "SelfHealingFallback",
+    "ExecutionResult",
     "FallbackChain",
     "FallbackStep",
-    "ExecutionResult",
-    "get_healer",
+    "SelfHealingFallback",
     "execute_with_fallback",
     "gear0_heal_classify",
     "gear0_heal_execute",
+    "get_healer",
 ]
 
 
@@ -362,13 +363,13 @@ __all__ = [
 # Gear 0 Plugin #5 dispatch: Self-Healing Fallback Chain
 # ---------------------------------------------------------------------------
 
-_HEAL_QUERY_RE = __import__("re").compile(
+_HEAL_QUERY_RE = re.compile(
     r"^(?:please\s+)?(?:heal|self.?heal|fallback|reliability|recover|fix)\b",
-    __import__("re").IGNORECASE,
+    re.IGNORECASE,
 )
 
 
-def gear0_heal_classify(query: str) -> Optional[str]:
+def gear0_heal_classify(query: str) -> str | None:
     """Classify query into a self-heal handler name, or None."""
     low = query.strip().lower()
     if not _HEAL_QUERY_RE.match(low):
@@ -382,7 +383,7 @@ def gear0_heal_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_heal_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_heal_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0 Plugin #5 self-heal handler."""
     try:
         healer = get_healer()

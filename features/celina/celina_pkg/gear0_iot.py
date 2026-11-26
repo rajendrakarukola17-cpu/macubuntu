@@ -1,20 +1,20 @@
-"""
-Celina AI (Celly) - Gear 0 IoT / Local Triggers (Update 19)
+"""Celina AI (Celly) - Gear 0 IoT / Local Triggers (Update 19)
 
 Local IoT/context trigger evaluation. Zero cloud, sub-5ms.
+
 Examples:
   - "Turn on the living room lights" → local MQTT/HTTP command
   - "Set thermostat to 72 degrees" → local device control
+
 """
 
 from __future__ import annotations
 
 import json
 import shutil
-import socket
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _LIGHTS_RE = __import__("re").compile(
     r"^(?:turn\s+on|switch\s+on|activate)\s+(?:the\s+)?(\w+)\s+lights\??$",
@@ -26,7 +26,7 @@ _THERMOSTAT_RE = __import__("re").compile(
 )
 
 # In-memory local device registry (loaded from gear0_iot_devices.json if present)
-_DEVICES: Dict[str, Dict[str, Any]] = {}
+_DEVICES: dict[str, dict[str, Any]] = {}
 
 
 def iot_load_devices(config_path: Path | str | None = None) -> None:
@@ -42,7 +42,7 @@ def iot_load_devices(config_path: Path | str | None = None) -> None:
         _DEVICES = {}
 
 
-def iot_device_list() -> List[Dict[str, Any]]:
+def iot_device_list() -> list[dict[str, Any]]:
     """Return list of registered local IoT devices."""
     return list(_DEVICES.values())
 
@@ -72,7 +72,7 @@ def iot_command(device: str, action: str, value: Any = None) -> str:
             url = f"http://{endpoint}/{action}"
             if value is not None:
                 url += f"?value={value}"
-            urllib.request.urlopen(url, timeout=3)
+            urllib.request.urlopen(url, timeout=3)  # nosec B310 — IoT HTTP command, protocol validated as http
             return f"✓ HTTP command sent to {device}: {action}"
         return f"Unsupported protocol: {protocol}"
     except Exception as exc:
@@ -94,7 +94,7 @@ def iot_thermostat_set(temp: int) -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_iot_classify(query: str) -> Optional[str]:
+def gear0_iot_classify(query: str) -> str | None:
     """Classify query into an IoT handler name, or None."""
     low = query.strip().lower()
     m = _LIGHTS_RE.match(low)
@@ -106,7 +106,7 @@ def gear0_iot_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_iot_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_iot_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-IoT handler."""
     try:
         if handler.startswith("lights_on:"):
@@ -121,11 +121,11 @@ def gear0_iot_execute(handler: str, query: str, dry_run: bool = False) -> Option
 
 
 __all__ = [
-    "iot_load_devices",
-    "iot_device_list",
-    "iot_command",
-    "iot_lights_on",
-    "iot_thermostat_set",
     "gear0_iot_classify",
     "gear0_iot_execute",
+    "iot_command",
+    "iot_device_list",
+    "iot_lights_on",
+    "iot_load_devices",
+    "iot_thermostat_set",
 ]

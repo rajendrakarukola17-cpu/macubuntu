@@ -1,22 +1,22 @@
-"""
-Celina AI (Celly) - Gear 0 Macro / Text Expansion (Update 19)
+"""Celina AI (Celly) - Gear 0 Macro / Text Expansion (Update 19)
 
 Local macro & text expansion system. Zero cloud, sub-1ms.
+
 Examples:
   - "expaddr" → expands to full address
   - "sig" → expands to email signature
+
 """
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 _CONFIG_PATH = Path.home() / ".celina" / "storage" / "shared" / "gear0_macros.json"
 
 
-def _load_macros() -> Dict[str, str]:
+def _load_macros() -> dict[str, str]:
     try:
         if _CONFIG_PATH.exists():
             return json.loads(_CONFIG_PATH.read_text())
@@ -25,7 +25,7 @@ def _load_macros() -> Dict[str, str]:
     return {}
 
 
-def _save_macros(macros: Dict[str, str]) -> None:
+def _save_macros(macros: dict[str, str]) -> None:
     try:
         _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         _CONFIG_PATH.write_text(json.dumps(macros, indent=2))
@@ -79,7 +79,7 @@ _LIST_MACROS_RE = __import__("re").compile(
 )
 
 
-def gear0_macro_classify(query: str) -> Optional[str]:
+def gear0_macro_classify(query: str) -> str | None:
     """Classify query into a macro handler name, or None."""
     low = query.strip().lower()
     if _EXPAND_RE.match(low):
@@ -91,10 +91,9 @@ def gear0_macro_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_macro_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_macro_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Macro handler."""
     try:
-        import re
         if handler == "expand":
             m = _EXPAND_RE.match(query)
             if m:
@@ -111,9 +110,9 @@ def gear0_macro_execute(handler: str, query: str, dry_run: bool = False) -> Opti
 
 
 __all__ = [
-    "macro_expand",
-    "macro_add",
-    "macro_list",
     "gear0_macro_classify",
     "gear0_macro_execute",
+    "macro_add",
+    "macro_expand",
+    "macro_list",
 ]

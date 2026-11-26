@@ -1,21 +1,22 @@
-"""
-Celina AI (Celly) - Gear 0 Routines (Update 19)
+"""Celina AI (Celly) - Gear 0 Routines (Update 19)
 
 Multi-step local routines — pre-compiled scripts executed atomically.
+
 Examples:
   - "Good morning" → read calendar, weather, open news, set volume
   - "Start focus mode" → DND, block sites, start Pomodoro
   - "Good night" → DND, dim lights, set alarm
+
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 import subprocess
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 _ROUTINES_DB_PATH = Path.home() / ".celina" / "storage" / "shared" / "routines.db"
 
@@ -50,7 +51,8 @@ _SEEDED = False
 
 def _ensure_seeded(conn: sqlite3.Connection) -> None:
     """Seed built-in routines into the DB — called once per connection, but
-    only actually inserts if the row doesn't already exist (INSERT OR IGNORE)."""
+    only actually inserts if the row doesn't already exist (INSERT OR IGNORE).
+    """
     global _SEEDED
     if not _SEEDED:
         for name, steps in BUILTIN_ROUTINES.items():
@@ -63,8 +65,6 @@ def _ensure_seeded(conn: sqlite3.Connection) -> None:
 
 
 def _get_conn() -> sqlite3.Connection:
-    import sqlite3  # local import to keep top-level stdlib-only
-
     _ROUTINES_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(_ROUTINES_DB_PATH))
     conn.execute("PRAGMA journal_mode=WAL")
@@ -172,14 +172,14 @@ def _query_calendar() -> str:
         # Try calcurse
         if shutil.which("calcurse"):
             result = subprocess.run(
-                ["calcurse", "-n"], capture_output=True, text=True, timeout=5
+                ["calcurse", "-n"], capture_output=True, text=True, timeout=5,
             )
             if result.stdout.strip():
                 return result.stdout.strip()[:200]
         # Try khal
         if shutil.which("khal"):
             result = subprocess.run(
-                ["khal", "list", "now", "today"], capture_output=True, text=True, timeout=5
+                ["khal", "list", "now", "today"], capture_output=True, text=True, timeout=5,
             )
             if result.stdout.strip():
                 return result.stdout.strip()[:200]
@@ -201,7 +201,7 @@ def _query_calendar() -> str:
         return "Calendar unavailable."
 
 
-import re  # noqa: E402
+import re
 
 
 def _query_weather() -> str:
@@ -293,7 +293,7 @@ def routine_add(name: str, steps: list[dict[str, Any]]) -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_routines_classify(query: str) -> Optional[str]:
+def gear0_routines_classify(query: str) -> str | None:
     """Classify query into a routine name, or None."""
     low = query.strip().lower()
 
@@ -314,7 +314,7 @@ def gear0_routines_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_routines_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_routines_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Routines handler."""
     try:
         if handler == "run_custom":
@@ -330,10 +330,10 @@ def gear0_routines_execute(handler: str, query: str, dry_run: bool = False) -> O
 
 
 __all__ = [
-    "routine_run",
-    "routine_list",
-    "routine_add",
     "BUILTIN_ROUTINES",
     "gear0_routines_classify",
     "gear0_routines_execute",
+    "routine_add",
+    "routine_list",
+    "routine_run",
 ]

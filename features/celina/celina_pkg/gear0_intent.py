@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0-Intent: Deterministic Slot Filling (Update 19)
+"""Celina AI (Celly) - Gear 0-Intent: Deterministic Slot Filling (Update 19)
 
 Classic Siri-style intent recognition: pattern match → extract slots → execute OS API.
 Zero LLM tokens, zero AI RAM, sub-5ms latency.
@@ -11,8 +10,6 @@ from __future__ import annotations
 
 import datetime
 import re
-from pathlib import Path
-from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
 # Pre-compiled regex patterns (compiled once at import)
@@ -124,7 +121,7 @@ def _parse_duration_seconds(amount: int, unit: str) -> int:
     return min(val, 86400)
 
 
-def _parse_natural_time(text: str) -> Optional[datetime.datetime]:
+def _parse_natural_time(text: str) -> datetime.datetime | None:
     """Parse natural language time like '3 PM tomorrow' into datetime."""
     try:
         now = datetime.datetime.now()
@@ -138,7 +135,7 @@ def _parse_natural_time(text: str) -> Optional[datetime.datetime]:
 
         # Handle specific times: "3 PM", "3:30 PM", "15:00"
         time_match = re.search(
-            r"(\d{1,2}):?(\d{2})?\s*(am|pm)?", text_lower
+            r"(\d{1,2}):?(\d{2})?\s*(am|pm)?", text_lower,
         )
         if time_match:
             hour = int(time_match.group(1))
@@ -160,10 +157,7 @@ def _parse_natural_time(text: str) -> Optional[datetime.datetime]:
                 target += datetime.timedelta(days=1)
             elif "morning" in text_lower and hour < 12:
                 pass  # already morning
-            elif "afternoon" in text_lower and hour < 12:
-                hour += 12
-                target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            elif "evening" in text_lower and hour < 12:
+            elif ("afternoon" in text_lower and hour < 12) or ("evening" in text_lower and hour < 12):
                 hour += 12
                 target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
@@ -177,7 +171,7 @@ def _parse_natural_time(text: str) -> Optional[datetime.datetime]:
 # Slot-filling intent handlers
 # ---------------------------------------------------------------------------
 
-def handle_timer(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_timer(query: str, dry_run: bool = False) -> str | None:
     """Handle timer requests: 'set a timer for 20 minutes'."""
     m = _TIMER_RE.match(query.strip())
     if not m:
@@ -193,7 +187,7 @@ def handle_timer(query: str, dry_run: bool = False) -> Optional[str]:
         return f"Timer set for {secs} seconds ({msg})."
 
 
-def handle_remind_in(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_remind_in(query: str, dry_run: bool = False) -> str | None:
     """Handle 'remind me in X minutes to do something'."""
     m = _REMIND_IN_RE.match(query.strip())
     if not m:
@@ -209,7 +203,7 @@ def handle_remind_in(query: str, dry_run: bool = False) -> Optional[str]:
         return f"Reminder set for {secs} seconds from now ({msg})."
 
 
-def handle_remind_at(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_remind_at(query: str, dry_run: bool = False) -> str | None:
     """Handle 'remind me to call John at 3 PM'."""
     m = _REMIND_AT_RE.match(query.strip())
     if not m:
@@ -240,7 +234,7 @@ def handle_remind_at(query: str, dry_run: bool = False) -> Optional[str]:
     return None
 
 
-def handle_theme(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_theme(query: str, dry_run: bool = False) -> str | None:
     """Handle dark/light mode: 'turn on dark mode', 'switch to light mode', 'dark mode off'."""
     m = _THEME_ON_OFF_RE.match(query.strip()) or _THEME_RE.match(query.strip())
     if not m:
@@ -272,7 +266,7 @@ def handle_theme(query: str, dry_run: bool = False) -> Optional[str]:
         return f"Switched to {'dark' if want_dark else 'light'} mode."
 
 
-def handle_dnd(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_dnd(query: str, dry_run: bool = False) -> str | None:
     """Handle Do Not Disturb: 'turn on dnd', 'do not disturb off', 'dnd off'."""
     m = _DND_RE.match(query.strip())
     if not m:
@@ -294,7 +288,7 @@ def handle_dnd(query: str, dry_run: bool = False) -> Optional[str]:
         return f"Do Not Disturb {'enabled' if enabled else 'disabled'}."
 
 
-def handle_night_light(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_night_light(query: str, dry_run: bool = False) -> str | None:
     """Handle Night Light: 'turn on night light', 'night light off'."""
     m = _NIGHT_LIGHT_RE.match(query.strip())
     if not m:
@@ -315,7 +309,7 @@ def handle_night_light(query: str, dry_run: bool = False) -> Optional[str]:
         return f"Night Light {'enabled' if enabled else 'disabled'}."
 
 
-def handle_volume(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_volume(query: str, dry_run: bool = False) -> str | None:
     """Handle volume: 'set volume to 50%', 'volume up', 'mute mic'."""
     m = _VOLUME_RE.match(query.strip())
     if m:
@@ -354,7 +348,7 @@ def handle_volume(query: str, dry_run: bool = False) -> Optional[str]:
     return None
 
 
-def handle_brightness(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_brightness(query: str, dry_run: bool = False) -> str | None:
     """Handle brightness: 'set brightness to 50%'."""
     m = _BRIGHTNESS_RE.match(query.strip())
     if not m:
@@ -369,7 +363,7 @@ def handle_brightness(query: str, dry_run: bool = False) -> Optional[str]:
         return f"Brightness set to {level}%."
 
 
-def handle_open_app(query: str, dry_run: bool = False) -> Optional[str]:
+def handle_open_app(query: str, dry_run: bool = False) -> str | None:
     """Handle open application: 'open VS Code', 'launch chrome'."""
     m = _OPEN_APP_RE.match(query.strip())
     if not m:
@@ -388,7 +382,7 @@ def handle_open_app(query: str, dry_run: bool = False) -> Optional[str]:
 # Master dispatch: classify Gear 0-Intent request
 # ---------------------------------------------------------------------------
 
-def gear0_intent_classify(query: str) -> Optional[str]:
+def gear0_intent_classify(query: str) -> str | None:
     """Classify query into an intent handler name, or None."""
     low = query.strip().lower()
 
@@ -414,7 +408,7 @@ def gear0_intent_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_intent_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_intent_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Intent handler."""
     try:
         if handler == "timer":
@@ -441,8 +435,7 @@ def gear0_intent_execute(handler: str, query: str, dry_run: bool = False) -> Opt
 
 
 __all__ = [
+    "_parse_natural_time",
     "gear0_intent_classify",
     "gear0_intent_execute",
-    "gear0_intent_classify",
-    "_parse_natural_time",
 ]

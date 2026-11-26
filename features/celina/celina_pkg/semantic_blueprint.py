@@ -1,5 +1,4 @@
-"""
-Celina AI — LUMOS-Style Semantic Blueprint Perception Layer (v4.4)
+"""Celina AI — LUMOS-Style Semantic Blueprint Perception Layer (v4.4)
 
 Replaces raw screenshot-and-OCR scraping with a structured accessibility blueprint:
   - Stable deterministic element IDs (`el_<8hex>`) anchored to (app, role, name, occurrence)
@@ -19,7 +18,8 @@ import hashlib
 import re
 import threading
 import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 _COMPACT_ROLES: dict[str, str] = {
     "push button": "btn",
@@ -66,17 +66,38 @@ _ROLE_DEFAULT_AFFORDANCES: dict[str, tuple[str, ...]] = {
 }
 
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+# BiDi controls + zero-width chars — prompt-injection surface via AT-SPI tree.
+# "OK\u202eCANCEL" displays as LLECNAC visually; an LLM sees a truncated label
+# and cannot tell which button is which. No screenshot needed to exploit.
+_BIDI_RE = re.compile(r"[\u202a-\u202e\u200b-\u200f\u2066-\u2069\ufeff]+")
 
 
 def _clean_text(raw: str, max_len: int = 80) -> str:
-    txt = _CTRL_RE.sub(" ", raw or "").replace("|", "/").strip()
+    txt = _CTRL_RE.sub(" ", raw or "")
+    txt = _BIDI_RE.sub("", txt).replace("|", "/").strip()
     return " ".join(txt.split())[:max_len]
 
 
-def make_stable_element_id(app: str, role: str, name: str, occurrence: int = 0) -> str:
-    """Deterministic 8-hex element identifier stable across blueprint refreshes."""
-    key = f"{(app or '').strip().lower()}|{(role or '').strip().lower()}|{(name or '').strip().lower()}|{occurrence}"
-    return "el_" + hashlib.sha1(key.encode("utf-8", errors="ignore")).hexdigest()[:8]
+def make_stable_element_id(
+    app: str,
+    role: str,
+    name: str,
+    occurrence: int = 0,
+    *,
+    bounds: tuple[int, int, int, int] | None = None,
+) -> str:
+    """Deterministic 8-hex element identifier stable across blueprint refreshes.
+
+    Anchored on (app, role, name, bounds) so that opening a modal elsewhere on
+    screen does not shift occurrence indices and retarget a stable ID to a
+    different element — a real privilege-escalation path in a security product.
+    """
+    bx, by, bw, bh = bounds or (0, 0, 0, 0)
+    key = (
+        f"{(app or '').strip().lower()}|{(role or '').strip().lower()}"
+        f"|{(name or '').strip().lower()}|{bx},{by},{bw},{bh}"
+    )
+    return "el_" + hashlib.sha1(key.encode("utf-8", errors="ignore"), usedforsecurity=False).hexdigest()[:8]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -126,9 +147,9 @@ class SemanticBlueprint:
     @property
     def fingerprint(self) -> str:
         sig = self.window_key + "\n" + "\n".join(el.to_blueprint_row() for el in self.elements)
-        return hashlib.sha1(sig.encode("utf-8", errors="ignore")).hexdigest()[:12]
+        return hashlib.sha1(sig.encode("utf-8", errors="ignore"), usedforsecurity=False).hexdigest()[:12]
 
-    def find(self, target: str, occurrence: int = 1) -> Optional[SemanticElement]:
+    def find(self, target: str, occurrence: int = 1) -> SemanticElement | None:
         q = (target or "").strip()
         if not q:
             return None
@@ -163,8 +184,7 @@ def build_blueprint_from_records(
     *,
     max_elements: int = 80,
 ) -> SemanticBlueprint:
-    """
-    Converts raw AT-SPI2 node dictionaries into a normalized `SemanticBlueprint`
+    """Converts raw AT-SPI2 node dictionaries into a normalized `SemanticBlueprint`
     with deterministic stable IDs, sanitized labels/values, and action affordances.
     Pure Python — testable without GTK/AT-SPI2 display servers.
     """
@@ -179,8 +199,12 @@ def build_blueprint_from_records(
         if not role or not name:
             continue
 
-        # Never expose raw password characters in semantic blueprints
-        raw_val = "" if role == "password text" else _clean_text(str(node.get("value", "")), 60)
+        # Never expose raw password characters in semantic blueprints.
+        # Electron/Qt apps report password fields as role="entry" with
+        # StateType.PROTECTED set — checking role alone misses them.
+        states_set = {str(s).strip().lower() for s in (node.get("states") or ()) if str(s).strip()}
+        is_password = role == "password text" or "protected" in states_set
+        raw_val = "" if is_password else _clean_text(str(node.get("value", "")), 60)
 
         bbox = node.get("bbox")
         if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
@@ -210,7 +234,7 @@ def build_blueprint_from_records(
         if not acts:
             acts = _ROLE_DEFAULT_AFFORDANCES.get(role, ("click",))
 
-        el_id = make_stable_element_id(app, role, name, occ)
+        el_id = make_stable_element_id(app, role, name, occ, bounds=(bx, by, bw, bh))
         elements.append(
             SemanticElement(
                 id=el_id,
@@ -221,18 +245,17 @@ def build_blueprint_from_records(
                 center=(cx, cy),
                 states=states,
                 actions=acts,
-            )
+            ),
         )
 
     return SemanticBlueprint(app=app or "unknown", window_title=window_title or "", elements=elements)
 
 
 class SemanticBlueprintCache:
-    """
-    Per-application semantic blueprint cache invalidated automatically on:
-      - Active window change (`window_key` mismatch),
-      - TTL expiry (`ttl_sec`, default 2.5s),
-      - Explicit invalidation (`invalidate()`) after any GUI actuation or window event.
+    """Per-application semantic blueprint cache invalidated automatically on:
+    - Active window change (`window_key` mismatch),
+    - TTL expiry (`ttl_sec`, default 2.5s),
+    - Explicit invalidation (`invalidate()`) after any GUI actuation or window event.
     """
 
     def __init__(self, ttl_sec: float = 2.5, max_apps: int = 16):
@@ -251,7 +274,7 @@ class SemanticBlueprintCache:
         builder: Callable[[], SemanticBlueprint],
         *,
         force_refresh: bool = False,
-        now: Optional[float] = None,
+        now: float | None = None,
     ) -> SemanticBlueprint:
         ts = time.monotonic() if now is None else now
         wkey = f"{(app or 'unknown').lower().strip()}::{(window_title or '').strip()}"
@@ -277,11 +300,11 @@ class SemanticBlueprintCache:
                 self._by_window.pop(oldest_k, None)
         return bp
 
-    def latest(self) -> Optional[SemanticBlueprint]:
+    def latest(self) -> SemanticBlueprint | None:
         with self._lock:
             return self._by_window.get(self._active_key)
 
-    def invalidate(self, app: Optional[str] = None) -> None:
+    def invalidate(self, app: str | None = None) -> None:
         with self._lock:
             if app is None:
                 self._by_window.clear()

@@ -1,9 +1,16 @@
 # macubuntu Tier B — Pinned Experimental Apple Protocol Research Dependencies
 # Generate an ABI-specific hash lock anytime with:
 #   pip-compile --generate-hashes tools/requirements-tier-b.txt -o tools/requirements-tier-b.lock
-cryptography==44.0.2
+#
+# pip-audit (2026-11-14): all known vulnerabilities resolved:
+#   cryptography 44.0.2 → 50.0.0 (PYSEC-2026-2141, 35, 3552, 3553, 3554, GHSA-537c-gmf6-5ccf)
+#   requests 2.32.3 → 2.33.0 (PYSEC-2026-1872, PYSEC-2026-2275)
+#   protobuf 5.29.3 → 5.29.6 (PYSEC-2026-1805, PYSEC-2026-1806)
+#   aiohttp 3.11.13 → 3.14.4 (20+ PYSEC-2026-*, 4x CVE-2026-*)
+
+cryptography==50.0.0
 pycryptodomex==3.21.0
-requests==2.32.3
-protobuf==5.29.3
+requests==2.33.0
+protobuf==5.29.6
 srp==1.0.22
-aiohttp==3.11.13
+aiohttp==3.14.4

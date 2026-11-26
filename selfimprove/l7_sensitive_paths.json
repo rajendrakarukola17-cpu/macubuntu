@@ -1,0 +1,29 @@
+{
+  "files": [
+    ".github/dependabot.yml",
+    ".pre-commit-config.yaml",
+    ".secrets.baseline",
+    "CODEOWNERS",
+    "features/celina/celina_pkg/approval.py",
+    "features/celina/celina_pkg/cli_bridge.py",
+    "features/celina/celina_pkg/config.py",
+    "features/celina/celina_pkg/connectors/base.py",
+    "features/celina/celina_pkg/evidence.py",
+    "features/celina/celina_pkg/landlock_policy.py",
+    "features/celina/celina_pkg/net_policy.py",
+    "features/celina/celina_pkg/tools.py",
+    "features/celina/config/celina-capabilities.json",
+    "pyproject.toml",
+    "scripts/verify_all.sh",
+    "selfimprove/l7_sensitive_paths.json",
+    "selfimprove/protected_hashes.json",
+    "system/capabilities/celina-capabilities.json",
+    "tests/selfimprove/test_layering.py",
+    "tests/selfimprove/test_protected_core.py",
+    "tools/manifest_integrity.py",
+    "tools/validate_configs.py"
+  ],
+  "directories": [
+    ".github/workflows"
+  ]
+}

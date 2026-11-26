@@ -1,22 +1,22 @@
-"""
-Celina AI (Celly) - Gear 0 Ledger (Update 19)
+"""Celina AI (Celly) - Gear 0 Ledger (Update 19)
 
 Local expense & habit ledger — SQLite-backed, zero cloud, sub-5ms.
+
 Examples:
   - "I spent $12 on lunch"
   - "Log habit: gym"
   - "Show my expenses today"
+
 """
 
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Optional
 
 _DB_PATH = Path.home() / ".celina" / "storage" / "shared" / "gear0_ledger.db"
-_LEDGER_CONN: Optional[sqlite3.Connection] = None
+_LEDGER_CONN: sqlite3.Connection | None = None
 _LEDGER_INITIALIZED = False
 
 
@@ -37,14 +37,14 @@ def _ledger_conn() -> sqlite3.Connection:
             category TEXT NOT NULL,
             note TEXT,
             ts TEXT NOT NULL
-        )"""
+        )""",
     )
     conn.execute(
         """CREATE TABLE IF NOT EXISTS habits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             habit TEXT NOT NULL,
             ts TEXT NOT NULL
-        )"""
+        )""",
     )
     conn.commit()
     _LEDGER_CONN = conn
@@ -117,7 +117,7 @@ _SHOW_EXPENSES_RE = __import__("re").compile(
 )
 
 
-def gear0_ledger_classify(query: str) -> Optional[str]:
+def gear0_ledger_classify(query: str) -> str | None:
     """Classify query into a ledger handler name, or None."""
     low = query.strip().lower()
     if _EXPENSE_RE.match(low):
@@ -129,10 +129,9 @@ def gear0_ledger_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_ledger_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_ledger_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Ledger handler."""
     try:
-        import re
         if handler == "expense":
             m = _EXPENSE_RE.match(query.strip().lower())
             if m:
@@ -152,9 +151,9 @@ def gear0_ledger_execute(handler: str, query: str, dry_run: bool = False) -> Opt
 
 
 __all__ = [
-    "ledger_expense",
-    "ledger_habit",
-    "ledger_expenses_today",
     "gear0_ledger_classify",
     "gear0_ledger_execute",
+    "ledger_expense",
+    "ledger_expenses_today",
+    "ledger_habit",
 ]

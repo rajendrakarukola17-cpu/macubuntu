@@ -1,477 +1,359 @@
 /*
- * macubuntu — Native GNOME Shell 48/49/50/51 Extension: Celina Dynamic Island
- * Communicates with celina.service strictly over session D-Bus (org.macubuntu.Celina)
- * via the modular `./dbus.js` proxy client; zero business logic lives in Shell JS.
+ * macubuntu — Native GNOME Shell 46–51 Extension: Celina Dynamic Island
+ * ESM module, Clutter.ShaderEffect GPU glow, SpringGroup frame-locked animations,
+ * async Gio.DBusProxy session bus client, strict teardown on disable().
+ *
+ * Communicates with celina.service strictly over session D-Bus
+ * (org.macubuntu.Celina). Zero business logic lives in Shell JS.
  */
 
-import Cairo from 'cairo';
 import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
-import GObject from 'gi://GObject';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
-
-import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
-import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
-import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
+import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import { ExtensionState } from 'resource:///org/gnome/shell/misc/extensionUtils.js';
 
-import {CelinaDBusClient} from './dbus.js';
+import { CelinaGlowEffect } from './shaderGlow.js';
+import { SpringGroup, SPRING_EXPAND, SPRING_COLLAPSE } from './spring.js';
+import { PerceptualChoreographer } from './choreography.js';
+import { CelinaDBusClient } from './dbus.js';
+import { CelinaApprovalController } from './approvalCard.js';
 
-const EDGE_PALETTES = {
-    responding: [
-        [0.96, 0.36, 0.68],
-        [0.66, 0.33, 0.97],
-        [0.22, 0.74, 0.97],
-        [0.98, 0.57, 0.24],
-        [0.96, 0.36, 0.68],
-    ],
-    task: [
-        [0.22, 0.74, 0.97],
-        [0.66, 0.33, 0.97],
-        [0.95, 0.28, 0.58],
-        [0.99, 0.62, 0.22],
-        [0.22, 0.74, 0.97],
-    ],
-    listening: [
-        [0.96, 0.25, 0.44],
-        [0.92, 0.38, 0.82],
-        [0.55, 0.36, 0.96],
-        [0.98, 0.45, 0.35],
-        [0.96, 0.25, 0.44],
-    ],
-    recording: [
-        [0.94, 0.27, 0.27],
-        [0.98, 0.45, 0.18],
-        [0.94, 0.27, 0.52],
-        [0.94, 0.27, 0.27],
-    ],
+const STATE_PROFILES = {
+    idle:      { speed: 0.0,  intensity: 0.0,  tint: [0.30, 0.65, 0.98] },
+    listening: { speed: 0.35, intensity: 0.95, tint: [0.25, 0.90, 0.55] },
+    thinking:  { speed: 0.70, intensity: 1.00, tint: [0.65, 0.35, 0.98] },
+    speaking:  { speed: 0.25, intensity: 0.75, tint: [0.95, 0.95, 1.00] },
+    approval:  { speed: 0.45, intensity: 1.00, tint: [0.98, 0.68, 0.18] },
 };
 
-function samplePalette(mode, t) {
-    const pal = EDGE_PALETTES[mode] || EDGE_PALETTES.responding;
-    const n = pal.length - 1;
-    const norm = ((t % 1.0) + 1.0) % 1.0;
-    const pos = norm * n;
-    const idx = Math.floor(pos) % n;
-    const frac = pos - Math.floor(pos);
-    const c1 = pal[idx];
-    const c2 = pal[idx + 1];
-    return [
-        c1[0] + (c2[0] - c1[0]) * frac,
-        c1[1] + (c2[1] - c1[1]) * frac,
-        c1[2] + (c2[2] - c1[2]) * frac,
-    ];
+function createSafeBlur(radiusPx = 18) {
+    const blur = new Shell.BlurEffect({
+        name: 'celina-blur',
+        mode: Shell.BlurMode.BACKGROUND,
+        brightness: 0.85,
+    });
+    // GNOME 46+ uses radius; GNOME 45 used sigma
+    if ('radius' in blur) blur.radius = radiusPx;
+    else if ('sigma' in blur) blur.sigma = Math.round(radiusPx * 0.5);
+    return blur;
 }
-
-/**
- * Native GNOME Wayland (Mutter) click-through fullscreen Apple Intelligence Edge Glow.
- * Runs directly on Main.layoutManager.uiGroup so Mutter composites it cleanly over all
- * Wayland windows without being blocked by Wayland client positioning restrictions.
- */
-class WaylandEdgeGlowOverlay {
-    constructor() {
-        this._phase = 0.0;
-        this._alpha = 0.0;
-        this._targetAlpha = 0.0;
-        this._mode = 'responding';
-        this._timerId = 0;
-        this._pulseTimerId = 0;
-        this._lastTickUs = 0;
-
-        this._actor = new St.DrawingArea({
-            reactive: false,
-            can_focus: false,
-            visible: false,
-        });
-        this._repaintId = this._actor.connect('repaint', area => this._onRepaint(area));
-        Main.layoutManager.uiGroup.add_child(this._actor);
-        this._syncMonitorGeometry();
-    }
-
-    _syncMonitorGeometry() {
-        const mon = Main.layoutManager.primaryMonitor;
-        if (!mon || !this._actor)
-            return;
-        this._actor.set_position(mon.x, mon.y);
-        this._actor.set_size(mon.width, mon.height);
-    }
-
-    setGlow(active, mode = 'task') {
-        if (this._pulseTimerId) {
-            GLib.source_remove(this._pulseTimerId);
-            this._pulseTimerId = 0;
-        }
-        if (active) {
-            this._mode = EDGE_PALETTES[mode] ? mode : 'task';
-            this._targetAlpha = 1.0;
-            this._syncMonitorGeometry();
-            this._actor.visible = true;
-            this._ensureTick();
-        } else {
-            this._targetAlpha = 0.0;
-            if (this._actor.visible)
-                this._ensureTick();
-        }
-    }
-
-    testPulse(seconds = 5) {
-        this.setGlow(true, 'responding');
-        this._pulseTimerId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, seconds, () => {
-            this._pulseTimerId = 0;
-            this.setGlow(false, 'responding');
-            return GLib.SOURCE_REMOVE;
-        });
-    }
-
-    _ensureTick() {
-        if (this._timerId)
-            return;
-        this._lastTickUs = GLib.get_monotonic_time();
-        this._timerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 20, () => this._tick());
-    }
-
-    _tick() {
-        const nowUs = GLib.get_monotonic_time();
-        const dt = Math.max(0.004, Math.min(0.05, (nowUs - this._lastTickUs) / 1e6));
-        this._lastTickUs = nowUs;
-
-        this._phase = (this._phase + 0.28 * dt) % 1.0;
-        const speed = this._targetAlpha > this._alpha ? 3.2 : 2.2;
-        const delta = speed * dt;
-        if (Math.abs(this._targetAlpha - this._alpha) <= delta)
-            this._alpha = this._targetAlpha;
-        else if (this._targetAlpha > this._alpha)
-            this._alpha += delta;
-        else
-            this._alpha -= delta;
-
-        if (this._alpha <= 0.005 && this._targetAlpha === 0.0) {
-            this._alpha = 0.0;
-            this._actor.visible = false;
-            this._timerId = 0;
-            return GLib.SOURCE_REMOVE;
-        }
-        this._actor.queue_repaint();
-        return GLib.SOURCE_CONTINUE;
-    }
-
-    _onRepaint(area) {
-        const [w, h] = area.get_surface_size();
-        const cr = area.get_context();
-        try {
-            cr.setOperator(Cairo.Operator.CLEAR);
-            cr.paint();
-            if (this._alpha <= 0.01 || w < 64 || h < 64)
-                return;
-
-            cr.setOperator(Cairo.Operator.OVER);
-            const pulse = 0.85 + 0.15 * Math.sin(this._phase * 3.0 * Math.PI);
-            const eff = this._alpha * pulse;
-            const depth = 30.0;
-
-            const cTop = samplePalette(this._mode, this._phase);
-            const cRight = samplePalette(this._mode, this._phase + 0.25);
-            const cBottom = samplePalette(this._mode, this._phase + 0.50);
-            const cLeft = samplePalette(this._mode, this._phase + 0.75);
-
-            const strips = [
-                [0, 0, 0, depth, cTop, [0, 0, w, depth]],
-                [w, 0, w - depth, 0, cRight, [w - depth, 0, depth, h]],
-                [0, h, 0, h - depth, cBottom, [0, h - depth, w, depth]],
-                [0, 0, depth, 0, cLeft, [0, 0, depth, h]],
-            ];
-            for (const [x0, y0, x1, y1, rgb, rect] of strips) {
-                const g = new Cairo.LinearGradient(x0, y0, x1, y1);
-                g.addColorStopRGBA(0.0, rgb[0], rgb[1], rgb[2], 0.55 * eff);
-                g.addColorStopRGBA(0.45, rgb[0], rgb[1], rgb[2], 0.18 * eff);
-                g.addColorStopRGBA(1.0, rgb[0], rgb[1], rgb[2], 0.0);
-                cr.setSource(g);
-                cr.rectangle(rect[0], rect[1], rect[2], rect[3]);
-                cr.fill();
-            }
-
-            // Crisp glowing outer perimeter rim
-            const ang = this._phase * 2.0 * Math.PI;
-            const cx = w * 0.5;
-            const cy = h * 0.5;
-            const rad = Math.hypot(cx, cy);
-            const rim = new Cairo.LinearGradient(
-                cx + Math.cos(ang) * rad,
-                cy + Math.sin(ang) * rad,
-                cx - Math.cos(ang) * rad,
-                cy - Math.sin(ang) * rad
-            );
-            for (const stop of [0.0, 0.25, 0.5, 0.75, 1.0]) {
-                const rgb = samplePalette(this._mode, this._phase + stop);
-                rim.addColorStopRGBA(stop, rgb[0], rgb[1], rgb[2], 0.92 * eff);
-            }
-            cr.setSource(rim);
-            cr.setLineWidth(4.0);
-            cr.rectangle(2.0, 2.0, w - 4.0, h - 4.0);
-            cr.stroke();
-        } finally {
-            cr.$dispose();
-        }
-    }
-
-    destroy() {
-        if (this._timerId) {
-            GLib.source_remove(this._timerId);
-            this._timerId = 0;
-        }
-        if (this._pulseTimerId) {
-            GLib.source_remove(this._pulseTimerId);
-            this._pulseTimerId = 0;
-        }
-        if (this._actor) {
-            if (this._repaintId) {
-                this._actor.disconnect(this._repaintId);
-                this._repaintId = 0;
-            }
-            const parent = this._actor.get_parent();
-            if (parent)
-                parent.remove_child(this._actor);
-            this._actor.destroy();
-            this._actor = null;
-        }
-    }
-}
-
-function spawnLocalBin(binName, args = []) {
-    try {
-        const binPath = GLib.build_filenamev([GLib.get_home_dir(), '.local', 'bin', binName]);
-        Gio.Subprocess.new([binPath, ...args], Gio.SubprocessFlags.NONE);
-    } catch (e) {
-        Main.notify('Celina', `Could not launch ${binName}: ${e.message}`);
-    }
-}
-
-const CelinaIslandButton = GObject.registerClass(
-class CelinaIslandButton extends PanelMenu.Button {
-    _init(settings, openPrefsCb, edgeGlow) {
-        super._init(0.5, 'Celina Dynamic Island', false);
-        this._settings = settings;
-        this._openPrefsCb = openPrefsCb;
-        this._edgeGlow = edgeGlow;
-
-        this._pill = new St.BoxLayout({
-            style_class: 'celina-island-pill',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-
-        this._titleLabel = new St.Label({
-            text: '✦ Celina',
-            style_class: 'celina-island-label',
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._focusBadge = new St.Label({
-            text: '',
-            style_class: 'celina-island-focus-badge',
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-        });
-        this._micDot = new St.Label({
-            text: '●',
-            style_class: 'celina-dot-mic',
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-        });
-        this._camDot = new St.Label({
-            text: '●',
-            style_class: 'celina-dot-cam',
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-        });
-        this._screenDot = new St.Label({
-            text: '●',
-            style_class: 'celina-dot-screen',
-            y_align: Clutter.ActorAlign.CENTER,
-            visible: false,
-        });
-
-        this._pill.add_child(this._titleLabel);
-        this._pill.add_child(this._focusBadge);
-        this._pill.add_child(this._micDot);
-        this._pill.add_child(this._camDot);
-        this._pill.add_child(this._screenDot);
-        this.add_child(this._pill);
-
-        this._buildMenu();
-        this._dbus = new CelinaDBusClient({
-            onStatus: st => this._applyStatus(st),
-            onPrivacy: p => this._applyPrivacyDots(Boolean(p.mic), Boolean(p.cam), Boolean(p.screen)),
-            onTaskState: ev => this._applyTaskState(ev),
-            onMCPAction: ev => this._applyMCPAction(ev),
-            onEdgeGlow: ev => this._edgeGlow?.setGlow(Boolean(ev.active), ev.mode || 'task'),
-            onOffline: () => this._statusItem.label.set_text('Status: celina.service offline'),
-        });
-    }
-
-    _buildMenu() {
-        const chatItem = new PopupMenu.PopupMenuItem('💬 Open Celina Chat (Text)');
-        chatItem.connect('activate', () => spawnLocalBin('celina-island', ['--toggle']));
-        this.menu.addMenuItem(chatItem);
-
-        const voiceItem = new PopupMenu.PopupMenuItem('🎙️ Talk to Celina (Voice)');
-        voiceItem.connect('activate', () => spawnLocalBin('celina-island', ['--voice']));
-        this.menu.addMenuItem(voiceItem);
-
-        const glowItem = new PopupMenu.PopupMenuItem('✨ Test Edge Lighting (5s)');
-        glowItem.connect('activate', () => this._edgeGlow?.testPulse(5));
-        this.menu.addMenuItem(glowItem);
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
-        this._statusItem = new PopupMenu.PopupMenuItem('Status: connecting to org.macubuntu.Celina…', {
-            reactive: false,
-        });
-        this.menu.addMenuItem(this._statusItem);
-        this._autonomyItem = new PopupMenu.PopupMenuItem('Autonomy: idle (observe-only ready)', {
-            reactive: false,
-        });
-        this.menu.addMenuItem(this._autonomyItem);
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-
-        const focusSub = new PopupMenu.PopupSubMenuMenuItem('Focus Mode');
-        for (const mode of ['off', 'work', 'coding', 'dnd', 'presentation']) {
-            const item = new PopupMenu.PopupMenuItem(mode.toUpperCase());
-            item.connect('activate', () => this._dbus?.setFocusMode(mode));
-            focusSub.menu.addMenuItem(item);
-        }
-        this.menu.addMenuItem(focusSub);
-
-        const offloadItem = new PopupMenu.PopupMenuItem('Offload Idle Local Model (Free RAM)');
-        offloadItem.connect('activate', () => {
-            this._dbus?.offload(res => {
-                Main.notify('Celina Compute', res?.message || 'Local model offload requested.');
-            });
-        });
-        this.menu.addMenuItem(offloadItem);
-
-        const undoItem = new PopupMenu.PopupMenuItem('Undo Last Tier-2 File Action');
-        undoItem.connect('activate', () => {
-            this._dbus?.undoLast(res => {
-                Main.notify('Celina Undo', res?.message || 'Undo processed.');
-            });
-        });
-        this.menu.addMenuItem(undoItem);
-
-        const refreshItem = new PopupMenu.PopupMenuItem('Refresh Daemon Status');
-        refreshItem.connect('activate', () => this._dbus?.refresh());
-        this.menu.addMenuItem(refreshItem);
-
-        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
-        const prefsItem = new PopupMenu.PopupMenuItem('Island Preferences…');
-        prefsItem.connect('activate', () => this._openPrefsCb?.());
-        this.menu.addMenuItem(prefsItem);
-    }
-
-    _applyStatus(st) {
-        if (!st || typeof st !== 'object')
-            return;
-        const name = st.assistant || 'Celina';
-        const mode = st.focus_mode || 'off';
-        const evOk = st.evidence_chain_ok ? 'chain OK' : 'chain WARN';
-        const backend = st.compute_backend ? ` · ${st.compute_backend}` : '';
-        this._titleLabel.set_text(`✦ ${name}`);
-        this._statusItem.label.set_text(
-            `${name} v${st.version || '4.4'} · Focus: ${mode} · Audit: ${evOk}${backend}`
-        );
-
-        const showBadge = this._settings ? this._settings.get_boolean('show-focus-badge') : true;
-        if (showBadge && mode !== 'off') {
-            this._focusBadge.set_text(`[${mode}]`);
-            this._focusBadge.visible = true;
-        } else {
-            this._focusBadge.visible = false;
-        }
-    }
-
-    _applyPrivacyDots(mic, cam, screen) {
-        const enabled = this._settings ? this._settings.get_boolean('show-privacy-dots') : true;
-        this._micDot.visible = Boolean(enabled && mic);
-        this._camDot.visible = Boolean(enabled && cam);
-        this._screenDot.visible = Boolean(enabled && screen);
-    }
-
-    _applyTaskState(ev) {
-        if (!ev || !this._autonomyItem)
-            return;
-        const shortId = String(ev.taskId || '').slice(0, 8);
-        const status = String(ev.status || 'unknown');
-        this._autonomyItem.label.set_text(`Autonomy: task ${shortId} -> ${status}`);
-    }
-
-    _applyMCPAction(ev) {
-        if (!ev)
-            return;
-        const server = String(ev.server || 'mcp');
-        const tool = String(ev.tool || 'action');
-        if (this._focusBadge) {
-            this._focusBadge.text = `MCP:${server}`;
-            this._focusBadge.visible = true;
-        }
-        if (this._autonomyItem)
-            this._autonomyItem.label.set_text(`MCP Action: ${server} · ${tool}`);
-    }
-
-    onWorkspaceOrWindowChanged() {
-        this._dbus?.refresh();
-    }
-
-    destroy() {
-        this._dbus?.destroy();
-        this._dbus = null;
-        super.destroy();
-    }
-});
 
 export default class CelinaIslandExtension extends Extension {
     enable() {
-        this._settings = this.getSettings();
-        this._edgeGlow = new WaylandEdgeGlowOverlay();
-        this._indicator = new CelinaIslandButton(
-            this._settings,
-            () => this.openPreferences(),
-            this._edgeGlow
-        );
-        const pos = this._settings.get_string('panel-position') || 'center';
-        const box = ['left', 'center', 'right'].includes(pos) ? pos : 'center';
-        Main.panel.addToStatusArea(this.uuid, this._indicator, 0, box);
+        this._liteMode = false;
+        this._state = 'idle';
+        this._phase = 0.0;
+        this._width = 240;
+        this._height = 36;
+        this._radius = 18;
+        this._speedFactor = 0.65; // CHOREOGRAPHY_SPEED_FACTOR default
+        this._glowTimeline = null;
+        this._dbusProxy = null;
+        this._signalIds = [];
+        this._approval = null;
 
-        this._wsSignal = global.workspace_manager.connect('active-workspace-changed', () => {
-            this._indicator?.onWorkspaceOrWindowChanged();
+        this._ifaceSettings = new Gio.Settings({ schema_id: 'org.gnome.desktop.interface' });
+
+        // Guardrail: warn if basskibo dynamic-island is also active (no vertical stacking)
+        const basskibo = Main.extensionManager?.lookup('dynamic-island@basskibo');
+        this._basskiboActive = Boolean(basskibo && basskibo.state === ExtensionState.ACTIVE);
+
+        this._pill = new St.BoxLayout({
+            name: 'celina-dynamic-island',
+            orientation: Clutter.Orientation.VERTICAL, // GNOME 48-51 compliant
+            reactive: true,
+            track_hover: true,
+            width: this._width,
+            height: this._height,
         });
-        this._focusSignal = global.display.connect('notify::focus-window', () => {
-            this._indicator?.onWorkspaceOrWindowChanged();
+
+        this._glowEffect = new CelinaGlowEffect();
+        this._blurEffect = createSafeBlur(18);
+        this._pill.add_effect(this._blurEffect);
+        this._pill.add_effect(this._glowEffect);
+
+        // Chat / Voice action buttons on the pill
+        this._btnChat = new St.Button({
+            label: 'Open Celina Chat (Text)',
+            x_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+            can_focus: true,
+            reactive: true,
         });
-        this._monitorsSignal = Main.layoutManager.connect('monitors-changed', () => {
-            this._edgeGlow?._syncMonitorGeometry();
+        this._btnChat.connect('clicked', () => {
+            // Real action via D-Bus: enter work focus mode (chat-ready)
+            this._dbusClient?.setFocusMode('work');
+        });
+        this._pill.add_child(this._btnChat);
+
+        this._btnVoice = new St.Button({
+            label: 'Talk to Celina (Voice)',
+            x_align: Clutter.ActorAlign.CENTER,
+            x_expand: true,
+            can_focus: true,
+            reactive: true,
+        });
+        this._btnVoice.connect('clicked', () => {
+            // Real action via D-Bus: signal listening/voice mode to the island
+            this._dbusClient?.setEdgeGlow(true, 'listening');
+        });
+        this._pill.add_child(this._btnVoice);
+
+        this._spring = new SpringGroup(this._pill, ({ width, height, radius }) => {
+            if (width !== undefined) this._width = width;
+            if (height !== undefined) this._height = height;
+            if (radius !== undefined) this._radius = radius;
+            this._pill.set_size(Math.round(this._width), Math.round(this._height));
+            this._reposition();
+            this._syncShader();
+        });
+
+        // Add above windows, below overview/lock screen; never blocks desktop chrome.
+        // trackFullscreen: true auto-hides on fullscreen apps -> keeps direct scanout intact.
+        Main.layoutManager.addChrome(this._pill, {
+            affectsInputRegion: true,
+            trackFullscreen: true,
+        });
+
+        this._pill.connect('button-press-event', () => {
+            this._toggleExpanded();
+            return Clutter.EVENT_STOP;
+        });
+
+        this._monitorsChangedId = Main.layoutManager.connect('monitors-changed', () => this._reposition());
+        this._wsChangedId = global.workspace_manager?.connect('active-workspace-changed', () => this._onWindowChanged());
+        this._focusChangedId = global.display?.connect('notify::focus-window', () => this._onWindowChanged());
+        this._reposition();
+        this._syncShader();
+
+        // Perceptual choreography (global curve tightening + launch feedback + window morph)
+        this._choreographer = new PerceptualChoreographer(this);
+        this._choreographer.enable();
+
+        this._connectDBusAsync();
+
+        // Instantiate the GNOME 50 approval card controller
+        this._approval = new CelinaApprovalController();
+    }
+
+    _onWindowChanged() {
+        // Workspace / focus changes — refresh state from Celina daemon asynchronously
+        this._dbusClient?.refresh?.();
+    }
+
+    _reposition() {
+        const monitor = Main.layoutManager.primaryMonitor;
+        if (!monitor || !this._pill) return;
+        const x = monitor.x + Math.round((monitor.width - this._width) / 2);
+        // Never vertically stack below another island; offset horizontally if basskibo owns center
+        const offsetX = this._basskiboActive ? 220 : 0;
+        const y = monitor.y + 4;
+        this._pill.set_position(x + offsetX, y);
+    }
+
+    _animationsAllowed() {
+        return !this._liteMode && this._ifaceSettings.get_boolean('enable-animations');
+    }
+
+    _setState(newState) {
+        const profile = STATE_PROFILES[newState] ?? STATE_PROFILES.idle;
+        this._state = newState;
+
+        if (!this._animationsAllowed() || profile.speed === 0.0) {
+            this._stopGlowLoop();
+            this._syncShader();
+            return;
+        }
+        this._startGlowLoop(profile.speed);
+    }
+
+    _startGlowLoop(speed) {
+        this._stopGlowLoop();
+        let last = Date.now();
+        this._glowTimeline = new Clutter.Timeline({
+            actor: this._pill,
+            duration: 10000,
+            repeat_count: -1,
+        });
+        this._glowTimeline.connect('new-frame', () => {
+            const now = Date.now();
+            const dt = Math.min(0.05, (now - last) / 1000);
+            last = now;
+            this._phase = (this._phase + speed * dt) % 1.0;
+            this._syncShader();
+        });
+        this._glowTimeline.start();
+    }
+
+    _stopGlowLoop() {
+        if (this._glowTimeline) {
+            this._glowTimeline.stop();
+            this._glowTimeline = null;
+        }
+    }
+
+    _syncShader() {
+        const profile = STATE_PROFILES[this._state] ?? STATE_PROFILES.idle;
+        this._glowEffect.setParams({
+            width: this._width,
+            height: this._height,
+            radius: this._radius,
+            phase: this._phase,
+            intensity: this._liteMode ? Math.min(profile.intensity, 0.35) : profile.intensity,
+            tint: profile.tint,
+        });
+        this._blurEffect.set_enabled(!this._liteMode && this._state !== 'idle');
+    }
+
+    // Handle MCP action approval receipts over D-Bus from celina.service
+    // Called when Celina daemon notifies the island of an MCP tool invocation
+    _applyMCPAction(server, tool) {
+        // Visual acknowledgment: approval color pulse
+        if (this._glowEffect) {
+            const prevIntensity = this._glowEffect._intensity || 0;
+            this._glowEffect.setParams({
+                width: this._width,
+                height: this._height,
+                radius: this._radius,
+                phase: this._phase,
+                intensity: Math.max(prevIntensity, 0.85),
+                tint: [0.98, 0.68, 0.18], // approval amber
+            });
+        }
+        // Auto-revert after pulse
+        if (this._clearLaunchFeedbackSourceId) {
+            GLib.source_remove(this._clearLaunchFeedbackSourceId);
+        }
+        this._clearLaunchFeedbackSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 800, () => {
+            this._clearLaunchFeedbackSourceId = 0;
+            this._syncShader();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    // Pill hooks wired by PerceptualChoreographer for 0ms launch feedback
+    showLaunchFeedback(appName, appIcon) {
+        // Guard: clear any existing pending timeout before scheduling a new one
+        if (this._clearLaunchFeedbackSourceId) {
+            GLib.source_remove(this._clearLaunchFeedbackSourceId);
+            this._clearLaunchFeedbackSourceId = 0;
+        }
+        // Visual feedback: brief glow pulse on the pill
+        const prevIntensity = this._glowEffect ? this._glowEffect._intensity : 0;
+        if (this._glowEffect) {
+            this._glowEffect.setParams({
+                width: this._width,
+                height: this._height,
+                radius: this._radius,
+                phase: this._phase,
+                intensity: Math.max(prevIntensity, 0.9),
+                tint: [0.25, 0.90, 0.55],
+            });
+        }
+        // Auto-revert after a short pulse via GLib source
+        this._clearLaunchFeedbackSourceId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 600, () => {
+            this._clearLaunchFeedbackSourceId = 0;
+            this._syncShader();
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    clearLaunchFeedback() {
+        if (this._clearLaunchFeedbackSourceId) {
+            GLib.source_remove(this._clearLaunchFeedbackSourceId);
+            this._clearLaunchFeedbackSourceId = 0;
+        }
+        this._syncShader();
+    }
+
+    _toggleExpanded() {
+        const expanded = this._width < 400;
+        const instant = !this._animationsAllowed();
+        // Show chat/voice action buttons only when expanded; hide when collapsed
+        this._btnChat?.set_visible(expanded);
+        this._btnVoice?.set_visible(expanded);
+        this._spring.animateTo(
+            expanded
+                ? { width: { from: this._width, to: 520 }, height: { from: this._height, to: 260 }, radius: { from: this._radius, to: 28 } }
+                : { width: { from: this._width, to: 240 }, height: { from: this._height, to: 36 },  radius: { from: this._radius, to: 18 } },
+            expanded ? SPRING_EXPAND : SPRING_COLLAPSE,
+            instant
+        );
+    }
+
+    _connectDBusAsync() {
+        this._dbusClient = new CelinaDBusClient({
+            onStatus: (status) => {
+                try {
+                    // StatusChanged carries the full status JSON from dbus_service.py.
+                    // Extract focus_mode as the island state (falls back to idle profile if unknown).
+                    const state = String((status && status.focus_mode) || "idle");
+                    this._setState(state);
+                } catch (_) { /* ignore malformed payload */ }
+            },
+            onActivity: (activity) => {
+                // ActivityChanged — currently handled by _setState via state.profile
+                this._setState(this._state);
+            },
+            onLiteMode: (enabled) => {
+                this._liteMode = Boolean(enabled);
+                this._setState(this._state);
+                this._choreographer?.setLiteMode(this._liteMode);
+            },
+            onMCPAction: ({server, tool}) => {
+                this._applyMCPAction(server, tool);
+            },
         });
     }
 
     disable() {
-        if (this._monitorsSignal) {
-            Main.layoutManager.disconnect(this._monitorsSignal);
-            this._monitorsSignal = null;
+        // Strict teardown required for lock-screen transitions & zero leaks
+        this._stopGlowLoop();
+        this.clearLaunchFeedback();
+        this._spring?.destroy();
+        this._spring = null;
+
+        if (this._dbusClient) {
+            this._dbusClient.destroy();
+            this._dbusClient = null;
         }
-        if (this._wsSignal) {
-            global.workspace_manager.disconnect(this._wsSignal);
-            this._wsSignal = null;
+        if (this._dbusProxy) {
+            for (const id of this._signalIds) this._dbusProxy.disconnectSignal(id);
+            this._dbusProxy = null;
         }
-        if (this._focusSignal) {
-            global.display.disconnect(this._focusSignal);
-            this._focusSignal = null;
+
+        this._approval?.destroy();
+        this._approval = null;
+        this._signalIds = [];
+
+        if (this._monitorsChangedId) {
+            Main.layoutManager.disconnect(this._monitorsChangedId);
+            this._monitorsChangedId = null;
         }
-        if (this._indicator) {
-            this._indicator.destroy();
-            this._indicator = null;
+        if (this._wsChangedId) {
+            global.workspace_manager.disconnect(this._wsChangedId);
+            this._wsChangedId = null;
         }
-        if (this._edgeGlow) {
-            this._edgeGlow.destroy();
-            this._edgeGlow = null;
+        if (this._focusChangedId) {
+            global.display.disconnect(this._focusChangedId);
+            this._focusChangedId = null;
         }
-        this._settings = null;
+
+        if (this._pill) {
+            Main.layoutManager.removeChrome(this._pill);
+            this._pill.destroy();
+            this._pill = null;
+        }
+
+        this._choreographer?.disable();
+        this._choreographer = null;
+
+        this._glowEffect = null;
+        this._blurEffect = null;
+        this._ifaceSettings = null;
     }
 }

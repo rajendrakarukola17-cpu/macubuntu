@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Document & LibreOffice Mastery Engine (0 MB Idle RAM)
+"""Celina AI (Celly) - Document & LibreOffice Mastery Engine (0 MB Idle RAM)
 Lazy-loads python-docx, openpyxl, python-pptx, odfpy, and pypdf ONLY when invoked.
 Supports reading, creating, surgically editing, converting (via LibreOffice headless),
 and opening documents natively in LibreOffice Writer / Calc / Impress.
@@ -13,8 +12,8 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from . import config, state_ops
 
@@ -40,7 +39,7 @@ def _is_blocked_path(path: Path) -> bool:
     return any(part in config.PROTECTED_PATHS for part in resolved.parts)
 
 
-def backup_file(target: Path) -> Optional[Path]:
+def backup_file(target: Path) -> Path | None:
     """Saves a timestamped reversible backup in ~/.local/share/celina/backups/."""
     if not target.is_file():
         return None
@@ -64,7 +63,7 @@ def _read_odt_text(target: Path) -> str:
     """Extracts text from an OpenDocument (.odt) using stdlib zipfile + XML (zero deps!)."""
     with zipfile.ZipFile(target, "r") as zf:
         xml_bytes = zf.read("content.xml")
-    root = ET.fromstring(xml_bytes)
+    root = ET.fromstring(xml_bytes)  # nosec B314 — ODT content.xml is local zip entry; ElementTree does not resolve external entities
     lines: list[str] = []
     for elem in root.iter():
         tag = elem.tag.split("}")[-1]
@@ -193,7 +192,7 @@ def create_document(
     path: str,
     title: str = "",
     content: str = "",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     """Creates a formatted .docx, .odt, .xlsx, .pptx, or plain-text document after approval."""
     target = Path(path).expanduser().resolve()
@@ -292,10 +291,9 @@ def edit_document(
     sheet: str = "",
     cell: str = "",
     cell_value: str = "",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Surgically edits .docx, .odt, .xlsx, or .pptx preserving formatting,
+    """Surgically edits .docx, .odt, .xlsx, or .pptx preserving formatting,
     with automatic backup and 1-click approval.
     """
     target = Path(path).expanduser().resolve()
@@ -354,7 +352,7 @@ def edit_document(
             succeeded = True
             return f"Updated '{target.name}' (replacements={replacements}, backup={bak.name if bak else 'none'}). [undo: {aid}]"
 
-        elif ext == ".xlsx":
+        if ext == ".xlsx":
             import openpyxl
 
             wb = openpyxl.load_workbook(str(target))
@@ -384,7 +382,7 @@ def edit_document(
             succeeded = True
             return f"Updated spreadsheet '{target.name}' (changes={changes}, backup={bak.name if bak else 'none'}). [undo: {aid}]"
 
-        elif ext == ".pptx":
+        if ext == ".pptx":
             from pptx import Presentation
 
             prs = Presentation(str(target))
@@ -412,16 +410,16 @@ def edit_document(
             succeeded = True
             return f"Updated presentation '{target.name}' (changes={changes}, backup={bak.name if bak else 'none'}). [undo: {aid}]"
 
-        elif ext == ".odt":
+        if ext == ".odt":
             # Safe XML DOM text update inside ODT zip archive (never mutates tags or attributes!)
             with zipfile.ZipFile(target, "r") as zin:
                 items = {name: zin.read(name) for name in zin.namelist()}
             raw_xml = items["content.xml"]
             # Preserve all original ODF namespace prefixes before serializing back
-            for _ev, (prefix, uri) in ET.iterparse(io.BytesIO(raw_xml), events=("start-ns",)):
+            for _ev, (prefix, uri) in ET.iterparse(io.BytesIO(raw_xml), events=("start-ns",)):  # nosec B314 — ODT content.xml is local zip entry; namespace registration only
                 if prefix:
                     ET.register_namespace(prefix, uri)
-            root = ET.fromstring(raw_xml)
+            root = ET.fromstring(raw_xml)  # nosec B314 — ODT content.xml is local zip entry; ElementTree does not resolve external entities
             changes = 0
             if find_text:
                 for elem in root.iter():
@@ -453,17 +451,16 @@ def edit_document(
             succeeded = True
             return f"Updated ODT '{target.name}' (changes={changes}, backup={bak.name if bak else 'none'}). [undo: {aid}]"
 
-        else:
-            # Plain text / Markdown / code
-            orig = target.read_text(encoding="utf-8", errors="replace")
-            updated = orig.replace(find_text, replace_text) if find_text else orig
-            if append_text:
-                updated = updated.rstrip("\n") + "\n" + append_text + "\n"
-            tmp = target.with_name(f".{target.name}.celina.tmp")
-            tmp.write_text(updated, encoding="utf-8")
-            os.replace(tmp, target)
-            succeeded = True
-            return f"Updated '{target.name}' (backup={bak.name if bak else 'none'}). [undo: {aid}]"
+        # Plain text / Markdown / code
+        orig = target.read_text(encoding="utf-8", errors="replace")
+        updated = orig.replace(find_text, replace_text) if find_text else orig
+        if append_text:
+            updated = updated.rstrip("\n") + "\n" + append_text + "\n"
+        tmp = target.with_name(f".{target.name}.celina.tmp")
+        tmp.write_text(updated, encoding="utf-8")
+        os.replace(tmp, target)
+        succeeded = True
+        return f"Updated '{target.name}' (backup={bak.name if bak else 'none'}). [undo: {aid}]"
 
     except ImportError as exc:
         return f"Missing document library ({exc}). Run Module 06 to install."
@@ -476,7 +473,7 @@ def edit_document(
 def convert_document(
     path: str,
     target_format: str = "pdf",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     """Converts a document using LibreOffice headless (e.g. docx -> pdf, odt -> docx)."""
     target = Path(path).expanduser().resolve()

@@ -1,0 +1,31 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/features/celina"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    groups:
+      core-dependencies:
+        patterns:
+          - "requests"
+          - "urllib3"
+          - "certifi"
+          - "idna"
+          - "numpy"
+    ignore:
+      - dependency-name: "piper-tts"
+        # pybind11 build issues on Python 3.13 — pin manually
+        versions: [">=0"]
+
+  - package-ecosystem: "pip"
+    directory: "/tools"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
+    directory: "/tests/audit"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

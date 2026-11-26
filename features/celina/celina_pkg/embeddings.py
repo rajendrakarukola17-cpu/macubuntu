@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) — Lightweight Hybrid Embedding & Semantic Engine (v4.4)
+"""Celina AI (Celly) — Lightweight Hybrid Embedding & Semantic Engine (v4.4)
 Preserves ~18 MB boot RAM & 0.0% idle CPU invariants on 8 GB RAM laptops:
   - Lazy-loaded on demand (never imported by celina-island at login)
   - Zero PyTorch, zero separate vector database servers (Qdrant/Chroma/Milvus)
@@ -25,7 +24,8 @@ import sqlite3
 import struct
 import threading
 import time
-from typing import Any, Callable, Iterable, Optional, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any
 
 import requests
 
@@ -36,13 +36,13 @@ try:
 except Exception:
     _np = None  # type: ignore[assignment]
 
-EmbedCallback = Callable[[list[str]], Optional[list[list[float]]]]
+EmbedCallback = Callable[[list[str]], list[list[float]] | None]
 
 _BLOB_MAGIC_F16 = b"CF16"
 _BLOB_MAGIC_F32 = b"CF32"
 
 
-def l2_normalize(vec: Sequence[float], target_dim: Optional[int] = None) -> list[float]:
+def l2_normalize(vec: Sequence[float], target_dim: int | None = None) -> list[float]:
     """Optional Matryoshka prefix truncation followed by exact L2 unit normalization."""
     vals = [float(x) for x in (vec[:target_dim] if (target_dim and target_dim > 0) else vec)]
     norm = math.sqrt(sum(x * x for x in vals))
@@ -52,7 +52,7 @@ def l2_normalize(vec: Sequence[float], target_dim: Optional[int] = None) -> list
     return [x * inv for x in vals]
 
 
-def pack_vector(vec: Sequence[float], target_dim: Optional[int] = None) -> bytes:
+def pack_vector(vec: Sequence[float], target_dim: int | None = None) -> bytes:
     """Packs an L2-normalized vector into compact float16 BLOB (NumPy) or float32 BLOB (stdlib)."""
     unit = l2_normalize(vec, target_dim=target_dim)
     if _np is not None:
@@ -104,8 +104,7 @@ def rank_vector_blobs(
     top_k: int = 10,
     min_sim: float = 0.22,
 ) -> list[tuple[str, float]]:
-    """
-    Fast cosine ranking over (item_key, packed_blob) rows.
+    """Fast cosine ranking over (item_key, packed_blob) rows.
     Uses vectorized NumPy float32 matrix multiply (`M @ q`) when NumPy is installed,
     or pure-Python fallback otherwise.
     """
@@ -159,10 +158,9 @@ def rank_vector_blobs(
 def rrf_fuse(
     *ranked_lists: Sequence[str],
     k: int = 60,
-    weights: Optional[Sequence[float]] = None,
+    weights: Sequence[float] | None = None,
 ) -> list[tuple[str, float]]:
-    """
-    Reciprocal Rank Fusion (RRF):
+    """Reciprocal Rank Fusion (RRF):
       score(doc) = sum_i  weight_i / (k + rank_i(doc))
     Combines unbounded BM25 ranks and cosine similarity ranks without brittle score normalization.
     """
@@ -199,8 +197,7 @@ def try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:
 
 
 class EmbeddingEngine:
-    """
-    Lazy, zero-idle-RAM multilingual embedding provider supporting:
+    """Lazy, zero-idle-RAM multilingual embedding provider supporting:
       - Ollama `/api/embed` (default: `embeddinggemma`, keep_alive="30s")
       - Model2Vec static embeddings (`minishlab/potion-multilingual-128M`)
       - Custom injectable `embed_fn` (for deterministic tests / custom providers)
@@ -211,13 +208,13 @@ class EmbeddingEngine:
     def __init__(
         self,
         *,
-        engine: Optional[str] = None,
-        model: Optional[str] = None,
-        dim: Optional[int] = None,
-        keep_alive: Optional[str] = None,
-        ollama_base: Optional[str] = None,
-        model2vec_model: Optional[str] = None,
-        embed_fn: Optional[EmbedCallback] = None,
+        engine: str | None = None,
+        model: str | None = None,
+        dim: int | None = None,
+        keep_alive: str | None = None,
+        ollama_base: str | None = None,
+        model2vec_model: str | None = None,
+        embed_fn: EmbedCallback | None = None,
         unavailable_cooldown_sec: float = 120.0,
     ):
         self.engine = (engine if engine is not None else config.EMBED_ENGINE).strip().lower()
@@ -261,7 +258,7 @@ class EmbeddingEngine:
             self._tls.session = sess
         return sess
 
-    def _embed_via_model2vec(self, texts: list[str]) -> Optional[list[list[float]]]:
+    def _embed_via_model2vec(self, texts: list[str]) -> list[list[float]] | None:
         if self._m2v_unavailable:
             return None
         with self._lock:
@@ -281,7 +278,7 @@ class EmbeddingEngine:
             except Exception:
                 return None
 
-    def _embed_via_ollama(self, texts: list[str], timeout: float = 8.0) -> Optional[list[list[float]]]:
+    def _embed_via_ollama(self, texts: list[str], timeout: float = 8.0) -> list[list[float]] | None:
         now = time.time()
         if now < self._ollama_down_until:
             return None
@@ -314,9 +311,8 @@ class EmbeddingEngine:
             self._ollama_down_until = now + self._unavailable_cooldown
             return None
 
-    def embed_texts(self, texts: Iterable[str], *, timeout: float = 8.0) -> Optional[list[list[float]]]:
-        """
-        Embeds a batch of strings into L2-normalized vectors of length `<= self.dim`.
+    def embed_texts(self, texts: Iterable[str], *, timeout: float = 8.0) -> list[list[float]] | None:
+        """Embeds a batch of strings into L2-normalized vectors of length `<= self.dim`.
         Returns None cleanly when disabled or no backend is ready.
         """
         clean = [str(t or "").strip()[:2048] for t in texts]
@@ -344,7 +340,7 @@ class EmbeddingEngine:
                 return vecs
         return self._embed_via_ollama(clean, timeout=timeout)
 
-    def embed_one(self, text: str, *, timeout: float = 6.0) -> Optional[list[float]]:
+    def embed_one(self, text: str, *, timeout: float = 6.0) -> list[float] | None:
         clean = (text or "").strip()[:2048]
         if not clean:
             return None
@@ -373,8 +369,7 @@ class EmbeddingEngine:
         return self.embed_one("ping", timeout=2.0) is not None
 
     def offload(self) -> bool:
-        """
-        Releases in-process Model2Vec RAM, clears per-turn vector micro-cache, resets
+        """Releases in-process Model2Vec RAM, clears per-turn vector micro-cache, resets
         cooldowns, and sends keep_alive=0 to Ollama when Ollama was active.
         Called by `/offload` and idle maintenance to keep idle RAM at 0 MB.
         """
@@ -404,7 +399,7 @@ class EmbeddingEngine:
 
 
 _ENGINE_LOCK = threading.Lock()
-_DEFAULT_ENGINE: Optional[EmbeddingEngine] = None
+_DEFAULT_ENGINE: EmbeddingEngine | None = None
 
 
 def get_engine() -> EmbeddingEngine:
@@ -415,7 +410,7 @@ def get_engine() -> EmbeddingEngine:
         return _DEFAULT_ENGINE
 
 
-def set_default_engine(engine: Optional[EmbeddingEngine]) -> None:
+def set_default_engine(engine: EmbeddingEngine | None) -> None:
     """Overrides the process-wide default embedding engine (useful for tests & runtime reconfiguration)."""
     global _DEFAULT_ENGINE
     with _ENGINE_LOCK:

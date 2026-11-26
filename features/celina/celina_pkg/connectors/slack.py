@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Slack Connector (Update 23)
+"""Celina AI (Celly) - Slack Connector (Update 23)
 
 Adapted from MausBot concepts (Apache-2.0, github.com/milind-soni/OpenMausBot)
 to Python. Connects to Slack via the Slack Web API using a bot token.
@@ -15,15 +14,16 @@ Hard refusals:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from celina_pkg.approval import RiskLevel
+
 from .base import (
+    ActionResult,
     BaseConnector,
+    ConnectorAction,
     ConnectorConfig,
     ConnectorStatus,
-    ConnectorAction,
-    ActionResult,
 )
 
 SLACK_API_URL = "https://slack.com/api"
@@ -137,7 +137,7 @@ class SlackConnector(BaseConnector):
             read_only_actions=SLACK_READ_ONLY_ACTIONS,
         )
         super().__init__(cfg, approval_cb)
-        self._bot_token: Optional[str] = None
+        self._bot_token: str | None = None
 
     def is_configured(self) -> bool:
         creds = self._load_credentials()
@@ -197,23 +197,22 @@ class SlackConnector(BaseConnector):
             try:
                 if action_name == "list_channels":
                     return self._list_channels(params)
-                elif action_name == "get_channel":
+                if action_name == "get_channel":
                     return self._get_channel(params)
-                elif action_name == "list_messages":
+                if action_name == "list_messages":
                     return self._list_messages(params)
-                elif action_name == "send_message":
+                if action_name == "send_message":
                     return self._send_message(params)
-                elif action_name == "get_user":
+                if action_name == "get_user":
                     return self._get_user(params)
-                elif action_name == "list_users":
+                if action_name == "list_users":
                     return self._list_users(params)
-                else:
-                    return ActionResult(
-                        success=False,
-                        error=f"Action not implemented: {action_name}",
-                        action=action_name,
-                        connector=self.name,
-                    )
+                return ActionResult(
+                    success=False,
+                    error=f"Action not implemented: {action_name}",
+                    action=action_name,
+                    connector=self.name,
+                )
             except Exception as exc:
                 return ActionResult(
                     success=False,
@@ -230,7 +229,7 @@ class SlackConnector(BaseConnector):
             "Content-Type": "application/json; charset=utf-8",
         }
 
-    def _get(self, path: str, query: Optional[dict[str, str]] = None) -> dict[str, Any]:
+    def _get(self, path: str, query: dict[str, str] | None = None) -> dict[str, Any]:
         import urllib.parse
         url = f"{SLACK_API_URL}{path}"
         if query:

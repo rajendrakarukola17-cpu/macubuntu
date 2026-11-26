@@ -1,5 +1,4 @@
-"""
-Celina v5 — Capability #17: Capability-Based Routing with Saga Coordination
+"""Celina v5 — Capability #17: Capability-Based Routing with Saga Coordination
 
 Replaces blind same-tool retry with distributed systems resilience:
   1. `CapabilityRouteTable`: maps abstract capabilities (e.g. `edit_office_document`,
@@ -14,7 +13,8 @@ Replaces blind same-tool retry with distributed systems resilience:
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from .. import governance, telemetry
 
@@ -38,7 +38,7 @@ class CapabilityRouteTable:
         "mcp_memory_graph": ("swadb-memory",),
     }
 
-    def __init__(self, extra_routes: Optional[dict[str, tuple[str, ...]]] = None):
+    def __init__(self, extra_routes: dict[str, tuple[str, ...]] | None = None):
         self._routes: dict[str, tuple[str, ...]] = dict(self.DEFAULT_ROUTES)
         if extra_routes:
             self._routes.update(extra_routes)
@@ -47,16 +47,16 @@ class CapabilityRouteTable:
             for tool_name in chain:
                 self._tool_to_capability.setdefault(tool_name, cap_name)
 
-    def capability_for_tool(self, tool_name: str) -> Optional[str]:
+    def capability_for_tool(self, tool_name: str) -> str | None:
         return self._tool_to_capability.get(tool_name)
 
     def find_alternative(
         self,
         failed_tool: str,
         *,
-        attempted: Optional[set[str]] = None,
-        is_tool_healthy: Optional[Callable[[str], bool]] = None,
-    ) -> Optional[str]:
+        attempted: set[str] | None = None,
+        is_tool_healthy: Callable[[str], bool] | None = None,
+    ) -> str | None:
         """Returns the next healthy alternative tool providing the same capability, or None."""
         cap = self.capability_for_tool(failed_tool)
         if not cap:
@@ -82,8 +82,7 @@ class SagaStepRecord:
 
 
 class SagaCoordinator:
-    """
-    Coordinates multi-step autonomous workflows with LIFO compensation rollback
+    """Coordinates multi-step autonomous workflows with LIFO compensation rollback
     and hash-chained governed state transitions.
     """
 
@@ -91,8 +90,8 @@ class SagaCoordinator:
         self,
         saga_id: str,
         *,
-        route_table: Optional[CapabilityRouteTable] = None,
-        tracer: Optional[telemetry.CelinaTracer] = None,
+        route_table: CapabilityRouteTable | None = None,
+        tracer: telemetry.CelinaTracer | None = None,
     ):
         self.saga_id = saga_id
         self.route_table = route_table or CapabilityRouteTable()
@@ -115,16 +114,16 @@ class SagaCoordinator:
                 tool_name=tool_name,
                 compensate=compensate,
                 description=description,
-            )
+            ),
         )
 
     def select_fallback_capability(
         self,
         failed_tool: str,
         *,
-        attempted: Optional[set[str]] = None,
-        is_tool_healthy: Optional[Callable[[str], bool]] = None,
-    ) -> Optional[str]:
+        attempted: set[str] | None = None,
+        is_tool_healthy: Callable[[str], bool] | None = None,
+    ) -> str | None:
         return self.route_table.find_alternative(
             failed_tool,
             attempted=attempted,
@@ -151,13 +150,13 @@ class SagaCoordinator:
                     step.compensated = True
                     step.compensation_result = str(out) if out is not None else "ok"
                     results.append(
-                        {"step_id": step.step_id, "tool": step.tool_name, "ok": True, "detail": step.compensation_result}
+                        {"step_id": step.step_id, "tool": step.tool_name, "ok": True, "detail": step.compensation_result},
                     )
                 except Exception as exc:
                     all_ok = False
                     step.compensation_result = f"error: {exc}"
                     results.append(
-                        {"step_id": step.step_id, "tool": step.tool_name, "ok": False, "detail": str(exc)}
+                        {"step_id": step.step_id, "tool": step.tool_name, "ok": False, "detail": str(exc)},
                     )
             span.set_io(outputs={"compensated_count": len(results), "all_ok": all_ok})
 

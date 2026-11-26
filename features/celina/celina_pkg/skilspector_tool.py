@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - SkillSpector Security Scanner (v4.5, Update 18)
+"""Celina AI (Celly) - SkillSpector Security Scanner (v4.5, Update 18)
 
 SkillSpector — Security scanner for AI agent skills.
 Detects vulnerabilities, malicious patterns, prompt injection, data exfiltration,
@@ -16,9 +15,8 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 log = logging.getLogger("celina.skilspector")
 
@@ -28,8 +26,7 @@ RISK_RECOMMENDATION = ("SAFE", "CAUTION", "DO_NOT_INSTALL")
 
 
 class SkillSpectorTool:
-    """
-    SkillSpector security scanner integration for Celina.
+    """SkillSpector security scanner integration for Celina.
 
     Scans AI agent skills, MCP servers, and skill directories for
     vulnerabilities before they are installed or used. Acts as a
@@ -37,18 +34,24 @@ class SkillSpectorTool:
     will load them.
     """
 
-    def __init__(self, skilspector_path: Optional[str] = None):
+    def __init__(self, skilspector_path: str | None = None):
         self.skilspector_path = skilspector_path or self._find_skilspector()
         self._installed = self.skilspector_path is not None
 
     @staticmethod
-    def _find_skilspector() -> Optional[str]:
-        """Find SkillSpector installation on the system."""
+    def _find_skilspector() -> str | None:
+        """Find SkillSpector installation on the system.
+
+        No hardcoded developer paths — only user-writable locations and PATH.
+        """
+        env_path = os.environ.get("SKILLSPECTOR_PATH")
+        if env_path:
+            p = Path(env_path).expanduser()
+            if p.exists():
+                return str(p)
         candidates = [
-            "/home/jtcviza/.local/share/skillspector",
             os.path.expanduser("~/.local/share/skillspector"),
             "/opt/skillspector",
-            "/home/jtcviza/Downloads/skillspector",
         ]
         for path in candidates:
             if Path(path).exists():
@@ -71,8 +74,7 @@ class SkillSpectorTool:
         recursive: bool = False,
         max_skills: int = 32,
     ) -> dict[str, Any]:
-        """
-        Scan a skill directory or SKILL.md file for security risks.
+        """Scan a skill directory or SKILL.md file for security risks.
 
         Parameters
         ----------
@@ -91,6 +93,7 @@ class SkillSpectorTool:
         -------
         dict
             Scan results with risk_score, severity, recommendation, and issues.
+
         """
         if not self.is_available:
             return {
@@ -132,13 +135,12 @@ class SkillSpectorTool:
                     "raw": report,
                     "exit_code": result.returncode,
                 }
-            else:
-                return {
-                    "success": result.returncode == 0,
-                    "skill_path": skill_path,
-                    "raw_output": result.stdout,
-                    "exit_code": result.returncode,
-                }
+            return {
+                "success": result.returncode == 0,
+                "skill_path": skill_path,
+                "raw_output": result.stdout,
+                "exit_code": result.returncode,
+            }
 
         except subprocess.TimeoutExpired:
             return {
@@ -161,8 +163,7 @@ class SkillSpectorTool:
         max_severity: str = "MEDIUM",
         fail_on_high: bool = True,
     ) -> dict[str, Any]:
-        """
-        Scan a skill and apply a security gate.
+        """Scan a skill and apply a security gate.
 
         If the skill's risk exceeds max_severity, installation is blocked.
 
@@ -179,6 +180,7 @@ class SkillSpectorTool:
         -------
         dict
             Gate result: {"allowed": bool, "reason": str, "scan": dict}
+
         """
         severity_order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
         max_level = severity_order.get(max_severity, 1)
@@ -238,4 +240,4 @@ class SkillSpectorTool:
         }
 
 
-__all__ = ["SkillSpectorTool", "RISK_SEVERITY", "RISK_RECOMMENDATION"]
+__all__ = ["RISK_RECOMMENDATION", "RISK_SEVERITY", "SkillSpectorTool"]

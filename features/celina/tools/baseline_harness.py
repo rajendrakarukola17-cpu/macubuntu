@@ -11,7 +11,7 @@ Generates an evidence-based baseline BEFORE any refactor:
 All output is printed literally. No fabricated examples.
 
 Usage:
-    cd /home/user/macubuntu/features/celina
+    cd $CELINA_HOME  # or /path/to/celina/workspace
     python3 tools/baseline_harness.py [--output baseline.json]
 
 Exit codes:

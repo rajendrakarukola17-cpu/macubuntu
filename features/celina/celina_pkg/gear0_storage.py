@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Common Storage (Update 19)
+"""Celina AI (Celly) - Gear 0 Common Storage (Update 19)
 
 Shared storage backend for Ollama and Edge0-35B-A3B.
 Switching between backends causes ZERO data loss — all models, contexts,
@@ -17,14 +16,13 @@ Layout:
 from __future__ import annotations
 
 import fcntl
-import hashlib
 import json
 import os
 import shutil
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Directory layout
@@ -223,7 +221,8 @@ _CHECKPOINT_LOG_FILES = [
 def _snapshot_db(src: Path, dst: Path) -> None:
     """Create a consistent snapshot of a live SQLite database using the
     sqlite3.backup() API. This avoids corrupt snapshots from copying a
-    live WAL-mode database file directly."""
+    live WAL-mode database file directly.
+    """
     if not src.exists():
         return
     src_conn = sqlite3.connect(str(src))
@@ -359,7 +358,7 @@ def shared_save_fact(key: str, value: str, backend: str = "shared", confidence: 
         return f"Failed to save fact: {exc}"
 
 
-def shared_get_fact(key: str) -> Optional[str]:
+def shared_get_fact(key: str) -> str | None:
     """Retrieve a fact from shared storage."""
     try:
         conn = _shared_conn()
@@ -384,7 +383,7 @@ def shared_save_conversation(role: str, content: str, backend: str = "shared", c
         pass
 
 
-def shared_get_recent_conversations(limit: int = 10, backend: Optional[str] = None) -> list[dict[str, Any]]:
+def shared_get_recent_conversations(limit: int = 10, backend: str | None = None) -> list[dict[str, Any]]:
     """Get recent conversation turns from shared storage."""
     try:
         conn = _shared_conn()
@@ -433,11 +432,23 @@ def backend_checkpoint_path(backend: str, name: str) -> Path:
 
 
 __all__ = [
-    "STORAGE_ROOT", "OLLAMA_DIR", "EDGE0_DIR", "SHARED_DIR",
-    "ensure_storage_layout", "get_backend_state", "set_backend_state",
-    "record_backend_switch", "create_checkpoint", "list_checkpoints",
-    "restore_checkpoint", "shared_save_fact", "shared_get_fact",
-    "shared_save_conversation", "shared_get_recent_conversations",
-    "backend_dir", "backend_model_path", "backend_context_path",
+    "EDGE0_DIR",
+    "OLLAMA_DIR",
+    "SHARED_DIR",
+    "STORAGE_ROOT",
     "backend_checkpoint_path",
+    "backend_context_path",
+    "backend_dir",
+    "backend_model_path",
+    "create_checkpoint",
+    "ensure_storage_layout",
+    "get_backend_state",
+    "list_checkpoints",
+    "record_backend_switch",
+    "restore_checkpoint",
+    "set_backend_state",
+    "shared_get_fact",
+    "shared_get_recent_conversations",
+    "shared_save_conversation",
+    "shared_save_fact",
 ]

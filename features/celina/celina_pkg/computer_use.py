@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Project Astra Autonomous Computer-Use Loop (v4.2)
+"""Celina AI (Celly) - Project Astra Autonomous Computer-Use Loop (v4.2)
 Enables Celina to perform ANY multi-step human computer task by command:
   Observe (AT-SPI2 UI Tree + Offline Tesseract OCR + optional privacy-gated Cloud Vision)
   -> Think (Cloud Frontier or Local Ollama JSON action planner)
@@ -10,33 +9,34 @@ Safety: Single upfront mission approval, Apple Intelligence fullscreen glow, Esc
         and strict Privacy Consent Gate before any screen text/image leaves the laptop.
 """
 
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import re
 import secrets
 import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import requests
 
-from . import approval, automation, config, privacy, skills
+from . import automation, config, privacy
 
 MAX_SAVED_CHECKPOINTS = 50
 
 
-def _checkpoint_path(task_id: str, checkpoints_dir: Optional[Path] = None) -> Path:
+def _checkpoint_path(task_id: str, checkpoints_dir: Path | None = None) -> Path:
     cdir = Path(checkpoints_dir) if checkpoints_dir is not None else config.CHECKPOINTS_DIR
     safe_id = re.sub(r"[^a-zA-Z0-9_.-]+", "_", task_id).strip("._") or "task"
     return cdir / f"{safe_id}.json"
 
 
-def _save_checkpoint(ckpt: dict[str, Any], checkpoints_dir: Optional[Path] = None) -> Path:
+def _save_checkpoint(ckpt: dict[str, Any], checkpoints_dir: Path | None = None) -> Path:
     cdir = Path(checkpoints_dir) if checkpoints_dir is not None else config.CHECKPOINTS_DIR
     config.ensure_private_dir(cdir)
     dest = _checkpoint_path(str(ckpt["task_id"]), cdir)
-    ckpt["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+    ckpt["updated_at_utc"] = datetime.now(UTC).isoformat()
     tmp = dest.with_name(f".{dest.name}.{secrets.token_hex(3)}.tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
@@ -61,7 +61,7 @@ def _save_checkpoint(ckpt: dict[str, Any], checkpoints_dir: Optional[Path] = Non
     return dest
 
 
-def load_checkpoint(task_id: str, checkpoints_dir: Optional[Path] = None) -> Optional[dict[str, Any]]:
+def load_checkpoint(task_id: str, checkpoints_dir: Path | None = None) -> dict[str, Any] | None:
     p = _checkpoint_path(task_id, checkpoints_dir)
     if not p.is_file():
         return None
@@ -72,7 +72,7 @@ def load_checkpoint(task_id: str, checkpoints_dir: Optional[Path] = None) -> Opt
         return None
 
 
-def list_checkpoints(limit: int = 15, checkpoints_dir: Optional[Path] = None) -> list[dict[str, Any]]:
+def list_checkpoints(limit: int = 15, checkpoints_dir: Path | None = None) -> list[dict[str, Any]]:
     cdir = Path(checkpoints_dir) if checkpoints_dir is not None else config.CHECKPOINTS_DIR
     if not cdir.is_dir():
         return []
@@ -90,7 +90,7 @@ def list_checkpoints(limit: int = 15, checkpoints_dir: Optional[Path] = None) ->
                         "completed_steps": len(d.get("steps") or []),
                         "max_steps": int(d.get("max_steps", 0)),
                         "updated_at_utc": str(d.get("updated_at_utc", "")),
-                    }
+                    },
                 )
         except (OSError, json.JSONDecodeError, ValueError):
             continue
@@ -100,7 +100,7 @@ ApprovalCallback = Callable[[str, str], bool]
 StatusCallback = Callable[[str], None]
 PrivacyConsentCallback = privacy.PrivacyConsentCallback
 TaskGlowCallback = Callable[[bool], None]
-ToolExecutor = Callable[[str, dict[str, Any], Optional[ApprovalCallback]], str]
+ToolExecutor = Callable[[str, dict[str, Any], ApprovalCallback | None], str]
 
 _ASTRA_SYSTEM_PROMPT = """You are Celina Astra, an autonomous Ubuntu 26.04 Wayland computer-use agent.
 On each turn you receive:
@@ -157,7 +157,7 @@ _ACTION_ARG_SCHEMAS: dict[str, set[str]] = {
 _MAX_TYPE_TEXT_LEN = 500
 
 
-def _contains_forbidden_keys(obj: Any) -> Optional[str]:
+def _contains_forbidden_keys(obj: Any) -> str | None:
     if isinstance(obj, dict):
         for k, v in obj.items():
             if str(k).strip().lower() in _FORBIDDEN_FIELD_NAMES:
@@ -177,13 +177,12 @@ def validate_astra_action(
     raw: str,
     *,
     screen_bounds: tuple[int, int] = (7680, 4320),
-) -> tuple[Optional[dict[str, Any]], Optional[str]]:
-    """
-    Strict JSON Schema Validator for Astra GUI actions (Phase 6 Item 14):
-      - NEVER uses greedy regex extraction (`\\{[\\s\\S]*\\}`).
-      - Accepts strictly ONE JSON object (optionally enclosed in a single ```json fence).
-      - Rejects unknown top-level keys, unknown arg keys, and any shell/code fields.
-      - Enforces integer coordinate bounds, max text length, and valid target_window.
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Strict JSON Schema Validator for Astra GUI actions (Phase 6 Item 14):
+    - NEVER uses greedy regex extraction (`\\{[\\s\\S]*\\}`).
+    - Accepts strictly ONE JSON object (optionally enclosed in a single ```json fence).
+    - Rejects unknown top-level keys, unknown arg keys, and any shell/code fields.
+    - Enforces integer coordinate bounds, max text length, and valid target_window.
     """
     text = (raw or "").strip()
     if not text:
@@ -240,7 +239,7 @@ def validate_astra_action(
 
     max_w, max_h = max(320, int(screen_bounds[0])), max(240, int(screen_bounds[1]))
 
-    def _valid_coord(val: Any, upper: int, label: str) -> tuple[int, Optional[str]]:
+    def _valid_coord(val: Any, upper: int, label: str) -> tuple[int, str | None]:
         if isinstance(val, bool) or not isinstance(val, int):
             return 0, f"Coordinate '{label}' must be an integer."
         if not (0 <= val <= upper):
@@ -315,7 +314,7 @@ def validate_astra_action(
     }, None
 
 
-def _extract_json_action(raw: str) -> Optional[dict[str, Any]]:
+def _extract_json_action(raw: str) -> dict[str, Any] | None:
     """Backwards-compatible wrapper delegating to strict validate_astra_action()."""
     w, h = automation._get_logical_screen_size()
     bounds = (w, h) if (w > 300 and h > 200) else (7680, 4320)
@@ -327,10 +326,10 @@ def _post_with_retry(
     url: str,
     payload: dict[str, Any],
     timeout: int,
-    headers: Optional[dict[str, str]] = None,
+    headers: dict[str, str] | None = None,
     retries: int = 3,
 ) -> requests.Response:
-    last_exc: Optional[Exception] = None
+    last_exc: Exception | None = None
     for attempt in range(retries):
         try:
             resp = requests.post(url, headers=headers, json=payload, timeout=timeout)
@@ -350,8 +349,8 @@ def _post_with_retry(
 def _query_planner(
     user_payload: str,
     use_cloud: bool,
-    image_data_uri: Optional[str] = None,
-) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    image_data_uri: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
     """Queries either OpenRouter (cloud / optional vision) or offline Local Ollama for next JSON step."""
     if use_cloud and config.OPENROUTER_API_KEY and config.OPENROUTER_API_KEY != "PASTE_YOUR_KEY_HERE":
         content: Any = user_payload
@@ -426,15 +425,14 @@ def autonomous_gui_task(
     executor: ToolExecutor,
     max_steps: int = 10,
     use_vision: bool = False,
-    approval_cb: Optional[ApprovalCallback] = None,
-    consent_cb: Optional[PrivacyConsentCallback] = None,
-    status_cb: Optional[StatusCallback] = None,
-    task_glow_cb: Optional[TaskGlowCallback] = None,
-    resume_checkpoint_id: Optional[str] = None,
-    checkpoints_dir: Optional[Path] = None,
+    approval_cb: ApprovalCallback | None = None,
+    consent_cb: PrivacyConsentCallback | None = None,
+    status_cb: StatusCallback | None = None,
+    task_glow_cb: TaskGlowCallback | None = None,
+    resume_checkpoint_id: str | None = None,
+    checkpoints_dir: Path | None = None,
 ) -> str:
-    """
-    Runs an Astra-style Observe -> Think -> Act -> Verify desktop loop to accomplish
+    """Runs an Astra-style Observe -> Think -> Act -> Verify desktop loop to accomplish
     any high-level computer goal by command, persisting a PII-redacted recovery
     checkpoint after every step so suspend/crash interruptions remain auditable
     and resumable (`celina checkpoints`).
@@ -477,21 +475,20 @@ def autonomous_gui_task(
             use_cloud = False  # 100% offline local Ollama control!
 
     automation.clear_stop()
-    approved_child: ApprovalCallback = lambda _t, _d: not automation.is_stop_requested()
 
     if task_glow_cb:
         task_glow_cb(True)
 
     history: list[str] = []
     start_step = 1
-    task_id = resume_checkpoint_id or f"astra_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3)}"
+    task_id = resume_checkpoint_id or f"astra_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}_{secrets.token_hex(3)}"
     ckpt: dict[str, Any] = {
         "task_id": task_id,
         "goal": vault.redact(goal)[0],
         "status": "running",
         "max_steps": steps_cap,
-        "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "started_at_utc": datetime.now(UTC).isoformat(),
+        "updated_at_utc": datetime.now(UTC).isoformat(),
         "steps": [],
         "final_note": "",
     }
@@ -502,7 +499,7 @@ def autonomous_gui_task(
             ckpt["steps"] = list(prior["steps"])
             for s in ckpt["steps"]:
                 history.append(
-                    f"{s.get('step')}. [{s.get('action')}] {s.get('thought', '')} -> {s.get('result', '')}"
+                    f"{s.get('step')}. [{s.get('action')}] {s.get('thought', '')} -> {s.get('result', '')}",
                 )
             start_step = len(ckpt["steps"]) + 1
     _save_checkpoint(ckpt, checkpoints_dir=checkpoints_dir)
@@ -533,7 +530,7 @@ def autonomous_gui_task(
 
             # Redact PII/secrets before sending UI text to OpenRouter
             obs_text = vault.redact(ui_map)[0] if (use_cloud and redact_cloud) else vault.strip_hard_secrets(ui_map)[0]
-            img_uri: Optional[str] = None
+            img_uri: str | None = None
             if use_cloud and allow_cloud_vision:
                 img_uri, _ = automation.capture_screenshot_b64_jpeg()
 
@@ -586,7 +583,7 @@ def autonomous_gui_task(
                     matched_goal = any(t in verify_ui.lower() for t in goal_terms) if goal_terms else True
                     if not matched_goal and verify_fp == prev_fp:
                         history.append(
-                            f"Step {step_idx} verify-reject: Goal terms not confirmed on screen yet; verify or execute actions first."
+                            f"Step {step_idx} verify-reject: Goal terms not confirmed on screen yet; verify or execute actions first.",
                         )
                         continue
                 ckpt["status"] = "completed"
@@ -609,25 +606,16 @@ def autonomous_gui_task(
             if status_cb:
                 status_cb(f"Astra ({step_idx}/{steps_cap}): {action}...")
 
-            # Map Astra atomic action to native Celina Wayland tools
-            # High-risk actions (raw coordinates, drag, sensitive typing) ALWAYS re-confirm via real approval_cb!
+            # Every actionable child receives the real callback, never an auto-approval.
             target_win = str(plan.get("target_window", "")).strip()
-            win_info = automation.get_active_window_info()
-            active_lbl = f"{win_info.get('app', '')} {win_info.get('title', '')}".strip()
-
-            def _cb_for(tool_name: str, tool_args: dict[str, Any]) -> ApprovalCallback:
-                if approval.requires_fresh_confirmation(tool_name, tool_args, active_window=active_lbl):
-                    return approval_cb
-                return approved_child
-
             res = ""
             if action == "open_app":
                 ta = {"app_name": str(args.get("app_name", ""))}
-                res = executor("open_application", ta, _cb_for("open_application", ta))
+                res = executor("open_application", ta, approval_cb)
                 time.sleep(1.0)
             elif action == "click_text":
                 ta = {"target_text": str(args.get("target_text", "")), "target_window": target_win}
-                res = executor("click_on_text", ta, _cb_for("click_on_text", ta))
+                res = executor("click_on_text", ta, approval_cb)
             elif action == "click_xy":
                 ta = {"x": int(args.get("x", 0)), "y": int(args.get("y", 0)), "target_window": target_win}
                 res = executor("click_position", ta, approval_cb)
@@ -640,13 +628,13 @@ def autonomous_gui_task(
             elif action == "type":
                 txt = vault.restore(str(args.get("text", "")))
                 ta = {"text": txt, "press_enter": bool(args.get("press_enter", False)), "target_window": target_win}
-                res = executor("type_text", ta, _cb_for("type_text", ta))
+                res = executor("type_text", ta, approval_cb)
             elif action == "hotkey":
                 ta = {"keys": str(args.get("keys", "")), "target_window": target_win}
-                res = executor("press_hotkey", ta, _cb_for("press_hotkey", ta))
+                res = executor("press_hotkey", ta, approval_cb)
             elif action == "scroll":
                 ta = {"direction": str(args.get("direction", "down")), "amount": int(args.get("amount", 5))}
-                res = executor("scroll_screen", ta, _cb_for("scroll_screen", ta))
+                res = executor("scroll_screen", ta, approval_cb)
             elif action == "drag":
                 ta = {
                     "x1": int(args.get("x1", 0)), "y1": int(args.get("y1", 0)),
@@ -664,11 +652,11 @@ def autonomous_gui_task(
             ckpt["steps"].append(
                 {
                     "step": step_idx,
-                    "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                    "timestamp_utc": datetime.now(UTC).isoformat(),
                     "action": action,
                     "thought": vault.redact(thought)[0][:240],
                     "result": vault.redact(str(res))[0][:300],
-                }
+                },
             )
             _save_checkpoint(ckpt, checkpoints_dir=checkpoints_dir)
             time.sleep(0.45)

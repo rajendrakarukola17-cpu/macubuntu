@@ -1,5 +1,4 @@
-"""
-Celina Local-First Demand-Constructed Memory MCP Server (`memory_mcp_server.py`)
+"""Celina Local-First Demand-Constructed Memory MCP Server (`memory_mcp_server.py`)
 
 Inspired by `swadb` (single-file SQLite, demand-constructed per-turn context,
 10 typed KG edges, 9-stage retrieval, 9 MCP memory tools) and `Engrama`
@@ -24,7 +23,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config, memory, memory_tiers
 
@@ -151,7 +150,7 @@ MEMORY_MCP_TOOLS: tuple[dict[str, Any], ...] = (
 class CelinaMemoryMCPServer:
     """JSON-RPC 2.0 MCP server exposing Celina's 9 sovereign memory & graph tools."""
 
-    def __init__(self, *, base_dir: Optional[Path] = None, memory_db: Optional[memory.MemoryDB] = None):
+    def __init__(self, *, base_dir: Path | None = None, memory_db: memory.MemoryDB | None = None):
         self._owns_db = memory_db is None
         if memory_db is not None:
             self.mem_db = memory_db
@@ -178,7 +177,7 @@ class CelinaMemoryMCPServer:
                     break
                 ph = ",".join("?" for _ in frontier)
                 rows = idx._conn.execute(
-                    f"SELECT src_id, edge_type, dst_id, weight FROM kg_priority_edges "
+                    f"SELECT src_id, edge_type, dst_id, weight FROM kg_priority_edges "  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
                     f"WHERE src_id IN ({ph}) OR dst_id IN ({ph})",
                     tuple(frontier) + tuple(frontier),
                 ).fetchall()
@@ -200,7 +199,7 @@ class CelinaMemoryMCPServer:
             if visited:
                 ph_v = ",".join("?" for _ in visited)
                 for nr in idx._conn.execute(
-                    f"SELECT node_id, kind, label, content, priority FROM kg_nodes WHERE node_id IN ({ph_v})",
+                    f"SELECT node_id, kind, label, content, priority FROM kg_nodes WHERE node_id IN ({ph_v})",  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
                     tuple(visited),
                 ).fetchall():
                     nodes_found[str(nr["node_id"])] = {
@@ -310,7 +309,7 @@ class CelinaMemoryMCPServer:
 
         return {"ok": False, "error": f"Unknown memory MCP tool '{name}'"}
 
-    def handle_request(self, request: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def handle_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
         req_id = request.get("id")
         method = str(request.get("method") or "")
         params = request.get("params") if isinstance(request.get("params"), dict) else {}

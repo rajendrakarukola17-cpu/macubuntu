@@ -56,6 +56,43 @@ _FP_USB_HINTS = (
     "goodix", "synaptics", "elan", "validity", "fingerprint", "focaltech", "authentec", "egis",
 )
 
+# Physical camera driver allowlist — closes Threat T3 (v4l2loopback IR spoofing).
+# Any video4linux device without a physical driver symlink resolving to one of these
+# is treated as virtual and NEVER added to ir_devices.
+_PHYSICAL_CAM_DRIVERS = frozenset({
+    "uvcvideo", "intel-ipu6", "ipu6-isys", "intel-ipu7", "amd-isp", "rkisp1", "unicam",
+})
+_VIRTUAL_CAM_RE = re.compile(
+    r"\b(v4l2loopback|v4l2loopback_dc1394|vivid|akvcam|droidcam|scrcpy|dummy|virtual)\b",
+    re.IGNORECASE,
+)
+
+
+def _resolve_physical_video_driver(dev: Path) -> tuple[bool, str]:
+    """Fail-closed physical camera verification (closes Threat T3 v4l2loopback spoofing).
+
+    Returns (is_physical, driver_name_or_reason).
+    """
+    try:
+        real_dev = os.path.realpath(dev)
+    except OSError:
+        return False, "unreadable"
+    # Reject /sys/devices/virtual/... outright (where v4l2loopback lives on real Linux!)
+    if "/devices/virtual/" in real_dev:
+        return False, "virtual"
+    driver_link = dev / "device" / "driver"
+    if not driver_link.is_symlink():
+        return False, ""
+    try:
+        driver_name = Path(os.readlink(driver_link)).name.lower()
+    except OSError:
+        return False, ""
+    if not driver_name or _VIRTUAL_CAM_RE.search(driver_name):
+        return False, driver_name
+    if driver_name not in _PHYSICAL_CAM_DRIVERS:
+        return False, driver_name
+    return True, driver_name
+
 
 class FingerprintAdapter:
     """Probes fprintd/libfprint + PAM password fallback; zero template access in Celina."""
@@ -65,7 +102,14 @@ class FingerprintAdapter:
         self._which = which
 
     def probe(self, username: Optional[str] = None, pam_dir: Path = Path("/etc/pam.d")) -> dict[str, Any]:
-        user = username or os.environ.get("USER") or getpass.getuser()
+        # Resolve the target user: when running as root via sudo, SUDO_USER is the
+        # real user; never fall back to pwd.getpwuid(os.getuid()) which returns "root".
+        if username is None:
+            if os.geteuid() == 0:
+                username = os.environ.get("SUDO_USER") or os.environ.get("USER") or getpass.getuser()
+            else:
+                username = os.environ.get("USER") or getpass.getuser()
+        user = username
         usb_hint = False
         if self._which("lsusb"):
             ls = self._run(["lsusb"], 3.0)
@@ -78,8 +122,11 @@ class FingerprintAdapter:
         if common_auth.exists():
             try:
                 pam_txt = common_auth.read_text(encoding="utf-8", errors="ignore")
+                pam_auth_re = re.compile(
+                    r"^\s*auth\s+(?:required|sufficient|requisite|\[[^]]*success=[0-9][^]]*])\s+pam_unix\.so\b"
+                )
                 pam_password_ok = any(
-                    "pam_unix.so" in ln.split("#", 1)[0]
+                    pam_auth_re.search(ln.split("#", 1)[0])
                     for ln in pam_txt.splitlines()
                 )
             except OSError:
@@ -143,10 +190,31 @@ class IRFaceAdapter:
                     name = name_f.read_text(encoding="utf-8", errors="ignore").strip() if name_f.exists() else dev.name
                 except OSError:
                     name = dev.name
-                if ir_name_re.search(name):
-                    ir_devices.append(f"{dev.name}: {name}")
+                # Resolve device driver via /sys/class/video4linux/<dev>/device/driver
+                driver_link = dev / "device" / "driver"
+                driver_name = ""
+                if driver_link.is_symlink():
+                    try:
+                        driver_name = Path(os.readlink(driver_link)).name.lower()
+                    except OSError:
+                        driver_name = ""
+                real_dev = ""
+                try:
+                    real_dev = os.path.realpath(dev)
+                except OSError:
+                    pass
+                # Hard-reject virtual devices: under /sys/devices/virtual/ OR driver
+                # matches virtual pattern — skip entirely, never add to any list.
+                if "/devices/virtual/" in real_dev or _VIRTUAL_CAM_RE.search(driver_name or name):
+                    continue
+                # Devices without a physical driver allowlist match are RGB (not IR).
+                # v4l2loopback on real Linux has no driver symlink → lands here as RGB,
+                # but its name won't match the IR name regex so it won't be IR.
+                is_physical = driver_name in _PHYSICAL_CAM_DRIVERS
+                if ir_name_re.search(name) and is_physical:
+                    ir_devices.append(f"{dev.name}: {name} (driver={driver_name or 'unknown'})")
                 else:
-                    rgb_devices.append(f"{dev.name}: {name}")
+                    rgb_devices.append(f"{dev.name}: {name} (driver={driver_name or 'unknown'})")
 
         howdy_installed = bool(self._which("howdy"))
         if not ir_devices:
@@ -229,6 +297,7 @@ class AuthPolicyEngine:
         "payment",
         "account_change",
         "approve_quarantined_skill",
+        "install_community_skill",
         "host_shell_override",
         "credential_export",
     })
@@ -244,22 +313,34 @@ class AuthPolicyEngine:
         operation: str,
         presented_method: str,
         *,
-        password_fallback_configured: bool = True,
+        password_fallback_configured: bool = False,
         ir_camera_verified: bool = False,
     ) -> AuthDecision:
         op = (operation or "").strip().lower()
         method = (presented_method or "").strip().lower()
 
+        # Resolve the operation tier FIRST. Method constraints only NARROW accepted
+        # methods — they never widen beyond what the operation tier permits.
+        if op in self._PASSWORD_ONLY_OPS:
+            tier, accepted = AuthAssuranceTier.PASSWORD_RECOVERY, ("password",)
+        elif op in self._HIGH_ASSURANCE_OPS:
+            tier, accepted = AuthAssuranceTier.FIDO2_HIGH_ASSURANCE, ("fido2", "password")
+        elif op in self._LOCAL_UNLOCK_OPS:
+            tier, accepted = AuthAssuranceTier.LOCAL_CONVENIENCE, ("password", "fido2", "fingerprint", "ir_face")
+        else:
+            tier, accepted = AuthAssuranceTier.FIDO2_HIGH_ASSURANCE, ("fido2", "password")
+
         # Invariant: Bluetooth proximity is NEVER sufficient authentication for ANY operation
         if method in {"bluetooth", "bluetooth_proximity", "bt_proximity"}:
             return AuthDecision(
                 allowed=False,
-                required_tier=AuthAssuranceTier.LOCAL_CONVENIENCE,
+                required_tier=tier,
                 reason="Bluetooth proximity is a convenience signal only and is NEVER accepted as authentication alone.",
-                accepted_methods=("password", "fido2", "fingerprint"),
+                accepted_methods=accepted,
             )
 
-        # Invariant: Password fallback must remain configured before allowing biometric methods
+        # Invariant: Password fallback must remain configured before allowing biometric methods.
+        # Default False = fail-closed: without a verified OS password, biometrics are refused.
         if method in {"fingerprint", "ir_face", "face"} and not password_fallback_configured:
             return AuthDecision(
                 allowed=False,
@@ -268,47 +349,22 @@ class AuthPolicyEngine:
                 accepted_methods=("password",),
             )
 
-        # Ordinary RGB webcam face matching is never accepted
+        # Ordinary RGB webcam face matching is never accepted.
+        # When rejecting ir_face/face on LOCAL_CONVENIENCE, preserve fingerprint
+        # alongside password and fido2 as still-acceptable methods.
         if method in {"face", "rgb_face", "webcam_face"} or (method == "ir_face" and not ir_camera_verified):
+            preserved = tuple(m for m in accepted if m in ("password", "fido2", "fingerprint"))
             return AuthDecision(
                 allowed=False,
-                required_tier=AuthAssuranceTier.LOCAL_CONVENIENCE,
+                required_tier=tier,
                 reason="Face unlock requires a verified IR-capable camera; ordinary RGB webcams are spoofable.",
-                accepted_methods=("password", "fingerprint", "fido2"),
+                accepted_methods=preserved,
             )
 
-        if op in self._PASSWORD_ONLY_OPS:
-            ok = method == "password"
-            return AuthDecision(
-                allowed=ok,
-                required_tier=AuthAssuranceTier.PASSWORD_RECOVERY,
-                reason="Accepted recovery/policy password." if ok else f"Operation '{op}' requires OS password (biometrics/proximity not allowed).",
-                accepted_methods=("password",),
-            )
-
-        if op in self._HIGH_ASSURANCE_OPS:
-            ok = method in {"fido2", "password"}
-            return AuthDecision(
-                allowed=ok,
-                required_tier=AuthAssuranceTier.FIDO2_HIGH_ASSURANCE,
-                reason="High-assurance credential verified." if ok else f"Operation '{op}' requires FIDO2 security key or password (face/fingerprint/proximity refused).",
-                accepted_methods=("fido2", "password"),
-            )
-
-        if op in self._LOCAL_UNLOCK_OPS:
-            ok = method in {"password", "fido2", "fingerprint", "ir_face"}
-            return AuthDecision(
-                allowed=ok,
-                required_tier=AuthAssuranceTier.LOCAL_CONVENIENCE,
-                reason="Local unlock credential accepted." if ok else f"Unsupported authentication method '{method}'.",
-                accepted_methods=("password", "fido2", "fingerprint", "ir_face"),
-            )
-
-        # Default deny unknown operations unless FIDO2 or password
-        ok = method in {"password", "fido2"}
+        ok = method in accepted
         return AuthDecision(
             allowed=ok,
-            required_tier=AuthAssuranceTier.FIDO2_HIGH_ASSURANCE,
-            reason="Verified." if ok else f"Unknown operation '{op}' defaults to password or FIDO2 security key.",
-            accepted_methods=("fido2", "password"),
+            required_tier=tier,
+            reason="Accepted." if ok else f"'{method}' not permitted for '{op}'.",
+            accepted_methods=accepted,
         )

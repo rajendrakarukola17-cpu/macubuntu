@@ -44,3 +44,20 @@ owl|git|https://github.com/seemoo-lab/owl.git|0ee3263f944ea721c355f826aa90d636d0
 opendrop|git|https://github.com/seemoo-lab/opendrop.git|11fe7ba7861093b302bc0637e8cb10adf2d29337|-|2026-11-15|GPL-3.0 (seemoo-lab/opendrop, PGP-verified commit, AirDrop protocol research)
 findmy-py|git|https://github.com/malmeloo/FindMy.py.git|22e4879426f97c9b0a1a33b22dac34ef0cf3d02f|-|2026-11-15|MIT (malmeloo/FindMy.py v0.10.2, SSH-verified commit, Find My BLE research)
 anisette-v3-server|docker|https://hub.docker.com/r/dadoum/anisette-v3-server|latest|d551c75454bcbee68dc262d4247d5f87fa309dfc8f2125644d333c648596e3c7|2026-11-15|MPL-2.0 (dadoum/anisette-v3-server multi-arch OCI manifest index digest)
+
+# --- Built-In Celina AI Models (GGUF / fasttext / ONNX / safetensors) ---
+# Commit-pinned HuggingFace resolve URLs; SHA-256 MUST be verified before first load.
+# Hash source precedence: lockfile → CELINA_*_SHA256 env → fail closed.
+# Add entries here once SHA-256 digests are verified (see CELINA_*_SHA256 env vars).
+
+# --- MCP Packages via uvx (PyPI wheels, pinned + SHA-256 verified) ---
+mcp-shadow-vision|uvx|https://pypi.org/pypi/shadow-vision/json|0.1.0|2384ab65ea7c597fcd637699df99e76c798b1d0d3270b844132bea4c27ac3781|2026-11-14|MIT (shadow-vision PyPI)
+mcp-kwin|uvx|https://pypi.org/pypi/kwin-mcp/json|0.12.0|105d14641a423d1f613861397eba78757b6efa6e237e498fb92b9b6b2d061976|2026-11-14|MIT (kwin-mcp PyPI)
+mcp-server-git|uvx|https://pypi.org/pypi/mcp-server-git/json|2026.11.18|4a1b5ee4edbc657eddec4b3ba809e458b50a03150f0295c3eaad426c8a19ffc2|2026-11-14|MIT (mcp-server-git PyPI)
+mcp-server-sqlite|uvx|https://pypi.org/pypi/mcp-server-sqlite/json|2025.4.25|5ba5706aa29d249a3cde8226577e021c07792d3198e9db40fd005578d2a0801d|2026-11-14|MIT (mcp-server-sqlite PyPI)
+mcp-server-time|uvx|https://pypi.org/pypi/mcp-server-time/json|2026.11.18|acb3ba2e0faf812ce49989fbe74d363501cf7720c8d7a103debef9815e838a34|2026-11-14|MIT (mcp-server-time PyPI)
+
+# --- MCP Packages via npm (tarballs, pinned + SHA-256 verified) ---
+mcp-playwright|npm|https://registry.npmjs.org/@playwright/mcp/-/mcp-0.0.86.tgz|0.0.86|a72b824664ebf803f3ae57ad9500a50ede12af44203482e74bcc64f9149d6ea1|2026-11-14|Apache-2.0 (@playwright/mcp npm)
+mcp-context7|npm|https://registry.npmjs.org/@upstash/context7-mcp/-/context7-mcp-4.7.3.tgz|4.7.3|ffa998e5c835fc5eff2ae59770531340e4d7ed42be00740c52893097425548af|2026-11-14|MIT (@upstash/context7-mcp npm)
+mcp-linux-system|npm|https://registry.npmjs.org/linux-system-mcp/-/linux-system-mcp-1.2.1.tgz|1.2.1|86de583a95390b99cc78e308ac7408d77e87a7e09e1e5803bd37f5409dfefc4e|2026-11-14|MIT (linux-system-mcp npm)

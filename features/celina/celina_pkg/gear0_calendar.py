@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Calendar (Update 19)
+"""Celina AI (Celly) - Gear 0 Calendar (Update 19)
 
 Local calendar parsing — reads .ics files, calcurse, khal, or system calendar.
 Zero LLM tokens, sub-5ms, 100% local.
@@ -10,9 +9,8 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
 
 _MEETING_RE = re.compile(
     r"^(?:please\s+)?(?:what'?s|what is)\s+(?:my\s+)?(?:next\s+)?(?:meeting|appointment|event)\??$",
@@ -30,7 +28,7 @@ def calendar_next_event() -> str:
         # Try calcurse
         if shutil.which("calcurse"):
             result = subprocess.run(
-                ["calcurse", "-n"], capture_output=True, text=True, timeout=5
+                ["calcurse", "-n"], capture_output=True, text=True, timeout=5,
             )
             if result.stdout.strip():
                 return result.stdout.strip()[:200]
@@ -38,7 +36,7 @@ def calendar_next_event() -> str:
         # Try khal
         if shutil.which("khal"):
             result = subprocess.run(
-                ["khal", "list", "now", "today"], capture_output=True, text=True, timeout=5
+                ["khal", "list", "now", "today"], capture_output=True, text=True, timeout=5,
             )
             if result.stdout.strip():
                 return result.stdout.strip()[:200]
@@ -81,14 +79,14 @@ def calendar_today(day: str = "today") -> str:
         if shutil.which("khal"):
             target = "today" if day == "today" else "tomorrow"
             result = subprocess.run(
-                ["khal", "list", "now", target], capture_output=True, text=True, timeout=5
+                ["khal", "list", "now", target], capture_output=True, text=True, timeout=5,
             )
             if result.stdout.strip():
                 return result.stdout.strip()[:300]
 
         if shutil.which("calcurse"):
             result = subprocess.run(
-                ["calcurse", "-s", "3"], capture_output=True, text=True, timeout=5
+                ["calcurse", "-s", "3"], capture_output=True, text=True, timeout=5,
             )
             if result.stdout.strip():
                 return result.stdout.strip()[:300]
@@ -102,7 +100,7 @@ def calendar_today(day: str = "today") -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_calendar_classify(query: str) -> Optional[str]:
+def gear0_calendar_classify(query: str) -> str | None:
     """Classify query into a calendar handler name, or None."""
     low = query.strip().lower()
 
@@ -114,7 +112,7 @@ def gear0_calendar_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_calendar_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_calendar_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Calendar handler."""
     try:
         if handler == "next_event":

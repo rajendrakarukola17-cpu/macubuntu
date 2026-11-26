@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Edge0 Streaming MoE Inference (v4.5, Update 18)
+"""Celina AI (Celly) - Edge0 Streaming MoE Inference (v4.5, Update 18)
 
 Edge0-35B-A3B MoE model runner with aggressive memory optimization for 8 GB RAM systems.
 Runs a 35B-parameter Mixture-of-Experts model inside 1.5-2.0 GiB active RAM using:
@@ -21,10 +20,8 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
 import time
-from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 log = logging.getLogger("celina.edge0")
 
@@ -108,20 +105,19 @@ class Edge0Config:
 
 
 class Edge0Inference:
-    """
-    Edge0 streaming MoE inference engine for Celina.
+    """Edge0 streaming MoE inference engine for Celina.
 
     Runs Edge0-35B-A3B (35B MoE, Qwen3.6-35B-A3B base) inside 1.5-2.0 GiB active RAM
     by streaming experts from SSD on demand, quantizing resident layers to 4-bit,
     disabling the expert LRU cache, and using a single ping-pong DMA scratch buffer.
     """
 
-    def __init__(self, config: Optional[Edge0Config] = None):
+    def __init__(self, config: Edge0Config | None = None):
         self.config = config or Edge0Config()
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
         self._base_url = "http://localhost:8000/v1"
         self._started = False
-        self._memory_measured_gb: Optional[float] = None
+        self._memory_measured_gb: float | None = None
 
     @property
     def is_available(self) -> bool:
@@ -134,8 +130,7 @@ class Edge0Inference:
         return self._proc is not None and self._proc.poll() is None
 
     def start(self) -> tuple[bool, str]:
-        """
-        Start the Edge0 inference server with memory-optimized configuration.
+        """Start the Edge0 inference server with memory-optimized configuration.
 
         Returns (success, message).
         """
@@ -182,7 +177,7 @@ class Edge0Inference:
         self._proc = None
         self._started = False
 
-    def _measure_active_memory(self) -> Optional[float]:
+    def _measure_active_memory(self) -> float | None:
         """Attempt to measure active memory usage of the Edge0 process (GiB)."""
         if not self._proc:
             return None
@@ -203,8 +198,7 @@ class Edge0Inference:
         max_tokens: int = 512,
         top_p: float = 0.9,
     ) -> dict[str, Any]:
-        """
-        Send a chat completion request to the Edge0 server.
+        """Send a chat completion request to the Edge0 server.
 
         Falls back to a mock response if the server is not running (for testing).
         """
@@ -219,7 +213,7 @@ class Edge0Inference:
                             "content": "[Edge0 server not running] This is a placeholder response. Start edge0-infer to use the 35B MoE model.",
                         },
                         "finish_reason": "server_offline",
-                    }
+                    },
                 ],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
             }
@@ -242,7 +236,7 @@ class Edge0Inference:
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=30.0) as resp:
+            with urllib.request.urlopen(req, timeout=30.0) as resp:  # nosec B310 — configured Edge0 endpoint, scheme fixed to http/https
                 return json.loads(resp.read().decode("utf-8"))
         except Exception as exc:
             log.exception("Edge0 chat completion failed")
@@ -256,7 +250,7 @@ class Edge0Inference:
                             "content": f"[Edge0 error] {exc}",
                         },
                         "finish_reason": "error",
-                    }
+                    },
                 ],
                 "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
             }
@@ -283,4 +277,4 @@ class Edge0Inference:
         }
 
 
-__all__ = ["Edge0Config", "Edge0Inference", "Edge0Config"]
+__all__ = ["Edge0Config", "Edge0Inference"]

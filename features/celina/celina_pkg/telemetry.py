@@ -1,14 +1,13 @@
-"""
-Celina AI — Capabilities #12 & #16:
-  12. OpenTelemetry-Compatible Distributed Tracing (`CelinaTracer`, `SpanContext`)
-      - W3C TraceContext (`trace_id` 32-hex, `span_id` 16-hex, `parent_span_id`)
-      - Every autonomous run emits a trace; every tool call is a span with
-        redacted inputs/outputs, duration_ms, tokens, cost_usd, and policy status
-      - Optional OpenTelemetry SDK bridge when `opentelemetry` is installed
-  16. Durable Traces & `/why` Receipts Across Restart (`traces.db` SQLite WAL)
-      - Persists traces, spans, `/why` receipts, and durable evidence mirror in
-        `~/.local/share/celina/traces.db` (WAL + busy_timeout=5000 + 0600) so full
-        execution history survives daemon crashes and restarts cleanly.
+"""Celina AI — Capabilities #12 & #16:
+12. OpenTelemetry-Compatible Distributed Tracing (`CelinaTracer`, `SpanContext`)
+- W3C TraceContext (`trace_id` 32-hex, `span_id` 16-hex, `parent_span_id`)
+- Every autonomous run emits a trace; every tool call is a span with
+redacted inputs/outputs, duration_ms, tokens, cost_usd, and policy status
+- Optional OpenTelemetry SDK bridge when `opentelemetry` is installed
+16. Durable Traces & `/why` Receipts Across Restart (`traces.db` SQLite WAL)
+- Persists traces, spans, `/why` receipts, and durable evidence mirror in
+`~/.local/share/celina/traces.db` (WAL + busy_timeout=5000 + 0600) so full
+execution history survives daemon crashes and restarts cleanly.
 """
 
 from __future__ import annotations
@@ -21,9 +20,10 @@ import secrets
 import sqlite3
 import threading
 import time
-from datetime import datetime, timezone
+from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator, Optional
+from typing import Any
 
 from . import config, privacy
 
@@ -45,7 +45,7 @@ def new_span_id() -> str:
 class SpanRecord:
     trace_id: str
     span_id: str
-    parent_span_id: Optional[str]
+    parent_span_id: str | None
     name: str
     kind: str  # internal | tool | planner | router | saga | bus
     start_ns: int
@@ -62,7 +62,7 @@ class SpanRecord:
     def set_attribute(self, key: str, value: Any) -> None:
         self.attributes[str(key)] = value
 
-    def set_io(self, *, inputs: Optional[dict[str, Any]] = None, outputs: Optional[dict[str, Any]] = None) -> None:
+    def set_io(self, *, inputs: dict[str, Any] | None = None, outputs: dict[str, Any] | None = None) -> None:
         if inputs is not None:
             self.inputs = dict(inputs)
         if outputs is not None:
@@ -77,7 +77,7 @@ class SpanRecord:
 class DurableTraceStore:
     """Thread-safe SQLite WAL backend storing traces, spans, `/why` receipts, and durable evidence."""
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         self.db_path = Path(db_path) if db_path is not None else (config.BASE_DIR / "traces.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -152,25 +152,27 @@ class DurableTraceStore:
                     trace_id TEXT NOT NULL DEFAULT '',
                     record_json TEXT NOT NULL
                 );
-                """
+                """,
             )
             self._conn.commit()
 
     def _redact_json(self, obj: dict[str, Any]) -> str:
-        raw = json.dumps(obj or {}, sort_keys=True, default=str)[:2000]
+        # Redact FIRST, then truncate — a secret straddling the 2000-char
+        # boundary would otherwise be partially exposed in plaintext.
+        raw = json.dumps(obj or {}, sort_keys=True, default=str)
         redacted, _ = privacy.RedactionVault().redact(raw)
-        return redacted
+        return redacted[:2000]
 
     def start_trace(
         self,
         root_name: str,
         *,
-        trace_id: Optional[str] = None,
+        trace_id: str | None = None,
         root_goal_id: str = "",
-        meta: Optional[dict[str, Any]] = None,
+        meta: dict[str, Any] | None = None,
     ) -> str:
         tid = trace_id or new_trace_id()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             self._conn.execute(
                 """
@@ -183,7 +185,7 @@ class DurableTraceStore:
         return tid
 
     def finish_trace(self, trace_id: str, *, status: str = "ok") -> None:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         with self._lock:
             row = self._conn.execute(
                 "SELECT COALESCE(SUM(cost_usd), 0.0) AS total_cost FROM spans WHERE trace_id = ?",
@@ -238,7 +240,7 @@ class DurableTraceStore:
         receipt_hash: str,
     ) -> str:
         rid = f"why_{secrets.token_hex(8)}"
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         redacted_txt, _ = privacy.RedactionVault().redact(receipt_text or "")
         redacted_prev, _ = privacy.RedactionVault().redact(prompt_preview or "")
         with self._lock:
@@ -280,7 +282,7 @@ class DurableTraceStore:
             )
             self._conn.commit()
 
-    def get_trace(self, trace_id: str) -> Optional[dict[str, Any]]:
+    def get_trace(self, trace_id: str) -> dict[str, Any] | None:
         with self._lock:
             t_row = self._conn.execute("SELECT * FROM traces WHERE trace_id = ?", (trace_id,)).fetchone()
             if not t_row:
@@ -288,13 +290,13 @@ class DurableTraceStore:
             spans = [
                 dict(r)
                 for r in self._conn.execute(
-                    "SELECT * FROM spans WHERE trace_id = ? ORDER BY start_ns ASC", (trace_id,)
+                    "SELECT * FROM spans WHERE trace_id = ? ORDER BY start_ns ASC", (trace_id,),
                 ).fetchall()
             ]
             receipts = [
                 dict(r)
                 for r in self._conn.execute(
-                    "SELECT * FROM why_receipts WHERE trace_id = ? ORDER BY created_at ASC", (trace_id,)
+                    "SELECT * FROM why_receipts WHERE trace_id = ? ORDER BY created_at ASC", (trace_id,),
                 ).fetchall()
             ]
         return {"trace": dict(t_row), "spans": spans, "why_receipts": receipts}
@@ -302,14 +304,14 @@ class DurableTraceStore:
     def list_traces(self, *, limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM traces ORDER BY started_at DESC LIMIT ?", (max(1, int(limit)),)
+                "SELECT * FROM traces ORDER BY started_at DESC LIMIT ?", (max(1, int(limit)),),
             ).fetchall()
             return [dict(r) for r in rows]
 
     def list_why_receipts(self, *, limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM why_receipts ORDER BY created_at DESC LIMIT ?", (max(1, int(limit)),)
+                "SELECT * FROM why_receipts ORDER BY created_at DESC LIMIT ?", (max(1, int(limit)),),
             ).fetchall()
             return [dict(r) for r in rows]
 
@@ -325,7 +327,7 @@ class DurableTraceStore:
 class CelinaTracer:
     """OpenTelemetry-compatible distributed tracer backed by DurableTraceStore (`traces.db`)."""
 
-    def __init__(self, store: Optional[DurableTraceStore] = None):
+    def __init__(self, store: DurableTraceStore | None = None):
         self.store = store or DurableTraceStore()
         self._otel = _otel_trace.get_tracer("celina.os") if _otel_trace is not None else None
         self._tls = threading.local()
@@ -334,7 +336,7 @@ class CelinaTracer:
         stack = getattr(self._tls, "span_stack", None)
         return stack[-1].trace_id if stack else ""
 
-    def current_span_id(self) -> Optional[str]:
+    def current_span_id(self) -> str | None:
         stack = getattr(self._tls, "span_stack", None)
         return stack[-1].span_id if stack else None
 
@@ -344,11 +346,11 @@ class CelinaTracer:
         name: str,
         *,
         kind: str = "internal",
-        trace_id: Optional[str] = None,
-        parent_span_id: Optional[str] = None,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
         root_goal_id: str = "",
-        inputs: Optional[dict[str, Any]] = None,
-        attributes: Optional[dict[str, Any]] = None,
+        inputs: dict[str, Any] | None = None,
+        attributes: dict[str, Any] | None = None,
     ) -> Iterator[SpanRecord]:
         stack: list[SpanRecord] = getattr(self._tls, "span_stack", [])
         if not hasattr(self._tls, "span_stack"):
@@ -390,7 +392,7 @@ class CelinaTracer:
                 self.store.finish_trace(eff_trace_id, status=span.status)
 
 
-_DEFAULT_TRACER: Optional[CelinaTracer] = None
+_DEFAULT_TRACER: CelinaTracer | None = None
 
 
 def get_tracer() -> CelinaTracer:
@@ -401,8 +403,7 @@ def get_tracer() -> CelinaTracer:
 
 
 class OTLPJsonExporter:
-    """
-    agentlog-ai / Traccia compatible local OTLP HTTP/JSON span exporter.
+    """agentlog-ai / Traccia compatible local OTLP HTTP/JSON span exporter.
     Strict security invariant: only permits loopback collector endpoints
     (`127.0.0.1` / `localhost` / `::1`) so traces & prompts never exfiltrate.
     Fails soft if no collector is running (SQLite WAL `traces.db` remains authoritative).
@@ -425,13 +426,13 @@ class OTLPJsonExporter:
                 {"key": "gen_ai.usage.input_tokens", "value": {"intValue": int(span.tokens_in)}},
                 {"key": "gen_ai.usage.output_tokens", "value": {"intValue": int(span.tokens_out)}},
                 {"key": "traccia.cost_usd", "value": {"doubleValue": float(span.cost_usd)}},
-            ]
+            ],
         )
         return {
             "resourceSpans": [
                 {
                     "resource": {
-                        "attributes": [{"key": "service.name", "value": {"stringValue": service_name}}]
+                        "attributes": [{"key": "service.name", "value": {"stringValue": service_name}}],
                     },
                     "scopeSpans": [
                         {
@@ -446,12 +447,12 @@ class OTLPJsonExporter:
                                     "endTimeUnixNano": str(span.end_ns or span.start_ns),
                                     "attributes": attrs,
                                     "status": {"code": 1 if span.status == "ok" else 2, "message": span.status},
-                                }
+                                },
                             ],
-                        }
+                        },
                     ],
-                }
-            ]
+                },
+            ],
         }
 
     def export_span(self, span: SpanRecord, *, session: Any = None) -> bool:
@@ -469,12 +470,11 @@ class OTLPJsonExporter:
 def agent_span(
     name: str,
     *,
-    tracer_getter: Optional[Callable[[], Optional[CelinaTracer]]] = None,
-    self_attr: Optional[str] = None,
+    tracer_getter: Callable[[], CelinaTracer | None] | None = None,
+    self_attr: str | None = None,
     governance_tier: str = "internal",
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """
-    agentlog-ai / Traccia style decorator (`@agent_span(name="router")`).
+    """agentlog-ai / Traccia style decorator (`@agent_span(name="router")`).
     Wraps any agent/router/engine callable with automatic W3C span recording,
     governance attributes, and error capture on the durable SQLite WAL backend.
     If `self_attr` is provided (e.g. `"tracer"`), resolves the tracer from the
@@ -486,7 +486,7 @@ def agent_span(
     def _decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         @functools.wraps(fn)
         def _wrapper(*args: Any, **kwargs: Any) -> Any:
-            tr: Optional[CelinaTracer] = None
+            tr: CelinaTracer | None = None
             if tracer_getter is not None:
                 tr = tracer_getter()
             elif self_attr is not None and args:

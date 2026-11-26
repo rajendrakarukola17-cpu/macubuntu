@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# ============================================================================
+# libexec/macubuntu-updater-helper — Privileged pkexec worker
+#
+# Verifies Ed25519 signature + SHA-256 sums of a .mubundle, takes a Btrfs/
+# Snapper pre-snapshot, applies payload + target stages, and runs Stage 99.
+# Fail-closed: unsigned bundles are rejected unless --allow-unsigned is passed.
+#
+# Invoked via Polkit: pkexec /usr/local/libexec/macubuntu-updater-helper --bundle <file>
+# ============================================================================
+set -euo pipefail
+
+BUNDLE=""
+ALLOW_UNSIGNED=false
+PUBKEY="/etc/macubuntu/update_pub.pem"
+REPO_ROOT="/home/${PKEXEC_UID:-$(getent passwd "${SUDO_USER:-$USER}" | cut -d: -f1)}/macubuntu"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --bundle)
+            BUNDLE="$2"; shift 2 ;;
+        --allow-unsigned)
+            ALLOW_UNSIGNED=true; shift ;;
+        *)
+            echo "Unknown arg: $1" >&2; exit 2 ;;
+    esac
+done
+
+[[ -f "$BUNDLE" ]] || { echo "Bundle not found: $BUNDLE" >&2; exit 2; }
+
+WORK="$(mktemp -d /tmp/macubuntu-upd-XXXXXX)"
+trap 'rm -rf "$WORK"' EXIT
+
+echo "[1/5] Extracting bundle..."
+tar -xf "$BUNDLE" -C "$WORK"
+
+echo "[2/5] Verifying cryptographic signature & SHA-256 sums..."
+if [[ -f "$WORK/SHA256SUMS.sig" && -f "$PUBKEY" ]]; then
+    openssl pkeyutl -verify -pubin -inkey "$PUBKEY" \
+        -rawin -in "$WORK/SHA256SUMS" -sigfile "$WORK/SHA256SUMS.sig"
+    (cd "$WORK" && sha256sum -c SHA256SUMS --status)
+elif [[ "$ALLOW_UNSIGNED" != "true" ]]; then
+    echo "FAIL-CLOSED: Bundle signature missing or public key not installed." >&2
+    exit 4
+fi
+
+PRE_NUM=""
+if command -v snapper >/dev/null 2>&1; then
+    echo "[3/5] Taking Btrfs/Snapper pre-update snapshot..."
+    PRE_NUM="$(snapper create --type pre --print-number --description "macubuntu-update $(basename "$BUNDLE")" || true)"
+fi
+
+echo "[4/5] Applying payload & running target stages..."
+if [[ -d "$WORK/payload" ]]; then
+    rsync -a "$WORK/payload/" "$REPO_ROOT/"
+fi
+for stg in $(jq -r '.target_stages[]' "$WORK/update_manifest.json"); do
+    SCRIPT="$(find "$REPO_ROOT/stages" -maxdepth 1 -name "stage-${stg}-*.sh" | head -n1)"
+    if [[ -n "$SCRIPT" ]]; then
+        echo "  -> Running $(basename "$SCRIPT")..."
+        bash "$SCRIPT"
+    fi
+done
+
+echo "[5/5] Running Stage 99 Parity & Integrity Gate..."
+RC=0
+bash "$REPO_ROOT/stages/stage-99-verify.sh" || RC=$?
+
+if [[ -n "$PRE_NUM" ]]; then
+    snapper create --type post --pre-number "$PRE_NUM" \
+        --description "macubuntu-update post (rc=$RC)" || true
+fi
+
+exit "$RC"

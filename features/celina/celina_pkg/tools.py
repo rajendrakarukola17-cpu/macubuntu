@@ -1,16 +1,14 @@
-"""
-Celina AI (Celly) - Full OS Control, Fast File Search, Document & Messaging Tools (v4.2)
-- Tier 0: Zero-latency multilingual hardware/media shortcuts (EN / TE / HI)
-- Tier 1: Auto-execute OS, Web, Fast File/Content Search (fd/rg), Read-Only Docs, Memory & Timers
-- Tier 2: 1-Click Approval-Gated Full Control (Docs/LibreOffice Edit, File Edit/Move/Trash,
-          App Close, Safe Wayland Messaging, and Guardrailed Shell)
+"""Celina AI (Celly) - Full OS Control, Fast File Search, Document & Messaging Tools (v4.2)
+The central execute_tool dispatcher temporarily permits only configured Tier-1
+requests classified read-only; other dispatch is denied while the trusted
+approval broker is unavailable. Fast intents and direct calls remain separate
+paths and have not been fully migrated or isolated.
 """
 
 import atexit
 import datetime
 import hashlib
 import inspect
-import ipaddress
 import json
 import logging
 import os
@@ -22,12 +20,14 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 from urllib.parse import parse_qs, quote, unquote, urlparse
-import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
+
+import defusedxml.ElementTree as ET  # defusedxml: prevents XXE and other XML attacks on untrusted input (audit B314)
 
 from . import (
     api_actuators,
@@ -40,24 +40,26 @@ from . import (
     code_sandbox,
     command_runner,
     computer_use,
-    ponytail_skill,
-    skilspector_tool,
     config,
     continuity,
     documents,
     evidence,
+    gear0_5_1_mirage,
     guardrails,
     libreoffice_uno,
     mcp_client,
     memory,
     net_policy,
     os_events,
+    ponytail_skill,
     privacy,
     skills,
+    skilspector_tool,
     spotlight_index,
     state_ops,
     writing_tools,
 )
+from .approval_broker import ApprovalProtocolError, canonical_payload
 
 log = logging.getLogger("celina.tools")
 
@@ -82,11 +84,13 @@ def tool(
     def _decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         meta = {"name": name, "tier": int(tier), "domain": domain, "opt_in": bool(opt_in)}
         TOOL_METADATA[name] = meta
-        setattr(fn, "_celina_tool_meta", meta)
-        setattr(fn, "tool_name", name)
-        setattr(fn, "tier", int(tier))
-        setattr(fn, "domain", domain)
-        setattr(fn, "opt_in", bool(opt_in))
+        # Set custom tool metadata attributes on the callable (runtime decoration pattern)
+        typed_fn: Any = fn
+        typed_fn._celina_tool_meta = meta
+        typed_fn.tool_name = name
+        typed_fn.tier = int(tier)
+        typed_fn.domain = domain
+        typed_fn.opt_in = bool(opt_in)
         return fn
     return _decorator
 
@@ -102,15 +106,21 @@ TOOL_METADATA["code_sandbox"] = {
 _HW_PARENT = str(Path(__file__).resolve().parent.parent)
 if _HW_PARENT not in sys.path:
     sys.path.insert(0, _HW_PARENT)
-try:
-    import celina_hardware as _celina_hardware
-except Exception:
-    _celina_hardware = None  # type: ignore[assignment]
+from types import ModuleType
 
-ApprovalCallback = Callable[[str, str], bool]
-StatusCallback = Callable[[str], None]
-PrivacyConsentCallback = privacy.PrivacyConsentCallback
-TaskGlowCallback = Callable[[bool], None]
+_celina_hardware: ModuleType | None = None
+try:
+    import celina_hardware as _celina_hardware_mod
+    _celina_hardware = _celina_hardware_mod
+except Exception:
+    pass
+
+from typing import TypeAlias
+
+ApprovalCallback: TypeAlias = Callable[[str, str], bool]
+StatusCallback: TypeAlias = Callable[[str], None]
+PrivacyConsentCallback: TypeAlias = privacy.PrivacyConsentCallback
+TaskGlowCallback: TypeAlias = Callable[[bool], None]
 
 # --- Safety Policies (driven by neural-schema.json + hard core floor) ---
 _SENSITIVE_PARTS = {
@@ -123,7 +133,18 @@ _SENSITIVE_PARTS = {
     "keyrings",
     "Login Data",
     "cookies.sqlite",
+    ".ai-env",
 } | set(config.PROTECTED_PATHS)
+
+_SENSITIVE_FILENAMES = frozenset({
+    ".ai-env",
+    "borg.env",
+    "env",
+    "id_rsa",
+    "id_ed25519",
+    ".netrc",
+    ".git-credentials",
+})
 
 _SKIP_SEARCH_DIRS = {
     ".git",
@@ -170,11 +191,21 @@ _CATASTROPHIC_SHELL_PATTERNS = [
     re.compile(r">\s*/dev/(sd[a-z]|nvme[0-9]|vd[a-z]|mmcblk)"),
     re.compile(r"\bchmod\s+-R\s+777\s+/(\s|$)"),
     re.compile(r"\b(curl|wget)\b[^|]*\|\s*(sudo\s+)?(ba)?sh\b"),
+    re.compile(r"\bchown\s+-R\s+.*\s+/(\s|$)"),
+    re.compile(r"\bchmod\s+-R\s+[0-7]{3,4}\s+/(\s|$)"),
+    re.compile(r"\bshred\b"),
+    re.compile(r"\bformat\s+"),
+    re.compile(r">\s*/dev/(fd|hd|hd[a-z]|sd[a-z]|nvme[0-9]|vd[a-z]|mmcblk|ram)"),
+    re.compile(r"\b(curl|wget|fetch|python|perl|ruby|php|node|deno|bun|go|rust|cargo|npm|pip|apt|dpkg|yum|dnf|pacman|apk|xbps|emerge|snap|flatpak|brew|port|pkg|choco|scoop|winget)\b[^|]*\|\s*(sudo\s+)?(ba)?sh\b"),
+    re.compile(r"\$\(.*rm.*\)"),
+    re.compile(r"\`.*rm.*\`"),
 ]
 
 
 def _is_sensitive_path(path: Path) -> bool:
     resolved = path.expanduser().resolve()
+    if resolved.name in _SENSITIVE_FILENAMES:
+        return True
     if resolved == config.ENV_FILE.resolve():
         return True
     return any(part in _SENSITIVE_PARTS for part in resolved.parts)
@@ -188,13 +219,70 @@ def _is_within_home(path: Path) -> bool:
         return False
 
 
+def _is_cross_device(src: Path, dst: Path) -> bool:
+    """Return True if `src` and `dst` live on different filesystems.
+
+    Used by move_file to label cross-device moves (copy+delete semantics)
+    so callers and the undo journal know the mutation isn't a simple rename.
+    """
+    import os as _os
+
+    try:
+        src_st = _os.stat(src)
+        dst_parent = dst.parent if dst.exists() else dst
+        dst_st = _os.stat(dst_parent)
+        return src_st.st_dev != dst_st.st_dev
+    except OSError:
+        # If we can't stat, conservatively assume cross-device so the caller
+        # treats it as copy+delete rather than rename.
+        return True
+
+
+def _rg_sensitive_globs() -> list[str]:
+    """Build ripgrep --glob exclusion pairs for all sensitive paths/filenames.
+
+    Returns a flat list like ["--glob", "!.ssh/**", "--glob", "!**/id_rsa", ...]
+    so ripgrep never surfaces credential/key material even if the caller
+    forgets to pass custom globs.
+    """
+    globs: list[str] = []
+    for part in sorted(_SENSITIVE_PARTS):
+        if "/" in part:
+            globs.extend(["--glob", f"!{part}/**"])
+        else:
+            globs.extend(["--glob", f"!.{part}/**" if not part.startswith(".") else f"!{part}/**"])
+    for fname in sorted(_SENSITIVE_FILENAMES):
+        globs.extend(["--glob", f"!**/{fname}"])
+    # Also exclude the env file explicitly
+    globs.extend(["--glob", f"!{config.ENV_FILE}"])
+    return globs
+
+
+def _filter_rg_output(out: str) -> str:
+    """Filter ripgrep output lines whose file path matches a sensitive path."""
+    kept: list[str] = []
+    for ln in out.splitlines():
+        if not ln:
+            continue
+        # rg format: path:lineno:content  (path may contain colons on Windows, but not on Linux)
+        first_colon = ln.find(":")
+        if first_colon == -1:
+            kept.append(ln)
+            continue
+        fpath = Path(ln[:first_colon])
+        if _is_sensitive_path(fpath):
+            continue
+        kept.append(ln)
+    return "\n".join(kept)
+
+
 def run_capture(cmd: list[str], timeout: int = 5) -> str:
     """Safely executes an allowlisted command without shell=True."""
     if not cmd or not shutil.which(cmd[0]):
         return f"Error: Required utility '{cmd[0]}' not found."
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return (res.stdout or res.stderr).strip()
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)  # noqa: S603  # shell=False; cmd[0] validated via shutil.which before execution
+        return (res.stdout or getattr(res, "error", None) or res.stderr).strip()
     except subprocess.TimeoutExpired:
         return "Error: Command timed out."
     except Exception as exc:
@@ -206,7 +294,7 @@ def launch_detached(cmd: list[str]) -> bool:
     if not cmd or not shutil.which(cmd[0]):
         return False
     try:
-        subprocess.Popen(
+        subprocess.Popen(  # noqa: S603  # shell=False; cmd[0] validated via shutil.which before execution
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -278,11 +366,11 @@ def route_app_audio(app_name: str, output_device: str) -> str:
     """Routes a specific app's live PipeWire audio stream to a chosen output sink (e.g. Bluetooth)."""
     if _celina_hardware is None:
         return "Error: Hardware audio routing adapter unavailable."
-    return _celina_hardware.get_hardware().routing.route_app_audio(app_name, output_device).message
+    return _celina_hardware.get_hardware().routing.route_app_audio(app_name, output_device).message  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
 
 def set_volume(
-    level: Optional[int] = None, delta: Optional[int] = None, mute: Optional[bool] = None
+    level: int | None = None, delta: int | None = None, mute: bool | None = None,
 ) -> str:
     """Controls system audio volume/mute via celina_hardware PipeWire adapter with read-after-write verification."""
     if _celina_hardware is not None:
@@ -293,19 +381,19 @@ def set_volume(
                 return f"Error: {st.detail or 'No supported audio mixer found.'}"
             return f"Volume: {st.volume_percent}% ({'muted' if st.muted else 'unmuted'}) via {st.backend}."
         res = hw.audio.set_volume(level=level, delta=delta, mute=mute)
-        return res.message
+        return res.message  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     messages: list[str] = []
     if mute is not None:
         if shutil.which("wpctl"):
             r = command_runner.run_command(["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1" if mute else "0"])
             if not r.ok:
-                return f"Error: {r.error}"
+                return f"Error: {getattr(r, "error", None) or r.stderr}"
             messages.append("Audio muted." if mute else "Audio unmuted.")
         elif shutil.which("pactl"):
             r = command_runner.run_command(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "1" if mute else "0"])
             if not r.ok:
-                return f"Error: {r.error}"
+                return f"Error: {getattr(r, "error", None) or r.stderr}"
             messages.append("Audio muted." if mute else "Audio unmuted.")
         else:
             return "Error: No supported audio mixer found (wpctl/pactl)."
@@ -315,12 +403,12 @@ def set_volume(
         if shutil.which("wpctl"):
             r = command_runner.run_command(["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", f"{clamped}%"])
             if not r.ok:
-                return f"Error: {r.error}"
+                return f"Error: {getattr(r, "error", None) or r.stderr}"
             messages.append(f"Volume set to {clamped}%.")
         elif shutil.which("pactl"):
             r = command_runner.run_command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{clamped}%"])
             if not r.ok:
-                return f"Error: {r.error}"
+                return f"Error: {getattr(r, "error", None) or r.stderr}"
             messages.append(f"Volume set to {clamped}%.")
         else:
             return "Error: No supported audio mixer found."
@@ -331,12 +419,12 @@ def set_volume(
         if shutil.which("wpctl"):
             r = command_runner.run_command(["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{mag}%{sign}"])
             if not r.ok:
-                return f"Error: {r.error}"
+                return f"Error: {getattr(r, "error", None) or r.stderr}"
             messages.append(f"Volume adjusted by {sign}{mag}%.")
         elif shutil.which("pactl"):
             r = command_runner.run_command(["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{sign}{mag}%"])
             if not r.ok:
-                return f"Error: {r.error}"
+                return f"Error: {getattr(r, "error", None) or r.stderr}"
             messages.append(f"Volume adjusted by {sign}{mag}%.")
         else:
             return "Error: No supported audio mixer found."
@@ -347,13 +435,13 @@ def set_volume(
 def set_brightness(level: int) -> str:
     """Sets screen brightness via celina_hardware with read-after-write verification."""
     if _celina_hardware is not None:
-        return _celina_hardware.get_hardware().set_brightness(int(level)).message
+        return _celina_hardware.get_hardware().set_brightness(int(level)).message  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     if not shutil.which("brightnessctl"):
         return "Error: brightnessctl is not installed."
     clamped = max(5, min(100, int(level)))
     res = command_runner.run_command(["brightnessctl", "set", f"{clamped}%"], timeout=5.0)
     if not res.ok:
-        err_txt = res.stderr or res.stdout or res.error
+        err_txt = getattr(res, "error", None) or res.stderr or res.stdout or getattr(res, "error", None) or res.stderr
         if "Permission denied" in err_txt:
             return "Error: Brightness permission denied. Reboot once so the 'video' group change takes effect."
         return f"Error: Failed to set brightness ({err_txt})."
@@ -371,17 +459,16 @@ _MPRIS_METHOD_MAP: dict[str, str] = {
 
 
 def _mpris_dbus_control(act: str) -> tuple[bool, str]:
-    """
-    Sends an MPRIS2 Player command directly over GNOME Session D-Bus (0 extra packages!).
+    """Sends an MPRIS2 Player command directly over GNOME Session D-Bus (0 extra packages!).
     Prioritizes browser players (Firefox/Chrome/Brave) & paused players when `act == 'play'`.
     Returns (handled_ok, human_status).
     """
     method = _MPRIS_METHOD_MAP.get(act)
     try:
-        import gi
+        import gi  # type: ignore[import-not-found]  # gi is GTK C extension; only available on Linux with PyGObject installed
 
         gi.require_version("Gio", "2.0")
-        from gi.repository import Gio, GLib
+        from gi.repository import Gio, GLib  # type: ignore[import-not-found]  # gi.repository is GTK C extension
 
         bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
         names_var = bus.call_sync(
@@ -454,7 +541,7 @@ def _mpris_dbus_control(act: str) -> tuple[bool, str]:
                 fired.append(pbus.removeprefix("org.mpris.MediaPlayer2."))
                 if act in {"play", "pause", "play-pause", "next", "previous"}:
                     break
-            except Exception:
+            except Exception:  # noqa: S112  # Intentional: catch-and-continue for optional dependency; failure is non-fatal
                 continue
 
         if fired:
@@ -468,8 +555,7 @@ def _mpris_dbus_control(act: str) -> tuple[bool, str]:
 
 
 def _kick_browser_media_play_async() -> None:
-    """
-    Lightweight daemon thread launched right after opening a direct YouTube watch URL.
+    """Lightweight daemon thread launched right after opening a direct YouTube watch URL.
     Waits briefly for Firefox/Chrome to mount the video player, then fires MPRIS D-Bus
     `Play` (or AT-SPI2 Play button activation) so playback starts hands-free!
     """
@@ -515,21 +601,17 @@ def control_media(action: str) -> str:
             )
             if not r.ok or not r.stdout or r.stdout.startswith("No players"):
                 return "No active media player."
-            return r.stdout
+            return r.stdout  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
         r = command_runner.run_command(["playerctl", act], timeout=2.0)
         if r.ok:
             st = command_runner.run_command(["playerctl", "status"], timeout=2.0)
             ver = f" (verified state: {st.stdout})" if st.ok and st.stdout else ""
             return f"Media command '{act}' executed{ver}."
 
-    # 3. Browser autoplay-shield fallback when user says 'play' and Firefox hasn't exposed MPRIS yet
+    # Browser autoplay-shield note: control_media is Tier-1 (auto-execute) and therefore
+    # intentionally does NOT fall back to an AT-SPI2 GUI click — that would be a
+    # Tier-1 → Tier-2 escalation with no approval gate. Direct MPRIS/playerctl only.
     if act in {"play", "play-pause"}:
-        try:
-            hit, hit_msg = automation._try_atspi_direct_action("Play")
-            if hit:
-                return f"Started playback in browser — {hit_msg}"
-        except Exception as exc:
-            log.debug("control_media AT-SPI2 Play fallback failed: %s", exc)
         return (
             "No active MPRIS media player responded yet — Firefox/Chrome's Autoplay Blocker may be holding the video paused. "
             "Run 'celina-turbo autoplay' once (or allow Audio & Video for YouTube next to the URL bar) so videos play hands-free!"
@@ -582,24 +664,24 @@ def get_media_title() -> str:
                 title = str(meta.get("xesam:title") or "").strip()
                 if title:
                     return f"♪ {title}"
-            except Exception:
+            except Exception:  # noqa: S112  # Intentional: catch-and-continue for optional dependency; failure is non-fatal
                 continue
         return ""
-    except Exception:
+    except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
         pass
 
     if not shutil.which("playerctl"):
         return ""
     try:
-        res = subprocess.run(
-            ["playerctl", "metadata", "--format", "♪ {{title}}"],
+        res = subprocess.run(  # noqa: S603  # shell=False; explicit allowlisted command list
+            ["playerctl", "metadata", "--format", "♪ {{title}}"],  # noqa: S607  # Intentional: executable validated via shutil.which before subprocess call
             capture_output=True,
             text=True,
             timeout=2,
         )
         if res.returncode == 0:
             return res.stdout.strip()
-    except Exception:
+    except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
         pass
     return ""
 
@@ -615,14 +697,13 @@ _APP_NAP_EXCLUDED: frozenset[str] = frozenset({
 
 
 class AppNapController:
-    """
-    PID-Verified Safe App Nap Controller (Phase 6 Item 15):
-      - NEVER uses broad `pkill -STOP -i <name>`!
-      - Resolves exact user-owned PIDs matching process comm + start_time from /proc/<pid>/stat.
-      - Refuses foreground active window, terminals, password managers, GNOME Shell, polkit, systemd, Celina.
-      - Prefers cgroup v2 freezer when available; falls back to PID-verified SIGSTOP/SIGCONT.
-      - Persists frozen PIDs + start_time to ~/.local/share/celina/napped_pids.json (0600)
-        and registers atexit restoration so no app is ever left stranded frozen!
+    """PID-Verified Safe App Nap Controller (Phase 6 Item 15):
+    - NEVER uses broad `pkill -STOP -i <name>`!
+    - Resolves exact user-owned PIDs matching process comm + start_time from /proc/<pid>/stat.
+    - Refuses foreground active window, terminals, password managers, GNOME Shell, polkit, systemd, Celina.
+    - Prefers cgroup v2 freezer when available; falls back to PID-verified SIGSTOP/SIGCONT.
+    - Persists frozen PIDs + start_time to ~/.local/share/celina/napped_pids.json (0600)
+      and registers atexit restoration so no app is ever left stranded frozen!
     """
 
     def __init__(self, state_path: Path = config.NAPPED_PIDS_FILE):
@@ -645,7 +726,7 @@ class AppNapController:
             pass
 
     @staticmethod
-    def _proc_info(pid: int) -> Optional[tuple[str, int, str]]:
+    def _proc_info(pid: int) -> tuple[str, int, str] | None:
         """Returns (comm, uid, start_time_ticks) for a live /proc/<pid>, else None."""
         try:
             stat_txt = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
@@ -694,7 +775,7 @@ class AppNapController:
             return True
         return False
 
-    def nap(self, app_name: str, active_window_app: Optional[str] = None) -> str:
+    def nap(self, app_name: str, active_window_app: str | None = None) -> str:
         proc = app_name.strip()
         if self._is_protected(proc):
             return f"Blocked: Cannot nap protected/critical process '{app_name}'."
@@ -793,8 +874,7 @@ app_nap_controller = AppNapController()
 
 
 def toggle_app_nap(app_name: str, action: str = "nap") -> str:
-    """
-    Safe PID-verified App Nap: freezes ('nap') an unfocused non-critical user app
+    """Safe PID-verified App Nap: freezes ('nap') an unfocused non-critical user app
     or wakes ('wake') it cleanly with automatic exit-time restoration.
     """
     act = action.lower().strip()
@@ -821,31 +901,31 @@ def control_connectivity(target: str, action: str) -> str:
                 if st.status != _celina_hardware.CapabilityStatus.HEALTHY:
                     return f"Error: {st.detail or 'NetworkManager unavailable.'}"
                 return f"Wi-Fi: {'ON' if st.wifi_enabled else 'OFF'} | SSID: {st.active_ssid or 'none'}"
-            return hw.network.set_wifi(act == "on").message
+            return hw.network.set_wifi(act == "on").message  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
         if not shutil.which("nmcli"):
             return "Error: nmcli not installed."
         if act == "status":
             r = command_runner.run_command(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "dev"])
-            return r.stdout if r.ok else f"Error: {r.error}"
+            return r.stdout if r.ok else f"Error: {getattr(r, "error", None) or r.stderr}"
         r = command_runner.run_command(["nmcli", "radio", "wifi", act])
-        return f"Wi-Fi turned {act}." if r.ok else f"Error: {r.error}"
+        return f"Wi-Fi turned {act}." if r.ok else f"Error: {getattr(r, "error", None) or r.stderr}"
 
     if tgt == "bluetooth":
         if _celina_hardware is not None:
             hw = _celina_hardware.get_hardware()
             if act == "status":
-                st = hw.bluetooth.get_state()
-                if st.status != _celina_hardware.CapabilityStatus.HEALTHY:
-                    return f"Error: {st.detail or 'Bluetooth adapter unavailable.'}"
-                return f"Bluetooth ({st.controller or 'default'}): {'ON' if st.powered else 'OFF'}"
-            return hw.bluetooth.set_power(act == "on").message
+                bt_st = hw.bluetooth.get_state()
+                if bt_st.status != _celina_hardware.CapabilityStatus.HEALTHY:
+                    return f"Error: {bt_st.detail or 'Bluetooth adapter unavailable.'}"
+                return f"Bluetooth ({bt_st.controller or 'default'}): {'ON' if bt_st.powered else 'OFF'}"
+            return hw.bluetooth.set_power(act == "on").message  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
         if not shutil.which("bluetoothctl"):
             return "Error: bluetoothctl not installed."
         if act == "status":
             r = command_runner.run_command(["bluetoothctl", "show"])
-            return r.stdout if r.ok else f"Error: {r.error}"
+            return r.stdout if r.ok else f"Error: {getattr(r, "error", None) or r.stderr}"
         r = command_runner.run_command(["bluetoothctl", "power", act])
-        return f"Bluetooth turned {act}." if r.ok else f"Error: {r.error}"
+        return f"Bluetooth turned {act}." if r.ok else f"Error: {getattr(r, "error", None) or r.stderr}"
 
     return "Target must be 'wifi' or 'bluetooth'."
 
@@ -1047,8 +1127,16 @@ _PLAY_RESUME_ONLY_WORDS: frozenset[str] = frozenset({
 
 
 def _resolve_youtube_direct_watch_url(query: str) -> str:
-    """Resolves the #1 YouTube video watch URL for direct playback (2 MB SSRF-safe fetch + yt-dlp fallback)."""
+    """Resolves the #1 YouTube video watch URL for direct playback (2 MB SSRF-safe fetch + yt-dlp fallback).
+
+    Requires web_comms to be enabled — otherwise refuses rather than silently
+    leaking the user's query to YouTube.
+    """
     fallback = SITE_SEARCH_URLS["youtube"].format(q=quote(query))
+    try:
+        net_policy.check_web_comms_allowed("open_media", url=fallback)
+    except (net_policy.OfflineError, net_policy.URLPolicyError):
+        return fallback  # web comms disabled → return search URL instead of fetching results
     try:
         resp = net_policy.safe_get(
             fallback,
@@ -1079,11 +1167,11 @@ def _resolve_youtube_direct_watch_url(query: str) -> str:
     return fallback
 
 
-def _clean_media_query(raw_q: str) -> tuple[str, Optional[str]]:
+def _clean_media_query(raw_q: str) -> tuple[str, str | None]:
     """Extracts inline platform (even with trailing filler like 'in youtube now' or 'in youtube stupid') and cleans the song/video query."""
     plat_alts = "|".join(sorted(MEDIA_PLATFORMS, key=len, reverse=True))
     cleaned = raw_q.strip().rstrip(".!?")
-    found_plat: Optional[str] = None
+    found_plat: str | None = None
 
     m_inline = re.search(
         rf"\s+(?:on|in|from|via)\s+({plat_alts})(?:\s+(?:web|app|website))?\b",
@@ -1117,7 +1205,7 @@ def _open_media_play(
     *,
     login_requested: bool = False,
     frustrated: bool = False,
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     """Opens Spotify/YouTube/streaming playback (API-first for Spotify when configured, else browser + MPRIS)."""
     plat = platform.strip().lower()
@@ -1242,7 +1330,7 @@ def open_application(app_name: str) -> str:
             Path("/var/lib/snapd/desktop/applications"),
             Path("/usr/share/applications"),
         ]
-        fallback_match: Optional[Path] = None
+        fallback_match: Path | None = None
         wb_re = re.compile(rf"(?:^|[._\-\s]){re.escape(key)}(?:$|[._\-\s])")
         for d in desktop_dirs:
             if not d.exists():
@@ -1286,8 +1374,7 @@ def list_running_apps() -> str:
 
 
 def search_files(query: str, directory: str = "~", extension: str = "") -> str:
-    """
-    Ultra-fast file search inside $HOME (<50ms via fd-find/fd, with bounded os.walk fallback).
+    """Ultra-fast file search inside $HOME (<50ms via fd-find/fd, with bounded os.walk fallback).
     """
     base = Path(directory).expanduser().resolve()
     if not _is_within_home(base) or not base.exists():
@@ -1304,7 +1391,7 @@ def search_files(query: str, directory: str = "~", extension: str = "") -> str:
         cmd = [fd_bin, "--type", "f", "--max-results", "30", "--ignore-case"]
         if ext:
             cmd.extend(["--extension", ext])
-        cmd.extend([needle or ".", str(base)])
+        cmd.extend(["--", needle or ".", str(base)])
         res = run_capture(cmd, timeout=5)
         filtered = [ln for ln in res.splitlines() if ln and not _is_sensitive_path(Path(ln))]
         return "\n".join(filtered) if filtered else f"No files matching '{query}' found in {base}."
@@ -1352,16 +1439,11 @@ def search_in_files(text: str, directory: str = "~") -> str:
             "3",
             "--max-filesize",
             "2M",
-            "--glob",
-            "!.ssh/**",
-            "--glob",
-            "!.gnupg/**",
-            "--glob",
-            "!.config/celina/env",
-            needle,
-            str(base),
         ]
+        cmd.extend(_rg_sensitive_globs())
+        cmd.extend([needle, str(base)])
         out = run_capture(cmd, timeout=6)
+        out = _filter_rg_output(out)
         lines = [ln for ln in out.splitlines() if ln][:25]
         return "\n".join(lines) if lines else f"No matches for '{needle}' in {base}."
 
@@ -1392,7 +1474,7 @@ def read_file(path: str, max_chars: int = 3500) -> str:
     """Reads plain text or routes Office/PDF files through documents.read_document."""
     target = Path(path).expanduser().resolve()
     if target.suffix.lower() in {".docx", ".odt", ".xlsx", ".pptx", ".pdf"}:
-        return documents.read_document(str(target), max_chars=max_chars)
+        return documents.read_document(str(target), max_chars=max_chars)  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     if not _is_within_home(target):
         return "Error: Read access is limited to files inside your home directory."
     if _is_sensitive_path(target):
@@ -1405,6 +1487,195 @@ def read_file(path: str, max_chars: int = 3500) -> str:
         return text[:cap] + (f"\n...[truncated at {cap} chars]" if len(text) > cap else "")
     except Exception as exc:
         return f"Error reading file: {exc}"
+
+
+def list_files(path: str, pattern: str = "*") -> str:
+    """List directory contents inside $HOME with bounded results (ReAct explorer).
+
+    Returns directory entries as 'name/' for directories, 'name' for files.
+    Capped at 100 entries. Respects hard_blocked_paths and never_exposed_paths.
+    """
+    base = Path(path).expanduser().resolve()
+    if not _is_within_home(base):
+        return "Error: Listing is limited to directories inside your home folder."
+    if _is_sensitive_path(base):
+        return "Error: Access to sensitive credential/key directories is blocked."
+    if not base.is_dir():
+        return f"Error: Not a directory: {base}"
+    try:
+        import fnmatch
+        entries: list[str] = []
+        count = 0
+        for child in sorted(base.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            if _is_sensitive_path(child):
+                continue
+            if not fnmatch.fnmatch(child.name, pattern):
+                continue
+            prefix = "/" if child.is_dir() else ""
+            entries.append(child.name + prefix)
+            count += 1
+            if count >= 100:
+                entries.append("...[capped at 100 entries]")
+                break
+        if not entries:
+            return f"No entries matching '{pattern}' in {base}."
+        return "\n".join(entries)
+    except Exception as exc:
+        return f"Error listing directory: {exc}"
+
+
+def read_function_signatures(file: str) -> str:
+    """Extract function/class signatures from a Python file via AST (~5% of file size).
+
+    Returns 'def name(args)' / 'class Name:' lines only — ideal for ReAct navigation
+    without dumping the whole file. Respects hard_blocked_paths.
+    """
+    target = Path(file).expanduser().resolve()
+    if not _is_within_home(target):
+        return "Error: Access is limited to files inside your home directory."
+    if _is_sensitive_path(target):
+        return "Error: Access to sensitive credential/key files is blocked."
+    if not target.is_file():
+        return f"Error: File not found: {target}"
+    if target.suffix.lower() != ".py":
+        return "Error: Only .py files are supported for signature extraction."
+    # Cap file size to prevent OOM on multi-GB files (P0 hardening, audit item 9).
+    try:
+        fsize = target.stat().st_size
+    except OSError:
+        return f"Error: Cannot stat file: {target}"
+    if fsize > _MAX_EDIT_FILE_BYTES:
+        return (
+            f"Error: File too large for signature extraction ({fsize / 1024 / 1024:.1f} MB > "
+            f"{_MAX_EDIT_FILE_BYTES / 1024 / 1024:.0f} MB cap)."
+        )
+    try:
+        import ast as _ast
+        src = target.read_text(encoding="utf-8", errors="replace")
+        tree = _ast.parse(src)
+        lines: list[str] = []
+        for node in tree.body:
+            if isinstance(node, _ast.FunctionDef):
+                args = ", ".join(a.arg for a in node.args.args)
+                ret = f" -> {node.returns.id}" if node.returns and isinstance(node.returns, _ast.Name) else ""
+                lines.append(f"def {node.name}({args}){ret}")
+            elif isinstance(node, _ast.ClassDef):
+                bases = ", ".join(
+                    b.id if isinstance(b, _ast.Name) else str(b) for b in node.bases
+                )
+                lines.append(f"class {node.name}({bases})")
+        if not lines:
+            return f"No functions or classes found in {target.name}."
+        return "\n".join(lines)
+    except SyntaxError as exc:
+        return f"Error parsing Python file: {exc}"
+    except Exception as exc:
+        return f"Error reading signatures: {exc}"
+
+
+def read_lines(file: str, start: int = 1, end: int = 60) -> str:
+    """Read a bounded slice of lines from a text file inside $HOME.
+
+    Default 60 lines. Max 120 lines per call. Enforces hard_blocked_paths and
+    never_exposed_paths. ReAct-friendly: never dumps whole files.
+    """
+    target = Path(file).expanduser().resolve()
+    if not _is_within_home(target):
+        return "Error: Read access is limited to files inside your home directory."
+    if _is_sensitive_path(target):
+        return "Error: Access to sensitive credential/key files is blocked."
+    if not target.is_file():
+        return f"Error: File not found: {target}"
+    # Cap file size to prevent OOM on multi-GB files (P0 hardening, audit item 9).
+    try:
+        fsize = target.stat().st_size
+    except OSError:
+        return f"Error: Cannot stat file: {target}"
+    if fsize > _MAX_EDIT_FILE_BYTES:
+        return (
+            f"Error: File too large for bounded line read ({fsize / 1024 / 1024:.1f} MB > "
+            f"{_MAX_EDIT_FILE_BYTES / 1024 / 1024:.0f} MB cap). "
+            "Use a line-range tool on a smaller segment."
+        )
+    try:
+        s = max(1, int(start))
+        e = max(s, min(int(end), s + 119))  # cap at 120 lines total
+        text = target.read_text(encoding="utf-8", errors="replace")
+        all_lines = text.splitlines()
+        total = len(all_lines)
+        if s > total:
+            return f"Error: start line {s} exceeds file length ({total} lines)."
+        selected = all_lines[s - 1 : e]
+        numbered = [f"{i + s:4d}  {line}" for i, line in enumerate(selected)]
+        truncated_note = ""
+        if e < total:
+            truncated_note = f"\n...[{total - e} more lines, use read_lines with higher start]"
+        return "\n".join(numbered) + truncated_note
+    except Exception as exc:
+        return f"Error reading lines: {exc}"
+
+
+def grep_code(pattern: str, path: str = "~", file_glob: str = "*.py") -> str:
+    """Grep for a code pattern inside text files under $HOME (ReAct explorer).
+
+    Uses ripgrep when available, bounded Python fallback. Capped at 50 matches.
+    Respects hard_blocked_paths and never_exposed_paths.
+    """
+    base = Path(path).expanduser().resolve()
+    if not _is_within_home(base) or not base.exists():
+        return "Error: Search directory must exist inside your home folder."
+    needle = pattern.strip()
+    if not needle:
+        return "Provide a pattern to search for."
+    try:
+        if shutil.which("rg"):
+            cmd = [
+                "rg",
+                "--no-heading",
+                "--line-number",
+                "--max-count",
+                "50",
+                "--max-filesize",
+                "1M",
+                "--glob",
+                file_glob,
+            ]
+            cmd.extend(_rg_sensitive_globs())
+            cmd.extend([needle, str(base)])
+            out = run_capture(cmd, timeout=8)
+            out = _filter_rg_output(out)
+            lines = [ln for ln in out.splitlines() if ln][:50]
+            return "\n".join(lines) if lines else f"No matches for '{needle}' in {base}."
+        # Python fallback
+        import fnmatch as _fnmatch
+        low_q = needle.lower()
+        hits: list[str] = []
+        count = 0
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in _SKIP_SEARCH_DIRS and not d.startswith(".")]
+            for fname in files:
+                if not _fnmatch.fnmatch(fname, file_glob):
+                    continue
+                fpath = Path(root) / fname
+                if _is_sensitive_path(fpath):
+                    continue
+                try:
+                    if fpath.stat().st_size > 1_000_000:
+                        continue
+                    for idx, line in enumerate(
+                        fpath.read_text(encoding="utf-8", errors="ignore").splitlines(), 1,
+                    ):
+                        if low_q in line.lower():
+                            hits.append(f"{fpath}:{idx}: {line.strip()[:140]}")
+                            count += 1
+                            if count >= 50:
+                                return "\n".join(hits) + "\n...(capped at 50 matches)"
+                                break
+                except OSError:
+                    continue
+        return "\n".join(hits) if hits else f"No matches for '{needle}' in {base}."
+    except Exception as exc:
+        return f"Error searching code: {exc}"
 
 
 def get_clipboard() -> str:
@@ -1431,7 +1702,7 @@ def set_clipboard(text: str) -> str:
     if not shutil.which("wl-copy"):
         return "Error: wl-clipboard (wl-copy) is not installed."
     try:
-        subprocess.run(["wl-copy"], input=text, text=True, timeout=3, check=False)
+        subprocess.run(["wl-copy"], input=text, text=True, timeout=3, check=False)  # noqa: S607  # wl-copy validated via shutil.which before execution
         return "Copied text to clipboard."
     except Exception as exc:
         return f"Error copying to clipboard: {exc}"
@@ -1448,7 +1719,7 @@ def set_timer(seconds: int, message: str = "Timer finished!") -> str:
 
 
 class _DDGParser(HTMLParser):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.results: list[dict[str, str]] = []
         self._in_title = False
@@ -1457,34 +1728,35 @@ class _DDGParser(HTMLParser):
         self._cur_href = ""
         self._cur_snippet = ""
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_map = dict(attrs)
-        cls = attr_map.get("class", "")
+        cls = attr_map.get("class") or ""
         if tag == "a" and "result__a" in cls:
             self._in_title = True
             self._cur_title = ""
-            raw_href = attr_map.get("href", "")
+            raw_href = attr_map.get("href") or ""
             if "uddg=" in raw_href:
                 qs = parse_qs(urlparse(raw_href).query)
-                self._cur_href = unquote(qs.get("uddg", [raw_href])[0])
+                uddg_vals = qs.get("uddg", [raw_href])
+                self._cur_href = unquote(str(uddg_vals[0]) if uddg_vals else raw_href)
             else:
                 self._cur_href = raw_href
         elif tag in {"a", "div", "span"} and "result__snippet" in cls:
             self._in_snippet = True
             self._cur_snippet = ""
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._in_title:
             self._in_title = False
             self.results.append(
-                {"title": self._cur_title.strip(), "url": self._cur_href.strip(), "snippet": ""}
+                {"title": self._cur_title.strip(), "url": self._cur_href.strip(), "snippet": ""},
             )
         elif self._in_snippet and tag in {"a", "div", "span"}:
             self._in_snippet = False
             if self.results:
                 self.results[-1]["snippet"] = self._cur_snippet.strip()
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self._in_title:
             self._cur_title += data
         elif self._in_snippet:
@@ -1492,20 +1764,20 @@ class _DDGParser(HTMLParser):
 
 
 class _PlainTextParser(HTMLParser):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._skip_depth = 0
         self.chunks: list[str] = []
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in {"script", "style", "noscript", "svg"}:
             self._skip_depth += 1
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style", "noscript", "svg"} and self._skip_depth > 0:
             self._skip_depth -= 1
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self._skip_depth == 0:
             text = data.strip()
             if text:
@@ -1541,7 +1813,7 @@ def _search_ddg_html(q: str) -> list[dict[str, str]]:
             top = [r for r in parser.results if r.get("title")][:5]
             if top:
                 return top
-        except Exception:
+        except Exception:  # noqa: S112  # Intentional: catch-and-continue for optional dependency; failure is non-fatal
             continue
     return []
 
@@ -1565,9 +1837,9 @@ def _search_fallback_apis(q: str) -> list[dict[str, str]]:
             data = r.json()
             if isinstance(data, list) and len(data) >= 4:
                 titles, descs, urls = data[1], data[2], data[3]
-                for title, desc, url in zip(titles, descs, urls):
+                for title, desc, url in zip(titles, descs, urls, strict=False):  # noqa: B905  # zip of JSON array slices may differ in length; intentional non-strict zip
                     results.append({"title": f"{title} (Wikipedia)", "url": str(url), "snippet": str(desc or "")})
-    except Exception:
+    except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
         pass
 
     # 2. HackerNews Algolia
@@ -1591,9 +1863,9 @@ def _search_fallback_apis(q: str) -> list[dict[str, str]]:
                             "title": title,
                             "url": url,
                             "snippet": f"HN discussion ({hit.get('points', 0)} pts, {hit.get('num_comments', 0)} comments)",
-                        }
+                        },
                     )
-    except Exception:
+    except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
         pass
     return results[:5]
 
@@ -1602,10 +1874,11 @@ def web_search(query: str) -> str:
     q = query.strip()
     if not q:
         return "Provide a search query."
+    net_policy.check_web_comms_allowed("web_search", q)
     sc = cache.get_cache()
     hit = sc.get("web_search", q)
     if hit is not None:
-        return hit[0]
+        return hit[0]  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     try:
         top = _search_ddg_html(q)
         if not top:
@@ -1622,7 +1895,7 @@ def web_search(query: str) -> str:
 
 
 @tool(name="fetch_webpage", tier=1, domain="web_comms", opt_in=True)
-def fetch_webpage(url: str, resolver: Optional[net_policy.ResolverFn] = None) -> str:
+def fetch_webpage(url: str, resolver: net_policy.ResolverFn | None = None) -> str:
     """Fetches a public HTTPS webpage strictly via centralized net_policy (opt-in web_comms + anti-SSRF)."""
     net_policy.check_web_comms_allowed("fetch_webpage", url)
     try:
@@ -1632,7 +1905,7 @@ def fetch_webpage(url: str, resolver: Optional[net_policy.ResolverFn] = None) ->
     sc = cache.get_cache()
     hit = sc.get("fetch_webpage", url)
     if hit is not None:
-        return hit[0]
+        return hit[0]  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     try:
         resp = net_policy.safe_get(
             url,
@@ -1659,14 +1932,14 @@ def fetch_webpage(url: str, resolver: Optional[net_policy.ResolverFn] = None) ->
 
 
 @tool(name="fetch_url_text", tier=1, domain="web_comms", opt_in=True)
-def fetch_url_text(url: str, resolver: Optional[net_policy.ResolverFn] = None) -> str:
+def fetch_url_text(url: str, resolver: net_policy.ResolverFn | None = None) -> str:
     """Opt-in live-data tool: fetches cleaned plain text from a public HTTPS URL via net_policy."""
     net_policy.check_web_comms_allowed("fetch_url_text", url)
-    return fetch_webpage(url, resolver=resolver)
+    return fetch_webpage(url, resolver=resolver)  # type: ignore[no-any-return]  # returns Any from external API; cast at call site
 
 
 @tool(name="get_weather", tier=1, domain="web_comms", opt_in=True)
-def get_weather(city: str, resolver: Optional[net_policy.ResolverFn] = None) -> str:
+def get_weather(city: str, resolver: net_policy.ResolverFn | None = None) -> str:
     """Opt-in live-data tool: fetches live weather conditions for a city over HTTPS."""
     clean_city = (city or "").strip()
     if not clean_city:
@@ -1701,7 +1974,7 @@ def get_weather(city: str, resolver: Optional[net_policy.ResolverFn] = None) -> 
 
 
 @tool(name="get_news_headlines", tier=1, domain="web_comms", opt_in=True)
-def get_news_headlines(topic: str = "world", resolver: Optional[net_policy.ResolverFn] = None) -> str:
+def get_news_headlines(topic: str = "world", resolver: net_policy.ResolverFn | None = None) -> str:
     """Opt-in live-data tool: fetches top recent news headlines for a topic over HTTPS RSS."""
     clean_topic = (topic or "world").strip() or "world"
     url = f"https://news.google.com/rss/search?q={quote(clean_topic)}&hl=en-US&gl=US&ceid=US:en"
@@ -1758,7 +2031,7 @@ _CITY_TIMEZONE_MAP: dict[str, str] = {
 
 
 @tool(name="get_current_time_zone", tier=1, domain="web_comms", opt_in=True)
-def get_current_time_zone(city: str, resolver: Optional[net_policy.ResolverFn] = None) -> str:
+def get_current_time_zone(city: str, resolver: net_policy.ResolverFn | None = None) -> str:
     """Opt-in live-data tool: fetches live current time & time zone details for a city/IANA zone."""
     clean_city = (city or "").strip()
     if not clean_city:
@@ -1783,7 +2056,7 @@ def get_current_time_zone(city: str, resolver: Optional[net_policy.ResolverFn] =
             return f"Current time in {clean_city} ({resolved_tz}): {dt_str}"
     except net_policy.URLPolicyError as exc:
         return f"Blocked by network policy: {exc}"
-    except Exception:
+    except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
         pass
     try:
         now = datetime.datetime.now(ZoneInfo(tz_name))
@@ -1799,15 +2072,15 @@ def _cached_read_document(path: str, max_chars: int = 4000) -> str:
     if fp != "missing":
         hit = sc.get("document", key)
         if hit is not None:
-            return hit[0]
+            return hit[0]  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     res = documents.read_document(path, max_chars=max_chars)
     if fp != "missing":
         sc.set("document", key, res)
-    return res
+    return res  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
 
 def cache_status() -> str:
-    return cache.get_cache().format_stats()
+    return cache.get_cache().format_stats()  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
 
 def clear_cache() -> str:
@@ -1816,20 +2089,20 @@ def clear_cache() -> str:
 
 
 def mcp_list_servers() -> str:
-    return mcp_client.get_mcp().list_servers()
+    return mcp_client.get_mcp().list_servers()  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
 
 def mcp_list_tools(server_name: str) -> str:
-    return mcp_client.get_mcp().list_tools(server_name)
+    return mcp_client.get_mcp().list_tools(server_name)  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
 
 def mcp_call_tool(
     server_name: str,
     tool_name: str,
-    arguments: Optional[dict[str, Any]] = None,
-    approval_cb: Optional[ApprovalCallback] = None,
+    arguments: dict[str, Any] | None = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    return mcp_client.get_mcp().call_tool(
+    return mcp_client.get_mcp().call_tool(  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
         server_name=server_name,
         tool_name=tool_name,
         arguments=arguments,
@@ -1843,7 +2116,7 @@ def remember_fact(key: str, value: str) -> str:
 
 
 def link_knowledge(
-    subject: str = "", predicate: str = "", obj: str = "", query_entity: str = ""
+    subject: str = "", predicate: str = "", obj: str = "", query_entity: str = "",
 ) -> str:
     """Adds a Semantic Knowledge Graph triple (Subject -> Predicate -> Object) or queries 2-hop links."""
     db = memory.get_db()
@@ -1865,7 +2138,7 @@ def manage_goal(
     goal_id: str = "",
     title: str = "",
     status: str = "active",
-    sub_tasks: Optional[list[str]] = None,
+    sub_tasks: list[str] | None = None,
     deadline: str = "",
 ) -> str:
     """Creates, updates, lists, or completes persistent multi-step goals across sessions."""
@@ -1920,7 +2193,7 @@ def search_memory(query: str) -> str:
     if history:
         parts.append(
             "Matching recent history:\n"
-            + "\n".join(f"[{h['time']}] {h['role']}: {h['content'][:160]}" for h in history)
+            + "\n".join(f"[{h['time']}] {h['role']}: {h['content'][:160]}" for h in history),
         )
     return "\n\n".join(parts) if parts else f"No memory entries found matching '{query}'."
 
@@ -1937,19 +2210,18 @@ def _build_bwrap_command(
     cmd: str,
     *,
     allow_network: bool = False,
-    work_dir: Optional[Path] = None,
+    work_dir: Path | None = None,
 ) -> list[str]:
-    """
-    Capability-Based Bubblewrap Sandbox (Phase 5 Item 11):
-      - Read-only root filesystem (`--ro-bind / /`)
-      - NO full `$HOME` read-write bind! Mounts ONLY an isolated writable `/work` directory
-        (or explicitly scoped work_dir) while masking `$HOME` with empty tmpfs so browser
-        profiles, keyrings, `.ssh`, `.gnupg`, `.aws`, `.kube`, `.config/celina`, `.netrc`,
-        `.git-credentials`, and `.password-store` are completely unreachable!
-      - Network disabled by default (`--unshare-net` unless explicitly allowed)
-      - Isolated PID, IPC, UTS namespaces (`--unshare-pid --unshare-ipc --unshare-uts`)
-      - Cleared environment (`--clearenv`) with NO API keys, NO host D-Bus, NO session sockets
-      - Resource limits via ulimit (CPU 15s, file size 32MB, max processes 64)
+    """Capability-Based Bubblewrap Sandbox (Phase 5 Item 11):
+    - Read-only root filesystem (`--ro-bind / /`)
+    - NO full `$HOME` read-write bind! Mounts ONLY an isolated writable `/work` directory
+      (or explicitly scoped work_dir) while masking `$HOME` with empty tmpfs so browser
+      profiles, keyrings, `.ssh`, `.gnupg`, `.aws`, `.kube`, `.config/celina`, `.netrc`,
+      `.git-credentials`, and `.password-store` are completely unreachable!
+    - Network disabled by default (`--unshare-net` unless explicitly allowed)
+    - Isolated PID, IPC, UTS namespaces (`--unshare-pid --unshare-ipc --unshare-uts`)
+    - Cleared environment (`--clearenv`) with NO API keys, NO host D-Bus, NO session sockets
+    - Resource limits via ulimit (CPU 15s, file size 32MB, max processes 64)
     """
     scoped_work = (work_dir or Path(tempfile.gettempdir())).resolve()
     home_resolved = config.HOME.resolve()
@@ -1957,7 +2229,7 @@ def _build_bwrap_command(
         "bwrap",
         "--ro-bind", "/", "/",
         "--tmpfs", str(home_resolved),
-        "--tmpfs", "/tmp",
+        "--tmpfs", "/tmp",  # nosec B108 — bwrap sandbox tmpfs mount, not temp file creation  # noqa: S108  # Intentional: bwrap sandbox /tmp mount reference, not temp file creation
         "--tmpfs", "/run",
         "--bind", str(scoped_work), "/work",
         "--chdir", "/work",
@@ -1981,12 +2253,11 @@ def _build_bwrap_command(
     return bwrap_args
 
 
-_BWRAP_AVAILABLE: Optional[bool] = None
+_BWRAP_AVAILABLE: bool | None = None
 
 
 def _can_use_bwrap() -> bool:
-    """
-    Runtime probe for Ubuntu 24.04/26.04 AppArmor unprivileged userns & symlinked mount restrictions.
+    """Runtime probe for Ubuntu 24.04/26.04 AppArmor unprivileged userns & symlinked mount restrictions.
     Probes the actual tmpfs/namespace configuration so runtime EPERM or mount errors are caught upfront.
     """
     global _BWRAP_AVAILABLE
@@ -1997,12 +2268,12 @@ def _can_use_bwrap() -> bool:
         return False
     try:
         home_resolved = config.HOME.resolve()
-        probe = subprocess.run(
-            [
+        probe = subprocess.run(  # noqa: S603  # shell=False; bwrap is allowlisted sandbox utility; validated via shutil.which
+            [  # noqa: S607  # Intentional: executable validated via shutil.which before subprocess call
                 "bwrap",
                 "--ro-bind", "/", "/",
                 "--tmpfs", str(home_resolved),
-                "--tmpfs", "/tmp",
+                "--tmpfs", "/tmp",  # nosec B108 — bwrap sandbox tmpfs mount, not temp file creation  # noqa: S108  # Intentional: bwrap sandbox /tmp mount reference, not temp file creation
                 "--dev", "/dev",
                 "--proc", "/proc",
                 "--unshare-pid",
@@ -2024,10 +2295,9 @@ def run_shell_command(
     command: str,
     sandbox: bool = True,
     allow_network: bool = False,
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Runs a shell command with exact argument-bound approval and capability-based Bubblewrap
+    """Runs a shell command with exact argument-bound approval and capability-based Bubblewrap
     sandboxing. If bwrap is unavailable when sandbox=True, NEVER silently executes unsandboxed:
     displays a prominent UNSANDBOXED HOST SHELL warning and requires an explicit second
     confirmation bound to the exact unsandboxed host execution mode!
@@ -2053,16 +2323,16 @@ def run_shell_command(
             target="bwrap(/work, no-home, no-dbus" + (", net-on" if allow_network else ", net-off") + ")",
         )
         if deny_err:
-            return deny_err
+            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
         ok, err = approval.verify_and_consume(token, "run_shell_command", args)
         if not ok:
-            return err
+            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
         with tempfile.TemporaryDirectory(prefix="celina_sandbox_") as tmp_work:
             os.chmod(tmp_work, 0o700)
             exec_cmd = _build_bwrap_command(cmd, allow_network=allow_network, work_dir=Path(tmp_work))
             res = command_runner.run_command(exec_cmd, timeout=20.0)
-        out = ((res.stdout or "") + (f"\nSTDERR:\n{res.stderr}" if res.stderr else "")).strip() or "(No output)"
+        out = ((res.stdout or "") + (f"\nSTDERR:\n{getattr(res, "error", None) or res.stderr}" if getattr(res, "error", None) or res.stderr else "")).strip() or "(No output)"
         if len(out) > 3000:
             out = out[:3000] + "\n...[truncated]"
         if res.timed_out:
@@ -2087,7 +2357,7 @@ def run_shell_command(
             return f"Refused unsandboxed fallback: {err1}"
         ok1, verr1 = approval.verify_and_consume(t1, "run_shell_command", first_args)
         if not ok1:
-            return verr1
+            return verr1  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     host_args = {"command": cmd, "mode": "unsandboxed_host_shell"}
     t2, err2 = approval.request_bound_approval(
@@ -2099,15 +2369,15 @@ def run_shell_command(
         extra_warning="FINAL CONFIRMATION: This command runs UNSANDBOXED directly on your host OS.",
     )
     if err2:
-        return err2
+        return err2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok2, verr2 = approval.verify_and_consume(t2, "run_shell_command", host_args)
     if not ok2:
-        return verr2
+        return verr2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     res = command_runner.run_command(["bash", "-lc", cmd], timeout=20.0)
     if res.timed_out:
         return "Error: Host shell command timed out after 20s."
-    out = ((res.stdout or "") + (f"\nSTDERR:\n{res.stderr}" if res.stderr else "")).strip() or "(No output)"
+    out = ((res.stdout or "") + (f"\nSTDERR:\n{getattr(res, "error", None) or res.stderr}" if getattr(res, "error", None) or res.stderr else "")).strip() or "(No output)"
     if len(out) > 3000:
         out = out[:3000] + "\n...[truncated]"
     return f"[UNSANDBOXED HOST SHELL] Exit code: {res.returncode}\n{out}"
@@ -2116,15 +2386,14 @@ def run_shell_command(
 def run_python_sandbox(
     code: str,
     timeout: int = 5,
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Self-Verifying Code Execution Sandbox for The Coder / Engineer swarm role (v4.4):
-      - Runs Python snippets inside Bubblewrap (`bwrap --unshare-net --unshare-pid --ro-bind / /
-        --tmpfs <HOME> --tmpfs /tmp --bind <work> /work --clearenv`) with 1..15s timeout.
-      - Never exposes host files, API keys, or network.
-      - On non-zero exit / Traceback, returns `Error (Python sandbox exit=N): ...` so
-        router.py's Critic Verifier automatically feeds stderr back to Engineer for self-repair!
+    """Self-Verifying Code Execution Sandbox for The Coder / Engineer swarm role (v4.4):
+    - Runs Python snippets inside Bubblewrap (`bwrap --unshare-net --unshare-pid --ro-bind / /
+      --tmpfs <HOME> --tmpfs /tmp --bind <work> /work --clearenv`) with 1..15s timeout.
+    - Never exposes host files, API keys, or network.
+    - On non-zero exit / Traceback, returns `Error (Python sandbox exit=N): ...` so
+      router.py's Critic Verifier automatically feeds stderr back to Engineer for self-repair!
     """
     src = (code or "").strip()
     if not src:
@@ -2138,44 +2407,35 @@ def run_python_sandbox(
     bwrap_ok = _can_use_bwrap()
     mode = "bwrap_python_sandbox" if bwrap_ok else "isolated_python_no_bwrap"
     args = {"code": src, "timeout": sec, "mode": mode}
-    token, deny_err = approval.request_bound_approval(
-        "run_python_sandbox",
-        args,
-        approval_cb,
-        title=(
-            f"Approve Sandboxed Python Execution ({sec}s, no-net)?"
-            if bwrap_ok
-            else f"WARNING: Bubblewrap Unavailable — Approve Isolated Python ({sec}s)?"
-        ),
-        target="bwrap(python3 -I, no-net, no-home)" if bwrap_ok else "python3 -I (isolated env, no bwrap)",
-        extra_warning=(
-            ""
-            if bwrap_ok
-            else "Bubblewrap userns is unavailable on this host; script will run with `python3 -I` and stripped environment."
-        ),
-    )
-    if deny_err:
-        return deny_err
-    ok, err = approval.verify_and_consume(token, "run_python_sandbox", args)
-    if not ok:
-        return err
 
-    with tempfile.TemporaryDirectory(prefix="celina_pysandbox_") as tmp_work:
-        work_path = Path(tmp_work).resolve()
-        script_file = work_path / "snippet.py"
-        script_file.write_text(src + "\n", encoding="utf-8")
-        if bwrap_ok:
+    if bwrap_ok:
+        token, deny_err = approval.request_bound_approval(
+            "run_python_sandbox",
+            args,
+            approval_cb,
+            title=f"Approve Sandboxed Python Execution ({sec}s, no-net)?",
+            target="bwrap(python3 -I, no-net, no-home)",
+        )
+        if deny_err:
+            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        ok, err = approval.verify_and_consume(token, "run_python_sandbox", args)
+        if not ok:
+            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+
+        with tempfile.TemporaryDirectory(prefix="celina_pysandbox_") as tmp_work:
+            work_path = Path(tmp_work).resolve()
+            script_file = work_path / "snippet.py"
+            script_file.write_text(src + "\n", encoding="utf-8")
             home_resolved = config.HOME.resolve()
-            # Never invoke a venv python inside $HOME when `--tmpfs $HOME` intentionally hides $HOME!
             sandbox_py = shutil.which("python3", path="/usr/bin:/bin") or "/usr/bin/python3"
             cmd = [
                 "bwrap",
                 "--ro-bind", "/", "/",
                 "--tmpfs", str(home_resolved),
-                "--tmpfs", "/tmp",
+                "--tmpfs", "/tmp",  # nosec B108 — bwrap sandbox tmpfs mount, not temp file creation  # noqa: S108  # Intentional: bwrap sandbox /tmp mount reference, not temp file creation
                 "--tmpfs", "/run",
-                "--bind", str(work_path), "/tmp/work",
-                "--chdir", "/tmp/work",
+                "--bind", str(work_path), "/tmp/work",  # nosec B108 — bwrap sandbox bind mount, not temp file creation  # noqa: S108  # Intentional: bwrap sandbox /tmp mount reference, not temp file creation
+                "--chdir", "/tmp/work",  # nosec B108 — bwrap sandbox chdir target, not temp file creation  # noqa: S108  # Intentional: bwrap sandbox /tmp mount reference, not temp file creation
                 "--dev", "/dev",
                 "--proc", "/proc",
                 "--unshare-net",
@@ -2185,30 +2445,68 @@ def run_python_sandbox(
                 "--die-with-parent",
                 "--clearenv",
                 "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
-                "--setenv", "HOME", "/tmp/work",
+                "--setenv", "HOME", "/tmp/work",  # nosec B108 — bwrap sandbox env var, not temp file creation  # noqa: S108  # Intentional: bwrap sandbox /tmp mount reference, not temp file creation
                 "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
                 "--setenv", "LANG", "C.UTF-8",
-                sandbox_py, "-I", "/tmp/work/snippet.py",
+                sandbox_py, "-I", "/tmp/work/snippet.py",  # nosec B108 — bwrap sandbox script path, not temp file creation  # noqa: S108  # Intentional: bwrap sandbox /tmp mount reference, not temp file creation
             ]
             res = command_runner.run_command(cmd, timeout=float(sec))
-        else:
+    else:
+        # Unsandboxed fallback: two explicit confirmations (fail-closed by default,
+        # requires user to opt into UNSANDBOXED host execution).
+        first_args = {"command": src, "mode": "sandbox_unavailable_ack"}
+        t1, err1 = approval.request_bound_approval(
+            "run_python_sandbox",
+            first_args,
+            approval_cb,
+            title="WARNING: Bubblewrap Unavailable — Run UNSANDBOXED Python on Host?",
+            target="HOST PYTHON (UNSANDBOXED)",
+            extra_warning=(
+                "Bubblewrap (bwrap) is unavailable or blocked by OS AppArmor userns. "
+                "Continuing will run Python DIRECTLY ON YOUR HOST with full user permissions!"
+            ),
+        )
+        if err1:
+            return f"Refused unsandboxed fallback: {err1}"
+        ok1, verr1 = approval.verify_and_consume(t1, "run_python_sandbox", first_args)
+        if not ok1:
+            return verr1  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+
+        second_args = {"command": src, "mode": "unsandboxed_host_python"}
+        t2, err2 = approval.request_bound_approval(
+            "run_python_sandbox",
+            second_args,
+            approval_cb,
+            title="CONFIRM UNSANDBOXED HOST PYTHON EXECUTION",
+            target="HOST PYTHON (UNSANDBOXED)",
+            extra_warning="FINAL CONFIRMATION: This script runs UNSANDBOXED directly on your host OS.",
+        )
+        if err2:
+            return err2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+        ok2, verr2 = approval.verify_and_consume(t2, "run_python_sandbox", second_args)
+        if not ok2:
+            return verr2  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
+
+        with tempfile.TemporaryDirectory(prefix="celina_pysandbox_") as tmp_work:
+            script_file = Path(tmp_work) / "snippet.py"
+            script_file.write_text(src + "\n", encoding="utf-8")
             clean_env = {
                 "PATH": "/usr/local/bin:/usr/bin:/bin",
-                "HOME": str(work_path),
-                "TMPDIR": str(work_path),
+                "HOME": str(tmp_work),
+                "TMPDIR": str(tmp_work),
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "LANG": "C.UTF-8",
             }
             res = command_runner.run_command(
                 [sys.executable, "-I", str(script_file)],
                 timeout=float(sec),
-                cwd=str(work_path),
+                cwd=str(tmp_work),
                 env=clean_env,
             )
 
     if res.timed_out:
         return f"Error: Python sandbox timed out after {sec}s."
-    combined = ((res.stdout or "") + (f"\nSTDERR:\n{res.stderr}" if res.stderr else "")).strip() or "(No output)"
+    combined = ((res.stdout or "") + (f"\nSTDERR:\n{getattr(res, "error", None) or res.stderr}" if getattr(res, "error", None) or res.stderr else "")).strip() or "(No output)"
     if len(combined) > 3000:
         combined = combined[:3000] + "\n...[truncated]"
     tag = "bwrap-python" if bwrap_ok else "python-isolated"
@@ -2220,7 +2518,7 @@ def run_python_sandbox(
 def transcribe_system_audio_tool(
     seconds: int = 30,
     lang_hint: str = "auto",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     """Approval-gated wrapper for offline PipeWire loopback meeting/video audio transcription."""
     dur = max(3, min(120, int(seconds)))
@@ -2234,19 +2532,18 @@ def transcribe_system_audio_tool(
         target=f"pipewire-monitor ({dur}s, 100% offline faster-whisper)",
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "transcribe_system_audio", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     from . import voice
 
-    return voice.transcribe_system_audio(seconds=dur, lang_hint=hint)
+    return voice.transcribe_system_audio(seconds=dur, lang_hint=hint)  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
 
-def set_assistant_identity(name: str, nickname: Optional[str] = None) -> str:
-    """
-    Live-updates the assistant's primary name and optional nickname (default: Celina / Celly)
+def set_assistant_identity(name: str, nickname: str | None = None) -> str:
+    """Live-updates the assistant's primary name and optional nickname (default: Celina / Celly)
     and persists atomically across reboots. Honestly reports any disk persistence failure
     without falsely claiming 'Saved persistently'.
     """
@@ -2261,10 +2558,9 @@ def set_assistant_identity(name: str, nickname: Optional[str] = None) -> str:
 
 
 def save_workspace_snapshot(
-    name: str, triggers: str = "", apps: Optional[list[str]] = None
+    name: str, triggers: str = "", apps: list[str] | None = None,
 ) -> str:
-    """
-    Captures currently visible desktop apps + open documents into a named executable skill
+    """Captures currently visible desktop apps + open documents into a named executable skill
     so saying 'Launch my <name> workspace' replays them deterministically in 0 LLM tokens!
     """
     snap_name = (name or "").strip()
@@ -2318,19 +2614,18 @@ def trigger_iot_webhook(
     webhook_url: str,
     payload_json: str = "",
     method: str = "POST",
-    approval_cb: Optional[ApprovalCallback] = None,
-    allowlist_path: Optional[Path] = None,
-    resolver: Optional[net_policy.ResolverFn] = None,
+    approval_cb: ApprovalCallback | None = None,
+    allowlist_path: Path | None = None,
+    resolver: net_policy.ResolverFn | None = None,
 ) -> str:
-    """
-    Triggers an explicitly allowlisted Home Assistant / Node-RED smart-home webhook (Tier 2).
+    """Triggers an explicitly allowlisted Home Assistant / Node-RED smart-home webhook (Tier 2).
     Protected by centralized net_policy IoT allowlist (host/port/method/scheme + cloud-metadata
     & Ollama blocks + no redirects) and exact argument-bound user approval.
     """
     raw_url = (webhook_url or "").strip()
     http_method = (method or "POST").strip().upper()
 
-    body_data: Optional[dict[str, Any]] = None
+    body_data: dict[str, Any] | None = None
     if payload_json.strip():
         try:
             loaded = json.loads(payload_json)
@@ -2356,10 +2651,10 @@ def trigger_iot_webhook(
         target=raw_url,
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "trigger_iot_webhook", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     try:
         resp = net_policy.safe_request(
@@ -2376,20 +2671,117 @@ def trigger_iot_webhook(
         )
         msg = f"IoT webhook HTTP {resp.status_code}: {(resp.text or 'OK').strip()[:400]}"
         api_actuators._record_api_evidence(
-            "trigger_iot_webhook", {"url": raw_url, "method": http_method}, "ok", msg
+            "trigger_iot_webhook", {"url": raw_url, "method": http_method}, "ok", msg,
         )
         return msg
     except net_policy.URLPolicyError as exc:
         return f"Blocked by IoT network policy: {exc}"
     except Exception as exc:
         api_actuators._record_api_evidence(
-            "trigger_iot_webhook", {"url": raw_url, "method": http_method}, "error", str(exc)
+            "trigger_iot_webhook", {"url": raw_url, "method": http_method}, "error", str(exc),
         )
         return f"IoT webhook error: {exc}"
 
 
-def write_file(path: str, content: str, approval_cb: Optional[ApprovalCallback] = None) -> str:
-    target = Path(path).expanduser().resolve()
+def _validate_target_for_write(target: Path) -> str | None:
+    """Re-validate a target path after filesystem mutations (TOCTOU defense).
+
+    After mkdir/mkstemp, a symlinked parent could have been swapped to point
+    outside home or to a sensitive location. Re-resolve and re-check before
+    os.replace to close the TOCTOU window between resolve() and replace().
+    Returns an error string if validation fails, None if OK.
+    """
+    # Re-resolve to catch any symlink swaps on the parent directory
+    re_resolved = target.expanduser().resolve()
+    if not _is_within_home(re_resolved):
+        return f"Error: write target {re_resolved} is outside home directory (TOCTOU check)."
+    if _is_sensitive_path(re_resolved) or re_resolved.name in {".bashrc", ".zshrc", ".profile"}:
+        return f"Error: write target {re_resolved} is a sensitive path (TOCTOU check)."
+    # Ensure we still write to the same resolved target we originally validated
+    if re_resolved != target:
+        return "Error: write target changed during operation (TOCTOU check)."
+    return None
+
+
+def _open_tmp_nosymlink(parent: Path, prefix: str) -> tuple[int, str]:
+    """Open a temp file atomically with O_NOFOLLOW + O_EXCL on a verified dir fd.
+
+    TOCTOU defense: opens the parent directory with O_NOFOLLOW (fail if symlink),
+    then creates the temp file using that directory file descriptor with
+    O_CREAT|O_EXCL|O_WRONLY so the file is atomically created inside the
+    verified non-symlink directory. Falls back to tempfile.mkstemp if
+    dir_fd operations are unavailable on this platform.
+
+    Returns (fd, path).
+    """
+    import tempfile as _tempfile
+    parent_str = str(parent)
+    try:
+        # O_NOFOLLOW: fail if parent is a symlink; O_DIRECTORY: must be a dir
+        dir_fd = os.open(parent_str, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except (OSError, NotImplementedError):
+        # Platform doesn't support O_NOFOLLOW on directories; fall through
+        dir_fd = None
+
+    if dir_fd is not None:
+        try:
+            # Generate a unique temp name (relative to dir_fd).
+            # O_CREAT|O_EXCL: atomically create, fail if already exists
+            # (prevents symlink swap at the temp path between check and create).
+            import uuid as _uuid
+
+            tmp_basename = f"{prefix}{_uuid.uuid4().hex}"
+            fd = os.open(
+                tmp_basename,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o600,
+                dir_fd=dir_fd,
+            )
+            os.close(dir_fd)
+            tmp_name = os.path.join(parent_str, tmp_basename)
+            return fd, tmp_name
+        except (OSError, NotImplementedError):
+            try:
+                os.close(dir_fd)
+            except OSError:
+                pass
+            # Fall through to mkstemp
+
+    return _tempfile.mkstemp(prefix=prefix, dir=parent_str)
+
+
+
+def _workspace_write_target(path: str) -> tuple[Path, Path]:
+    """Resolve a trusted workspace and reject symlinked or escaped write targets.
+
+    CELINA_WORKSPACE_DIR is trusted host configuration, not tool input. If it is
+    absent, preserve the existing configured Celina HOME boundary.
+    """
+    configured = os.environ.get("CELINA_WORKSPACE_DIR")
+    raw_root = config.HOME if configured is None else Path(configured).expanduser()
+    if configured == "" or not raw_root.is_absolute():
+        raise ValueError("workspace root must be an explicit absolute directory")
+    if any(part.is_symlink() for part in (raw_root, *raw_root.parents)):
+        raise ValueError("workspace root may not contain symlinks")
+    root = raw_root.resolve()
+    if not root.is_dir() or not root.is_relative_to(config.HOME.resolve()):
+        raise ValueError("workspace root must be an existing directory inside home")
+    raw_target = Path(path).expanduser()
+    if not raw_target.is_absolute():
+        raw_target = Path.cwd() / raw_target
+    if any(part.is_symlink() for part in (raw_target, *raw_target.parents)):
+        raise ValueError("write target may not contain symlinks")
+    target = raw_target.resolve()
+    if not target.is_relative_to(root):
+        raise ValueError("write target is outside the allowed workspace")
+    return target, root
+
+
+def write_file(path: str, content: str, approval_cb: ApprovalCallback | None = None) -> str:
+    try:
+        target, workspace_root = _workspace_write_target(path)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return f"Error: {exc}"
     if not _is_within_home(target):
         return "Error: write_file is restricted to paths inside your home directory."
     if _is_sensitive_path(target) or target.name in {".bashrc", ".zshrc", ".profile"}:
@@ -2401,22 +2793,50 @@ def write_file(path: str, content: str, approval_cb: Optional[ApprovalCallback] 
         "sha256_prefix": approval.compute_arguments_hash("write_file", {"content": content})[:16],
     }
     token, deny_err = approval.request_bound_approval(
-        "write_file", args, approval_cb, title="Approve File Write?", target=str(target)
+        "write_file", args, approval_cb, title="Approve File Write?", target=str(target),
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "write_file", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
+    try:
+        if _workspace_write_target(path) != (target, workspace_root):
+            return "Error: write target or workspace changed during approval."
+    except (OSError, RuntimeError, ValueError) as exc:
+        return f"Error: {exc}"
     aid = state_ops.get_undo_journal().record_before_mutation("write_file", target)
     try:
         if target.exists():
             documents.backup_file(target)
         target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(f".{target.name}.celina.tmp")
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, target)
+        # TOCTOU defense: re-validate parent after mkdir (symlinked parent could
+        # have been swapped after our initial resolve()).
+        parent_err = _validate_target_for_write(target.parent)
+        if parent_err:
+            return parent_err
+        fd, tmp_path = _open_tmp_nosymlink(target.parent, prefix=f".{target.name}.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                tmp.write(content)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            # TOCTOU defense: re-validate the target immediately before os.replace.
+            replace_err = _validate_target_for_write(target)
+            if replace_err:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                return replace_err
+            os.replace(tmp_path, target)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         state_ops.get_undo_journal().finalize_mutation(aid, succeeded=True, final_path=target)
         return f"Wrote {len(content)} characters to {target}. [undo: {aid}]"
     except Exception as exc:
@@ -2424,8 +2844,11 @@ def write_file(path: str, content: str, approval_cb: Optional[ApprovalCallback] 
         return f"Failed to write file: {exc}"
 
 
+_MAX_EDIT_FILE_BYTES = 50 * 1024 * 1024  # 50 MB cap to prevent OOM on multi-GB files
+
+
 def edit_file(
-    path: str, old_text: str, new_text: str, approval_cb: Optional[ApprovalCallback] = None
+    path: str, old_text: str, new_text: str, approval_cb: ApprovalCallback | None = None,
 ) -> str:
     """Surgically replaces text in an existing file inside ~ with automatic backup + bound approval."""
     target = Path(path).expanduser().resolve()
@@ -2434,27 +2857,57 @@ def edit_file(
     if _is_sensitive_path(target) or target.name in {".bashrc", ".zshrc", ".profile"}:
         return "Error: Editing sensitive credential or shell startup files is blocked."
 
+    # Cap file size to prevent OOM on multi-GB files (P0 hardening, audit item 9).
+    try:
+        fsize = target.stat().st_size
+    except OSError:
+        return f"Error: Cannot stat file: {target}"
+    if fsize > _MAX_EDIT_FILE_BYTES:
+        return (
+            f"Error: File too large for surgical edit ({fsize / 1024 / 1024:.1f} MB > "
+            f"{_MAX_EDIT_FILE_BYTES / 1024 / 1024:.0f} MB cap). "
+            "Use read_lines for bounded reads or split the file first."
+        )
+
     orig = target.read_text(encoding="utf-8", errors="replace")
     if old_text not in orig:
         return f"Error: Target text not found in {target.name}."
 
     args = {"path": str(target), "old_text": old_text, "new_text": new_text}
     token, deny_err = approval.request_bound_approval(
-        "edit_file", args, approval_cb, title="Approve File Edit?", target=str(target)
+        "edit_file", args, approval_cb, title="Approve File Edit?", target=str(target),
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "edit_file", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     aid = state_ops.get_undo_journal().record_before_mutation("edit_file", target)
     try:
         bak = documents.backup_file(target)
         updated = orig.replace(old_text, new_text, 1)
-        tmp = target.with_name(f".{target.name}.celina.tmp")
-        tmp.write_text(updated, encoding="utf-8")
-        os.replace(tmp, target)
+        fd, tmp_path = _open_tmp_nosymlink(target.parent, prefix=f".{target.name}.")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                tmp.write(updated)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            # TOCTOU defense: re-validate target right before os.replace
+            replace_err = _validate_target_for_write(target)
+            if replace_err:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                return replace_err
+            os.replace(tmp_path, target)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
         state_ops.get_undo_journal().finalize_mutation(aid, succeeded=True, final_path=target)
         return f"Edited {target.name} (backup saved: {bak.name if bak else 'none'}). [undo: {aid}]"
     except Exception as exc:
@@ -2466,11 +2919,10 @@ def edit_file(
 def libreoffice_edit(
     path: str,
     action: str,
-    params: Optional[dict[str, Any]] = None,
-    approval_cb: Optional[ApprovalCallback] = None,
+    params: dict[str, Any] | None = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Structured LibreOffice document editing via headless UNO bridge (localhost:2002),
+    """Structured LibreOffice document editing via headless UNO bridge (localhost:2002),
     with automatic fallback to `wayland_gui` GUI automation when UNO is unavailable.
     Requires Tier-2 argument-bound approval and captures a SHA-256 UndoJournal snapshot.
     """
@@ -2490,10 +2942,10 @@ def libreoffice_edit(
         target=str(target),
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "libreoffice_edit", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     aid = state_ops.get_undo_journal().record_before_mutation("libreoffice_edit", target)
     try:
@@ -2515,7 +2967,7 @@ def libreoffice_edit(
         return f"Failed LibreOffice edit: {exc}"
 
 
-def move_file(src: str, dst: str, approval_cb: Optional[ApprovalCallback] = None) -> str:
+def move_file(src: str, dst: str, approval_cb: ApprovalCallback | None = None) -> str:
     """Moves or renames a file/folder inside $HOME after argument-bound approval."""
     src_p = Path(src).expanduser().resolve()
     dst_p = Path(dst).expanduser().resolve()
@@ -2525,29 +2977,55 @@ def move_file(src: str, dst: str, approval_cb: Optional[ApprovalCallback] = None
         return f"Error: Source not found: {src_p}"
     if _is_sensitive_path(src_p) or _is_sensitive_path(dst_p):
         return "Error: Sensitive paths cannot be moved."
+    # Collision detection: note if destination already exists (audit item 14).
+    # shutil.move would silently overwrite — including rename over an empty
+    # directory — which defeats collision prediction. We flag it in the
+    # approval args so the user sees it, but we do not hard-refuse (existing
+    # callers may rely on overwrite semantics).
+    dst_exists = dst_p.exists()
 
-    args = {"src": str(src_p), "dst": str(dst_p)}
+    # Detect cross-device move (copy+delete semantics). Undo restores by
+    # copying the backup back to the source, which works for both same-device
+    # (rename) and cross-device (copy) cases.
+    cross_device = _is_cross_device(src_p, dst_p)
+
+    args = {
+        "src": str(src_p),
+        "dst": str(dst_p),
+        "cross_device": cross_device,
+        "dst_exists": dst_exists,
+    }
     token, deny_err = approval.request_bound_approval(
-        "move_file", args, approval_cb, title="Approve Move / Rename?", target=f"{src_p} -> {dst_p}"
+        "move_file", args, approval_cb, title="Approve Move / Rename?", target=f"{src_p} -> {dst_p}",
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "move_file", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     aid = state_ops.get_undo_journal().record_before_mutation("move_file", src_p, dst_path=dst_p)
     try:
         dst_p.parent.mkdir(parents=True, exist_ok=True)
+        # TOCTOU defense: re-validate destination parent after mkdir
+        parent_err = _validate_target_for_write(dst_p.parent)
+        if parent_err:
+            return parent_err
+        # Re-validate destination right before shutil.move
+        dst_err = _validate_target_for_write(dst_p)
+        if dst_err:
+            return dst_err
         shutil.move(str(src_p), str(dst_p))
         state_ops.get_undo_journal().finalize_mutation(aid, succeeded=True, final_path=dst_p)
-        return f"Moved '{src_p.name}' to '{dst_p}'. [undo: {aid}]"
+        suffix = " (cross-device copy+delete)" if cross_device else ""
+        collision = " [destination existed, overwritten]" if dst_exists else ""
+        return f"Moved '{src_p.name}' to '{dst_p}'.{suffix}{collision} [undo: {aid}]"
     except Exception as exc:
         state_ops.get_undo_journal().finalize_mutation(aid, succeeded=False)
         return f"Failed to move file: {exc}"
 
 
-def trash_file(path: str, approval_cb: Optional[ApprovalCallback] = None) -> str:
+def trash_file(path: str, approval_cb: ApprovalCallback | None = None) -> str:
     """Safely moves a file to Ubuntu Trash (recoverable) after argument-bound approval."""
     target = Path(path).expanduser().resolve()
     if not _is_within_home(target) or not target.exists():
@@ -2557,26 +3035,30 @@ def trash_file(path: str, approval_cb: Optional[ApprovalCallback] = None) -> str
 
     args = {"path": str(target)}
     token, deny_err = approval.request_bound_approval(
-        "trash_file", args, approval_cb, title="Move File to Ubuntu Trash?", target=str(target)
+        "trash_file", args, approval_cb, title="Move File to Ubuntu Trash?", target=str(target),
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "trash_file", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     if shutil.which("gio"):
+        # TOCTOU defense: re-validate target right before trash operation
+        trash_err = _validate_target_for_write(target)
+        if trash_err:
+            return trash_err
         aid = state_ops.get_undo_journal().record_before_mutation("trash_file", target)
         res = command_runner.run_command(["gio", "trash", str(target)], timeout=5.0)
         if res.ok:
             state_ops.get_undo_journal().finalize_mutation(aid, succeeded=True)
             return f"Moved '{target.name}' to Trash (recoverable). [undo: {aid}]"
         state_ops.get_undo_journal().finalize_mutation(aid, succeeded=False)
-        return f"Error: {res.error}"
+        return f"Error: {getattr(res, "error", None) or res.stderr}"
     return "Error: 'gio' utility not available for safe Trash deletion."
 
 
-def close_application(app_name: str, approval_cb: Optional[ApprovalCallback] = None) -> str:
+def close_application(app_name: str, approval_cb: ApprovalCallback | None = None) -> str:
     """Gracefully sends SIGTERM to a running user application after argument-bound approval."""
     proc = app_name.strip()
     if not proc or proc.lower() in _PROTECTED_PROCESSES or app_nap_controller._is_protected(proc):
@@ -2584,17 +3066,17 @@ def close_application(app_name: str, approval_cb: Optional[ApprovalCallback] = N
 
     args = {"app_name": proc}
     token, deny_err = approval.request_bound_approval(
-        "close_application", args, approval_cb, title="Approve Closing Application?", target=proc
+        "close_application", args, approval_cb, title="Approve Closing Application?", target=proc,
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "close_application", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     if not shutil.which("pkill"):
         return "Error: pkill not available."
-    res = command_runner.run_command(["pkill", "-TERM", "-u", str(os.getuid()), "-i", "-x", proc], timeout=5.0)
+    res = command_runner.run_command(["pkill", "--", "-TERM", "-u", str(os.getuid()), "-i", "-x", proc], timeout=5.0)
     return f"Sent close signal to '{proc}'." if res.ok else f"No running user process matching exact name '{proc}'."
 
 
@@ -2603,21 +3085,20 @@ def compose_message(
     recipient: str = "",
     text: str = "",
     subject: str = "",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Wayland-safe messaging composer with exact argument-bound user approval.
+    """Wayland-safe messaging composer with exact argument-bound user approval.
     """
     ch = channel.lower().strip()
     args = {"channel": ch, "recipient": recipient, "subject": subject, "text": text}
     token, deny_err = approval.request_bound_approval(
-        "compose_message", args, approval_cb, title="Approve Composing External Message?", target=f"{ch}:{recipient or 'clipboard'}"
+        "compose_message", args, approval_cb, title="Approve Composing External Message?", target=f"{ch}:{recipient or 'clipboard'}",
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, "compose_message", args)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     if text and shutil.which("wl-copy"):
         set_clipboard(text)
@@ -2700,7 +3181,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                         "type": "string",
                         "enum": ["play-pause", "next", "previous", "stop", "status"],
                         "description": "Playback command or 'status' for current track",
-                    }
+                    },
                 },
                 "required": ["action"],
             },
@@ -2808,6 +3289,65 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {"path": {"type": "string"}, "max_chars": {"type": "integer"}},
                 "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": "List directory contents inside the user's home folder (ReAct explorer). Returns names with '/' suffix for directories. Capped at 100 entries.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory path (default ~)"},
+                    "pattern": {"type": "string", "description": "Filename glob pattern (default '*')"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_function_signatures",
+            "description": "Extract function/class signatures from a .py file via AST (~5% of file size). ReAct navigation without dumping whole files.",
+            "parameters": {
+                "type": "object",
+                "properties": {"file": {"type": "string", "description": "Path to a .py file inside home"}},
+                "required": ["file"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_lines",
+            "description": "Read a bounded slice of lines from a text file inside home. Default 60 lines, max 120 per call.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file": {"type": "string", "description": "Path to a text file inside home"},
+                    "start": {"type": "integer", "description": "Starting line number (1-based)"},
+                    "end": {"type": "integer", "description": "Ending line number (inclusive)"},
+                },
+                "required": ["file"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep_code",
+            "description": "Grep for a code pattern inside text files under home. Capped at 50 matches. ReAct navigation without whole-file dumps.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Search pattern (literal string)"},
+                    "path": {"type": "string", "description": "Directory to search (default ~)"},
+                    "file_glob": {"type": "string", "description": "File glob pattern (default '*.py')"},
+                },
+                "required": ["pattern"],
             },
         },
     },
@@ -3633,7 +4173,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
                     "mode": {
                         "type": "string",
                         "enum": ["status", "default", "work", "coding", "presentation", "sleep"],
-                    }
+                    },
                 },
             },
         },
@@ -4101,7 +4641,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
 ]
 
-_AUTO_TOOL_MAP: dict[str, Callable[..., str]] = {
+_AUTO_TOOL_MAP: dict[str, Callable[..., Any]] = {
     "get_system_stats": get_system_stats,
     "get_hardware_capabilities": get_hardware_capabilities,
     "set_focus_mode": os_events.set_focus_mode,
@@ -4129,6 +4669,10 @@ _AUTO_TOOL_MAP: dict[str, Callable[..., str]] = {
     "search_files": search_files,
     "search_in_files": search_in_files,
     "read_file": read_file,
+    "list_files": list_files,
+    "read_function_signatures": read_function_signatures,
+    "read_lines": read_lines,
+    "grep_code": grep_code,
     "read_document": _cached_read_document,
     "get_clipboard": get_clipboard,
     "get_highlighted_text": get_highlighted_text,
@@ -4165,8 +4709,18 @@ _AUTO_TOOL_MAP: dict[str, Callable[..., str]] = {
 }
 
 
-def submit_goal(goal: str, priority: int = 5) -> str:
-    """Hand a multi-step goal to the Celina v5 Autonomy Engine (`tasks.db`). Returns root task ID."""
+def submit_goal(
+    goal: str,
+    priority: int = 5,
+    approval_cb: ApprovalCallback | None = None,
+) -> str:
+    """Hand a multi-step goal to the Celina v5 Autonomy Engine (`tasks.db`). Returns root task ID.
+
+    submit_goal is a Tier-2 tool (in _APPROVAL_TOOL_MAP). The approval_cb
+    parameter is accepted for interface compatibility with execute_tool's
+    approval-gated call path; the actual consent check is performed by
+    execute_tool before dispatching here.
+    """
     clean = (goal or "").strip()
     if not clean:
         return "Error: goal must not be empty."
@@ -4186,7 +4740,7 @@ def submit_goal(goal: str, priority: int = 5) -> str:
 def _execute_mcp_perception_actuation(
     celina_tool_name: str,
     arguments: dict[str, Any],
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     """Routes the 5 Tier-2 `mcp_perception_actuation` tools through approval + MCPLoader."""
     from .autonomy import mcp_loader
@@ -4203,23 +4757,23 @@ def _execute_mcp_perception_actuation(
         extra_warning="External MCP server call — Tier-2 approval required by policy.",
     )
     if deny_err:
-        return deny_err
+        return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     ok, err = approval.verify_and_consume(token, celina_tool_name, arguments)
     if not ok:
-        return err
+        return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     receipt = mcp_loader.get_mcp_loader().execute_domain_tool(celina_tool_name, arguments)
     if not receipt.ok:
         return f"Error: MCP {server}.{route['remote_tool']} failed ({receipt.mcp_transport}): {receipt.error}"
-    return receipt.output
+    return receipt.output  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
 
 def computer_click(
     selector: str,
-    x: Optional[int] = None,
-    y: Optional[int] = None,
+    x: int | None = None,
+    y: int | None = None,
     button: str = "left",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     args: dict[str, Any] = {"selector": str(selector), "button": str(button or "left")}
     if x is not None:
@@ -4233,7 +4787,7 @@ def computer_type(
     text: str,
     selector: str = "",
     submit: bool = False,
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     args: dict[str, Any] = {"text": str(text), "submit": bool(submit)}
     if selector:
@@ -4241,11 +4795,69 @@ def computer_type(
     return _execute_mcp_perception_actuation("computer_type", args, approval_cb=approval_cb)
 
 
+def _mirage_vision_triage(
+    image_path: Path,
+    *,
+    prompt: str | None = None,
+    lang: str = "en",
+    ram_tier: str = "16gb",
+) -> tuple[Any | None, Any | None]:
+    """Try 22 MB Mirage CPU vision triage first (fast, local, no GPU).
+    Returns (mirage_result_text, mirage_result_obj) or (None, None) if Mirage
+    is unavailable or signals escalation to a heavy VLM.
+    """
+    try:
+        from . import config as _config
+
+        mirage = gear0_5_1_mirage.get_gear051_mirage()
+        tier = getattr(_config, "RAM_TIER", None) or ram_tier
+        result = mirage.perceive(image_path, lang=lang, ram_tier=tier)
+        if not result.ok:
+            return None, result
+        # Mirage succeeded without escalation — return compact record
+        return result.to_compact_llm_record(), result
+    except Exception:
+        return None, None
+
+
 def vision_ocr(
     region: str = "full",
     language: str = "en",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
+    # Gear 0.5.1: Try 22 MB Mirage CPU OCR first (fast, local, ~0 MB idle RAM)
+    try:
+        import tempfile
+
+        fd, tmp_path = tempfile.mkstemp(prefix="celina_vision_", suffix=".png")
+        os.close(fd)
+        try:
+            from .automation import capture_screenshot
+
+            err = capture_screenshot(Path(tmp_path))
+            if err:
+                # Screenshot failed — fall through to MCP
+                pass
+            else:
+                mirage_record, mirage_result = _mirage_vision_triage(
+                    Path(tmp_path), lang=language, ram_tier="16gb",
+                )
+                if mirage_record is not None and mirage_result is not None:
+                    if not mirage_result.escalate_to_vlm:
+                        # Mirage OCR was sufficient — return compact record
+                        import json as _json
+
+                        return _json.dumps(mirage_record, ensure_ascii=False)
+                    # Mirage signals escalation — fall through to MCP/heavy VLM
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
+        # Mirage not available or any error — fall through to MCP
+        pass
+
     args = {"region": str(region or "full"), "language": str(language or "en")}
     return _execute_mcp_perception_actuation("vision_ocr", args, approval_cb=approval_cb)
 
@@ -4253,17 +4865,46 @@ def vision_ocr(
 def vision_analyze(
     prompt: str,
     region: str = "full",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
+    # Gear 0.5.1: Try 22 MB Mirage CPU vision triage first (fast, local, ~0 MB idle RAM)
+    try:
+        import tempfile
+
+        fd, tmp_path = tempfile.mkstemp(prefix="celina_vision_", suffix=".png")
+        os.close(fd)
+        try:
+            from .automation import capture_screenshot
+
+            err = capture_screenshot(Path(tmp_path))
+            if err:
+                pass
+            else:
+                mirage_record, mirage_result = _mirage_vision_triage(
+                    Path(tmp_path), prompt=prompt, lang="en", ram_tier="16gb",
+                )
+                if mirage_record is not None and mirage_result is not None:
+                    if not mirage_result.escalate_to_vlm:
+                        import json as _json
+
+                        return _json.dumps(mirage_record, ensure_ascii=False)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
+        pass
+
     args = {"prompt": str(prompt), "region": str(region or "full")}
     return _execute_mcp_perception_actuation("vision_analyze", args, approval_cb=approval_cb)
 
 
 def ghostdesk_click(
     selector: str,
-    x: Optional[int] = None,
-    y: Optional[int] = None,
-    approval_cb: Optional[ApprovalCallback] = None,
+    x: int | None = None,
+    y: int | None = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     args: dict[str, Any] = {"selector": str(selector)}
     if x is not None:
@@ -4273,7 +4914,7 @@ def ghostdesk_click(
     return _execute_mcp_perception_actuation("ghostdesk_click", args, approval_cb=approval_cb)
 
 
-_APPROVAL_TOOL_MAP: dict[str, Callable[..., str]] = {
+_APPROVAL_TOOL_MAP: dict[str, Callable[..., Any]] = {
     "submit_goal": submit_goal,
     "computer_click": computer_click,
     "computer_type": computer_type,
@@ -4376,8 +5017,7 @@ def _lexical_rank_tools(prompt: str, schemas: list[dict[str, Any]], top_k: int =
 
 
 class _SemanticToolIndex:
-    """
-    Lazy, disk-cached semantic index over all 88 TOOL_SCHEMAS (~45 KB JSON/base64).
+    """Lazy, disk-cached semantic index over all 88 TOOL_SCHEMAS (~45 KB JSON/base64).
     Automatically invalidates when TOOL_SCHEMAS or embedding model fingerprint changes.
     """
 
@@ -4398,11 +5038,12 @@ class _SemanticToolIndex:
             sort_keys=True,
             ensure_ascii=False,
         )
-        return hashlib.sha256(f"{model_fp}::{raw}".encode("utf-8")).hexdigest()[:24]
+        return hashlib.sha256(f"{model_fp}::{raw}".encode()).hexdigest()[:24]
 
     def _ensure_loaded(self, schemas: list[dict[str, Any]]) -> list[tuple[str, bytes]]:
-        from . import embeddings
         import base64
+
+        from . import embeddings
 
         eng = embeddings.get_engine()
         fp = self._compute_fingerprint(schemas, eng.model_fingerprint)
@@ -4420,7 +5061,7 @@ class _SemanticToolIndex:
                         ]
                         self._fingerprint = fp
                         return self._blobs
-                except Exception:
+                except Exception:  # noqa: S110  # Intentional: catch-and-swallow for optional dependency; failure is non-fatal
                     pass
 
         # Embed all tool summaries in one batch outside lock
@@ -4463,7 +5104,7 @@ class _SemanticToolIndex:
         schemas: list[dict[str, Any]],
         *,
         top_k: int = 5,
-        min_sim: Optional[float] = None,
+        min_sim: float | None = None,
     ) -> list[str]:
         from . import embeddings
 
@@ -4490,10 +5131,9 @@ def _coerce_and_filter_tool_args(
     fn: Callable[..., Any],
     raw_args: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Small-model BFCL reliability guard:
-      1. Coerces stringified ints/floats/bools ("60" -> 60, "true" -> True) per TOOL_SCHEMAS types.
-      2. Strips hallucinated extra kwargs when the target handler doesn't accept **kwargs.
+    """Small-model BFCL reliability guard:
+    1. Coerces stringified ints/floats/bools ("60" -> 60, "true" -> True) per TOOL_SCHEMAS types.
+    2. Strips hallucinated extra kwargs when the target handler doesn't accept **kwargs.
     """
     schema_fn = _TOOL_SCHEMA_BY_NAME.get(name) or {}
     props = (schema_fn.get("parameters") or {}).get("properties", {})
@@ -4545,8 +5185,7 @@ def get_contextual_tool_schemas(
     active_window: str = "",
     is_recording: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """
-    Hybrid Domain + Lexical Tool Router (v4.3):
+    """Hybrid Domain + Lexical Tool Router (v4.3):
     1. Matches word-boundary domain triggers (EN / TE / HI) & active window hints across 8 focused domains.
     2. Runs a zero-dependency lexical fallback scorer over all 78 tool names/descriptions when phrasing
        is unexpected so NO valid tool is silently pruned out, while keeping prompt tokens lean for 1.7B–4B models.
@@ -4614,7 +5253,20 @@ def get_contextual_tool_schemas(
                 selected_tools.update(domains[fallback_d].get("tools", []))
 
     pruned = [t for t in all_enabled if t["function"]["name"] in selected_tools]
-    return (pruned if pruned else all_enabled), active_domains
+
+    # D3: Filter presentation by capability boundary — never show tools
+    # the OS capability manifest says cannot run (fail-closed).
+    presentable = []
+    for t in pruned:
+        name = t["function"]["name"]
+        is_tier2 = name in config.TIER2_APPROVAL_TOOLS
+        cap_ok, _ = capabilities.check_tool_execution_boundary(name, is_tier2=is_tier2)
+        if cap_ok:
+            presentable.append(t)
+    if presentable:
+        pruned = presentable
+
+    return (pruned or all_enabled), active_domains
 
 
 def build_tiered_tool_presentation(
@@ -4625,8 +5277,7 @@ def build_tiered_tool_presentation(
     is_recording: bool = False,
     detailed_k: int = 8,
 ) -> dict[str, Any]:
-    """
-    Tier-Based Hybrid Tool Presentation (+10pp accuracy on 1.5B-3B models,
+    """Tier-Based Hybrid Tool Presentation (+10pp accuracy on 1.5B-3B models,
     83-92% fewer prompt tokens vs sending all full JSON schemas):
       - `detailed_schemas`: Top `detailed_k` (default 8) most relevant tool schemas
         in full OpenAI/Ollama JSON schema detail.
@@ -4658,7 +5309,11 @@ def build_tiered_tool_presentation(
 
     detailed_names = ordered_names[:k]
     detailed_set = set(detailed_names)
-    detailed_schemas = [_TOOL_SCHEMA_BY_NAME[n] for n in detailed_names if n in _TOOL_SCHEMA_BY_NAME]
+    detailed_schemas = [
+        {"type": "function", "function": _TOOL_SCHEMA_BY_NAME[n]}
+        for n in detailed_names
+        if n in _TOOL_SCHEMA_BY_NAME
+    ]
     name_only_tools = [
         t.get("function", {}).get("name", "")
         for t in all_enabled
@@ -4682,14 +5337,13 @@ def build_tiered_tool_presentation(
 
 
 class ToolCircuitBreaker:
-    """
-    Thread-safe per-tool circuit breaker (Capability #4):
-      - Prevents runaway retry loops when a subsystem is down.
-      - Tracks consecutive SAME-ERROR-CODE failures: after `threshold` consecutive
-        failures with the same error code, disables that tool for the session
-        (`session_disabled`).
-      - When called without an explicit error_code/error_text, opens for `cooldown_sec`.
-      - User approval denials (`Denied:` / `Cancelled`) do NOT trip the breaker.
+    """Thread-safe per-tool circuit breaker (Capability #4):
+    - Prevents runaway retry loops when a subsystem is down.
+    - Tracks consecutive SAME-ERROR-CODE failures: after `threshold` consecutive
+      failures with the same error code, disables that tool for the session
+      (`session_disabled`).
+    - When called without an explicit error_code/error_text, opens for `cooldown_sec`.
+    - User approval denials (`Denied:` / `Cancelled`) do NOT trip the breaker.
     """
 
     def __init__(self, threshold: int = 3, cooldown_sec: float = 60.0):
@@ -4702,11 +5356,11 @@ class ToolCircuitBreaker:
         self._open_until: dict[str, float] = {}
         self._session_disabled: dict[str, str] = {}
 
-    def is_session_disabled(self, tool_name: str) -> Optional[str]:
+    def is_session_disabled(self, tool_name: str) -> str | None:
         with self._lock:
             return self._session_disabled.get(tool_name)
 
-    def check_open(self, tool_name: str, now: Optional[float] = None) -> Optional[float]:
+    def check_open(self, tool_name: str, now: float | None = None) -> float | None:
         ts = time.monotonic() if now is None else now
         with self._lock:
             if tool_name in self._session_disabled:
@@ -4729,9 +5383,9 @@ class ToolCircuitBreaker:
     def record_failure(
         self,
         tool_name: str,
-        now: Optional[float] = None,
+        now: float | None = None,
         *,
-        error_code: Optional[str] = None,
+        error_code: str | None = None,
         error_text: str = "",
     ) -> bool:
         ts = time.monotonic() if now is None else now
@@ -4776,7 +5430,7 @@ class ToolCircuitBreaker:
                 for k in keys
             }
 
-    def reset(self, tool_name: Optional[str] = None) -> None:
+    def reset(self, tool_name: str | None = None) -> None:
         with self._lock:
             if tool_name is None:
                 self._failures.clear()
@@ -4806,16 +5460,26 @@ def _domain_for_tool(tool_name: str) -> str:
 def execute_tool(
     name: str,
     arguments: dict[str, Any],
-    approval_cb: Optional[ApprovalCallback] = None,
-    status_cb: Optional[StatusCallback] = None,
-    consent_cb: Optional[PrivacyConsentCallback] = None,
-    task_glow_cb: Optional[TaskGlowCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
+    status_cb: StatusCallback | None = None,
+    consent_cb: PrivacyConsentCallback | None = None,
+    task_glow_cb: TaskGlowCallback | None = None,
 ) -> str:
-    allowed = config.TIER1_AUTO_TOOLS | config.TIER2_APPROVAL_TOOLS
-    if allowed and name not in allowed:
-        return f"Blocked by neural-schema.json policy: tool '{name}' is disabled."
-
+    # Legacy boolean callbacks cannot authorize execution in the absence of a
+    # protected broker. Snapshot before classification so later caller changes
+    # cannot change the arguments reaching the selected handler.
+    try:
+        frozen = canonical_payload(name, arguments, "tool-dispatch", "classification", "tool-dispatch")
+        args = json.loads(frozen)["arguments"]
+        risk = approval.classify_risk(name, args)
+    except (ApprovalProtocolError, TypeError, ValueError, RecursionError):
+        return "Denied: invalid or unsupported tool request."
     is_t2 = name in config.TIER2_APPROVAL_TOOLS
+    if (is_t2 or name not in config.TIER1_AUTO_TOOLS or name in _APPROVAL_TOOL_MAP
+            or name in {"run_skill", "autonomous_gui_task"}
+            or risk != approval.RiskLevel.READ_ONLY):
+        return "Denied: this tool requires a trusted approval broker, which is not available."
+
     cap_ok, cap_err = capabilities.check_tool_execution_boundary(name, is_tier2=is_t2)
     if not cap_ok:
         if is_t2:
@@ -4828,7 +5492,7 @@ def execute_tool(
                 )
             except OSError:
                 pass
-        return cap_err
+        return cap_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
     rem = TOOL_CIRCUIT_BREAKER.check_open(name)
     if rem is not None:
@@ -4839,8 +5503,6 @@ def execute_tool(
             f"Error: Circuit breaker open for '{name}' after {TOOL_CIRCUIT_BREAKER.threshold} "
             f"consecutive failures (cooling down for {int(rem) + 1}s)."
         )
-
-    args = arguments if isinstance(arguments, dict) else {}
 
     def _record_t2(result_str: str) -> str:
         if is_t2:
@@ -4855,6 +5517,17 @@ def execute_tool(
                 pass
         return result_str
 
+    known_tool = (
+        name in _AUTO_TOOL_MAP or name in _APPROVAL_TOOL_MAP
+        or name in {"run_skill", "autonomous_gui_task"}
+    )
+    if known_tool:
+        names_ok, names_err = guardrails.validate_tool_argument_names(
+            name, args, _TOOL_SCHEMA_BY_NAME,
+        )
+        if not names_ok:
+            return _record_t2(f"Tool argument error ({name}): {names_err}")
+
     try:
         with TOOL_BULKHEAD.acquire(_domain_for_tool(name), timeout=2.0):
             if name == "run_skill":
@@ -4863,13 +5536,13 @@ def execute_tool(
                         skills.run_skill(
                             name=str(args.get("name", "")),
                             executor=lambda tn, ta, acb: execute_tool(
-                                tn, ta, approval_cb=acb, status_cb=status_cb, consent_cb=consent_cb, task_glow_cb=task_glow_cb
+                                tn, ta, approval_cb=acb, status_cb=status_cb, consent_cb=consent_cb, task_glow_cb=task_glow_cb,
                             ),
                             params=args.get("params") if isinstance(args.get("params"), dict) else None,
                             approval_cb=approval_cb,
                             status_cb=status_cb,
-                        )
-                    )
+                        ),
+                    ),
                 )
             if name == "autonomous_gui_task":
                 return _record_t2(
@@ -4877,7 +5550,7 @@ def execute_tool(
                         computer_use.autonomous_gui_task(
                             goal=str(args.get("goal", "")),
                             executor=lambda tn, ta, acb: execute_tool(
-                                tn, ta, approval_cb=acb, status_cb=status_cb, consent_cb=consent_cb
+                                tn, ta, approval_cb=acb, status_cb=status_cb, consent_cb=consent_cb,
                             ),
                             max_steps=int(args.get("max_steps", config.AUTOMATION_CFG.get("astra_max_steps", 10))),
                             use_vision=bool(args.get("use_vision", False)),
@@ -4885,8 +5558,8 @@ def execute_tool(
                             consent_cb=consent_cb,
                             status_cb=status_cb,
                             task_glow_cb=task_glow_cb,
-                        )
-                    )
+                        ),
+                    ),
                 )
             if name in _APPROVAL_TOOL_MAP:
                 target_fn = _APPROVAL_TOOL_MAP[name]
@@ -4895,7 +5568,18 @@ def execute_tool(
                 val_ok, val_err = guardrails.validate_tool_arguments(name, clean_args, _TOOL_SCHEMA_BY_NAME)
                 if not val_ok:
                     return _record_t2(f"Tool argument error ({name}): {val_err}")
-                out = str(target_fn(**clean_args, approval_cb=approval_cb))
+                # Only pass approval_cb if the target function accepts it (P1: prevent TypeError crash
+                # for ponytail_evaluate / skilspector_scan that may not accept approval_cb).
+                try:
+                    _sig = inspect.signature(target_fn)
+                    _accepts_approval_cb = any(
+                        p.kind == inspect.Parameter.VAR_KEYWORD or p.name == "approval_cb"
+                        for p in _sig.parameters.values()
+                    )
+                except (TypeError, ValueError):
+                    _accepts_approval_cb = False
+                call_kwargs = {"approval_cb": approval_cb} if _accepts_approval_cb else {}
+                out = str(target_fn(**clean_args, **call_kwargs))
             else:
                 fn = _AUTO_TOOL_MAP.get(name)
                 if not fn:
@@ -4928,7 +5612,16 @@ def execute_tool(
 # Tier 0: Zero-Latency Multilingual Fast-Path Intents (EN / TE / HI)
 # ============================================================================
 
-def handle_fast_intent(text: str, approval_cb: Optional[ApprovalCallback] = None) -> Optional[str]:
+def _trusted_fast_intent_dispatch_available() -> bool:
+    """No authenticated fast-intent actuator is wired yet.
+
+    Do not enable legacy branches by toggling this return value: replace direct
+    actuation with broker-owned execution first. This guard is not OS isolation.
+    """
+    return False
+
+
+def handle_fast_intent(text: str, approval_cb: ApprovalCallback | None = None) -> str | None:
     low = text.lower().strip()
 
     if low in {
@@ -4942,6 +5635,18 @@ def handle_fast_intent(text: str, approval_cb: Optional[ApprovalCallback] = None
         if any("\u0900" <= c <= "\u097f" for c in text):
             return f"अभी समय {now_str} है।"
         return f"It is currently {now_str}."
+
+    # Preserve pure conversions/calculations while direct actuator paths are
+    # disabled. None means "not handled"; other router paths still need audit.
+    if not _trusted_fast_intent_dispatch_available():
+        conv = spotlight_index.convert_units(text)
+        if conv:
+            return f"🔄 {conv}"
+        if any(ch.isdigit() for ch in text) and any(op in text for op in "+-*/^") and re.fullmatch(r"[0-9a-zA-Z\.\s\+\-\*\/\%\^\(\),]+", text.strip()):
+            calc = spotlight_index.safe_calculate(text)
+            if calc is not None:
+                return f"🧮 {text.strip()} = {calc}"
+        return None
 
     if low in {"unmute", "unmute audio", "unmute volume", "అన్‌మ్యూట్", "అన్మ్యూట్", "अनम्यूट", "आवाज़ चालू करो"}:
         return set_volume(mute=False)
@@ -4975,21 +5680,21 @@ def handle_fast_intent(text: str, approval_cb: Optional[ApprovalCallback] = None
         low,
     )
     if m_focus:
-        return os_events.set_focus_mode(m_focus.group(1))
+        return os_events.set_focus_mode(m_focus.group(1))  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     if low in {"focus status", "what focus mode", "current focus mode", "focus mode status"}:
-        return os_events.set_focus_mode("status")
+        return os_events.set_focus_mode("status")  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     if low in {
         "continuity status", "iphone status", "airpods battery",
         "bluetooth battery", "check airpods battery", "check continuity",
     }:
-        return continuity.get_continuity_status()
+        return continuity.get_continuity_status()  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     if low in {
         "upcoming events", "my calendar", "today's schedule", "todays schedule",
         "calendar events", "check my calendar", "నా క్యాలెండర్", "मेरा कैलेंडर",
     }:
-        return calendar_bridge.get_upcoming_events(days=7)
+        return calendar_bridge.get_upcoming_events(days=7)  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     if low in {"privacy audit", "audit app permissions", "check app permissions", "who is using my mic", "who is using my camera"}:
-        return continuity.audit_app_permissions()
+        return continuity.audit_app_permissions()  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
     if low in {"hardware status", "biometrics status", "touch id status", "face id status"}:
         return get_hardware_capabilities()
 
@@ -5059,7 +5764,7 @@ def handle_fast_intent(text: str, approval_cb: Optional[ApprovalCallback] = None
         m_play_clause = re.search(r"\b(?:play|watch|listen\s+to)\s+(.+)$", low)
         if m_play_clause:
             raw_q, inline_plat = _clean_media_query(m_play_clause.group(1))
-            chosen_plat: Optional[str] = inline_plat
+            chosen_plat: str | None = inline_plat
             if not chosen_plat:
                 for p in MEDIA_PLATFORMS:
                     if re.search(rf"\b{re.escape(p)}\b", low):
@@ -5129,7 +5834,7 @@ def handle_fast_intent(text: str, approval_cb: Optional[ApprovalCallback] = None
     return None
 
 
-def _search_flathub_app(query: str) -> Optional[tuple[str, str]]:
+def _search_flathub_app(query: str) -> tuple[str, str] | None:
     """Dynamically searches Flathub for ANY desktop app via `flatpak search` and returns (Name, AppID)."""
     if not shutil.which("flatpak"):
         return None
@@ -5143,7 +5848,7 @@ def _search_flathub_app(query: str) -> Optional[tuple[str, str]]:
     if not res.ok or not res.stdout.strip():
         return None
     q_low = q.lower()
-    best: Optional[tuple[int, str, str]] = None
+    best: tuple[int, str, str] | None = None
     for line in res.stdout.splitlines():
         parts = [p.strip() for p in line.split("\t") if p.strip()]
         if len(parts) < 2:
@@ -5167,7 +5872,7 @@ def _search_flathub_app(query: str) -> Optional[tuple[str, str]]:
     return best[1], best[2]
 
 
-def _check_apt_package(query: str) -> Optional[str]:
+def _check_apt_package(query: str) -> str | None:
     """Checks if an exact Ubuntu APT package exists for CLI/system tools (e.g. ffmpeg, htop, mpv, neovim)."""
     if not shutil.which("apt-cache"):
         return None
@@ -5183,17 +5888,14 @@ def _check_apt_package(query: str) -> Optional[str]:
 def handle_fast_install_intent(
     text: str,
     *,
-    approval_cb: Optional[ApprovalCallback] = None,
-    status_cb: Optional[Callable[[str], None]] = None,
+    approval_cb: ApprovalCallback | None = None,
+    status_cb: Callable[[str], None] | None = None,
     dry_run: bool = False,
-) -> Optional[str]:
-    """
-    Universal, approval-gated Tier-2 app installer for 'download/install <ANY app>' requests:
-      1. Instant match in curated Flathub catalog (Spotify, Chrome, VLC, Discord, VS Code, etc.)
-      2. Dynamic live lookup across ALL 2,500+ Flathub apps (`flatpak search`)
-      3. Exact Ubuntu APT package lookup (`apt-cache show`) for CLI/system utilities
-      4. Automatic Flathub web search fallback if no direct package matches
-    Always requires explicit argument-bound user approval; never installs silently.
+) -> str | None:
+    """Recognize install requests; only dry-run simulation is currently enabled.
+
+    Live installation and lookup are denied pending broker-owned execution.
+    A legacy boolean callback is not sufficient authorization.
     """
     low = text.lower().strip().rstrip(".!?")
     m = re.fullmatch(
@@ -5205,11 +5907,13 @@ def handle_fast_install_intent(
     raw_name = m.group(1).strip()
     if any(w in raw_name.split() for w in ("and", "then", "file", "video", "song", "mp3", "pdf", "youtube", "pip", "npm", "this", "it")):
         return None
+    if not dry_run:
+        return "Denied: installation requires a trusted approval broker, which is not available."
 
     # 1. Curated instant Flathub match, else dynamic live Flathub search
     match = CURATED_INSTALLABLE_APPS.get(raw_name)
     source = "flathub"
-    apt_pkg: Optional[str] = None
+    apt_pkg: str | None = None
     if match is None and not dry_run:
         if status_cb:
             status_cb(f"Searching Flathub & APT for '{raw_name}'...")
@@ -5247,17 +5951,17 @@ def handle_fast_install_intent(
             target=f"flathub:{app_id}",
         )
         if deny_err:
-            return deny_err
+            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
         ok, err = approval.verify_and_consume(token, "run_shell_command", args)
         if not ok:
-            return err
+            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
         if status_cb:
             status_cb(f"Installing {display_name} ({app_id}) from Flathub...")
         res = command_runner.run_command(cmd_list, timeout=300.0)
         if res.ok:
             return f"✅ Installed {display_name} ({app_id}). Say 'open {raw_name}' anytime to launch it."
-        err_detail = (res.stderr or res.stdout or "unknown error").strip()[-400:]
+        err_detail = (getattr(res, "error", None) or res.stderr or res.stdout or "unknown error").strip()[-400:]
         return f"Failed to install {display_name} ({app_id}): {err_detail}\nManual command: `{cmd_str}`"
 
     # 3. Exact APT package installation path (CLI/system apps like ffmpeg, htop, neovim, mpv, krita...)
@@ -5277,17 +5981,17 @@ def handle_fast_install_intent(
             target=f"apt:{apt_pkg}",
         )
         if deny_err:
-            return deny_err
+            return deny_err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
         ok, err = approval.verify_and_consume(token, "run_shell_command", args)
         if not ok:
-            return err
+            return err  # type: ignore[no-any-return]  # imported fn returns str at runtime; mypy --follow-imports=skip sees Any
 
         if status_cb:
             status_cb(f"Installing '{apt_pkg}' via APT...")
         res = command_runner.run_command(cmd_list, timeout=300.0)
         if res.ok:
             return f"✅ Installed '{apt_pkg}' via APT. Say 'open {raw_name}' or run `{apt_pkg}`."
-        err_detail = (res.stderr or res.stdout or "unknown error").strip()[-400:]
+        err_detail = (getattr(res, "error", None) or res.stderr or res.stdout or "unknown error").strip()[-400:]
         return f"Failed to install '{apt_pkg}': {err_detail}\nManual command: `{cmd_str}`"
 
     # 4. Fallback: open Flathub search page immediately

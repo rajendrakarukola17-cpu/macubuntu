@@ -289,6 +289,7 @@ def test_cap09_unified_capability_bus_dbus_socket_and_mcp(tmp_path: Path):
                 arguments={"x": 1},
                 transport="dbus",
                 caller_uid=os.getuid(),
+                uid_provenance="dbus",
             )
         )
         assert r_dbus.ok is True and r_dbus.result == "executed:cache_status:1"
@@ -353,7 +354,7 @@ def test_cap10_mcp_server_exposes_all_94_tools_with_deferred_loading_and_hitl(tm
         # Full tool catalog exposes ALL 102 Celina OS tools (100 + ponytail_evaluate + skilspector_scan from Update 18)
         list_full = srv.handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {"deferred": False}})
         all_tools = list_full["result"]["tools"]
-        assert len(all_tools) == len(tools.TOOL_SCHEMAS) == 102
+        assert len(all_tools) == len(tools.TOOL_SCHEMAS) == 106
 
         # Deferred loading filters by domain without dumping all 99 schemas into prompt
         list_def = srv.handle_request(
@@ -368,7 +369,8 @@ def test_cap10_mcp_server_exposes_all_94_tools_with_deferred_loading_and_hitl(tm
         assert t1_call["result"]["isError"] is False
         assert "mcp_ok:cache_status" in t1_call["result"]["content"][0]["text"]
 
-        # Tier-2 tool triggers HITL approval and fails closed when denied
+        # Tier-2 is disabled at the bus until broker-owned execution exists;
+        # an unauthenticated boolean callback cannot authorize this action.
         t2_call = srv.handle_request(
             {
                 "jsonrpc": "2.0",
@@ -378,7 +380,8 @@ def test_cap10_mcp_server_exposes_all_94_tools_with_deferred_loading_and_hitl(tm
             }
         )
         assert t2_call["result"]["isError"] is True
-        assert len(approvals_asked) == 1
+        assert "broker" in t2_call["result"]["content"][0]["text"].lower()
+        assert approvals_asked == []
     finally:
         store.close()
 

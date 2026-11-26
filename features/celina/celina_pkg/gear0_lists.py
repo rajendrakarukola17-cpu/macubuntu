@@ -1,23 +1,22 @@
-"""
-Celina AI (Celly) - Gear 0 Lists (Update 19)
+"""Celina AI (Celly) - Gear 0 Lists (Update 19)
 
 Alexa-style instant shopping/task lists — local SQLite, zero LLM tokens.
+
 Examples:
   - "Add almond milk and eggs to the shopping list"
   - "Add call the bank to my todo list"
   - "What's on my shopping list?"
+
 """
 
 from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
 
 _LISTS_DB_PATH = Path.home() / ".celina" / "storage" / "shared" / "lists.db"
-_LISTS_CONN: Optional[sqlite3.Connection] = None
+_LISTS_CONN: sqlite3.Connection | None = None
 _LISTS_INITIALIZED = False
 
 
@@ -132,7 +131,7 @@ def list_clear(list_name: str) -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_lists_classify(query: str) -> Optional[str]:
+def gear0_lists_classify(query: str) -> str | None:
     """Classify query into a list handler name, or None."""
     low = query.strip().lower()
 
@@ -146,7 +145,7 @@ def gear0_lists_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_lists_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_lists_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Lists handler."""
     try:
         if handler == "list_add":
@@ -178,10 +177,10 @@ def gear0_lists_execute(handler: str, query: str, dry_run: bool = False) -> Opti
 
 
 __all__ = [
-    "list_add_items",
-    "list_toggle_item",
-    "list_show",
-    "list_clear",
     "gear0_lists_classify",
     "gear0_lists_execute",
+    "list_add_items",
+    "list_clear",
+    "list_show",
+    "list_toggle_item",
 ]

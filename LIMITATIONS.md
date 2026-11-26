@@ -1,4 +1,4 @@
-# Known Limitations & Honest Project Boundaries (`macubuntu` v4.4)
+# Known Limitations & Honest Project Boundaries (`macubuntu` v4.5)
 
 `macubuntu` makes Ubuntu 26.04 LTS look, feel, sound, and operate as close to macOS + Apple Intelligence as open-source Linux engineering permits—without compromising your OS security or Apple ID.
 
@@ -40,9 +40,9 @@ Trustworthy software is explicit about what it **cannot** do. This document draw
 - **Mitigation:** Stage 00 (`./install.sh --locale`) explicitly audits your locale and warns when `at-spi2-core.mo` is missing. Celina's `wayland_gui` perception resolves canonical integer AT-SPI2 role enums (`Atspi.role_get_name`) rather than localized strings so GUI automation never degrades silently.
 
 ### Hardware Video Acceleration (VA-API), Secure Boot MOK & Suspend-Then-Hibernate
-- Older GPUs or missing VA-API codecs can stall Firefox hardware decode; Stage 20 runs `vainfo` and automatically falls back to software decode (`apply-safari-theme.py --disable-vaapi`).
-- **UEFI Secure Boot (Ubuntu 26.04 Default):** 12 of 13 stages load zero unsigned modules and never require disabling Secure Boot or TPM 2.0. Only Stage 40's optional `v4l2loopback-dkms` (Continuity Camera `/dev/video10`) requires enrolling Ubuntu's local DKMS MOK once via `./tools/enroll-mok.sh` (reboot → Enroll MOK → `./tools/enroll-mok.sh --verify`).
-- **Single-Node Agent Scope (Cross-Device Actuation is v5):** In v4.4, Celina orchestrates actions on your local Ubuntu desktop; cross-device workflows use human-operated Tier A tools (`LocalSend`, `GSConnect`, `Deskflow`, `Syncthing`). Automated multi-device gRPC orchestration with mTLS attestation is scoped to v5 (see [`docs/v5-roadmap-cross-device-actuation.md`](docs/v5-roadmap-cross-device-actuation.md)).
+- Older GPUs or missing VA-API codecs can stall Firefox hardware decode; **Stage 50** runs `vainfo` and automatically falls back to software decode (`apply-safari-theme.py --disable-vaapi`).
+- **UEFI Secure Boot (Ubuntu 26.04 Default):** All stages load zero unsigned modules and never require disabling Secure Boot or TPM 2.0. Optional `v4l2loopback-dkms` (Continuity Camera `/dev/video10`) requires enrolling Ubuntu's local DKMS MOK once via `./tools/enroll-mok.sh` (reboot → Enroll MOK → `./tools/enroll-mok.sh --verify`).
+- **Single-Node Agent Scope (Cross-Device Actuation is v5):** In v4.5, Celina orchestrates actions on your local Ubuntu desktop; cross-device workflows use human-operated Tier A tools (`LocalSend`, `GSConnect`, `Deskflow`, `Syncthing`). Automated multi-device gRPC orchestration with mTLS attestation is scoped to v5 (see [`docs/v5-roadmap-cross-device-actuation.md`](docs/v5-roadmap-cross-device-actuation.md)).
 - Offline cutoff: local model frozen at training date; live data requires opt-in web_comms.
 - `suspend-then-hibernate` requires **on-disk swap >= RAM + ZRAM** AND (if LUKS-encrypted) a non-ephemeral `/etc/crypttab` + configured `initramfs` `resume=`. On pure-ZRAM or unconfigured LUKS hosts, Stage 50 intentionally disables hibernation (`sleep-instant-suspend.conf`) so closing the lid never fails to sleep.
 
@@ -85,15 +85,14 @@ Trustworthy software is explicit about what it **cannot** do. This document draw
    ./install.sh --doctor
    ./install.sh --locale
    ./tools/enroll-mok.sh --dry-run               # Check UEFI Secure Boot & DKMS MOK for v4l2loopback
-   celina capabilities --audit                   # Validate 99-tool OS capability manifest (92 offline / 7 web-gated, 0 Shadow-AI drift)
+   celina capabilities --audit                   # Validate 106-tool OS capability manifest (evolved from 99-tool in v4.4; 64 Tier-1 auto, 42 Tier-2 approval, 0 Shadow-AI violations)
    celina evidence verify                        # Verify SHA-256 hash chain across ~/.local/share/celina/evidence/ledger.jsonl (+ fail-closed anchor)
    celina evidence export ~/celina-audit.jsonl   # Export tamper-evident JSONL audit bundle + .sha256
    ```
 
 ---
 
-## v4.4.0 Audit Storage & Verification Scope Notes
+## v4.5.0 Audit Storage & Verification Scope Notes
 
 - **Evidence Ledger Storage Format:** Celina stores its tamper-evident Tier-2 audit trail as an **append-only SHA-256 hash-chained JSONL file** (`~/.local/share/celina/evidence/ledger.jsonl`, mode `0600`) paired with an external fail-closed anchor (`~/.config/celina/evidence_anchors/<sha>.anchor`, mode `0600`) — strictly separate from SQLite `memory.db` (not a SQLite `evidence.db` file). Deleting, truncating, or tampering with `ledger.jsonl` fails closed on startup (`EvidenceIntegrityError`).
-- **Statically vs. Live-Verified Subsystems in `v4.4.0`:** Live Linux kernel Landlock ABI 2 enforcement, `systemd-analyze security`, Tier-2 gating, evidence hash-chain tamper & deletion detection, 3-leg hybrid memory, 50W+50R SQLite WAL concurrency, `TaskGraph` crash recovery, Gear 0 AST math, offline guards, and `macos_glue` cross-tool contracts are executed and verified in the automated 24-suite CI harness (`217/217` passing). Five desktop-hardware/session-dependent checks — **live microphone Whisper STT**, **live LibreOffice UNO/GUI rendering**, **live AT-SPI desktop button click**, **live `bwrap` container escape**, and **live multi-UID cross-session D-Bus calls** — are verified statically and via unit tests in `v4.4.0` and require a full desktop VM (scheduled for automated desktop-VM CI in `v4.5`).
-
+- **Statically vs. Live-Verified Subsystems in `v4.5.0`:** Live Linux kernel Landlock ABI 2 enforcement, `systemd-analyze security`, Tier-2 gating, evidence hash-chain tamper & deletion detection, 3-leg hybrid memory, 50W+50R SQLite WAL concurrency, `TaskGraph` crash recovery, Gear 0 AST math, offline guards, and `macos_glue` cross-tool contracts are executed and verified in the automated CI harness (**687 passing / 5 skipped**). Five desktop-hardware/session-dependent checks — **live microphone Whisper STT**, **live LibreOffice UNO/GUI rendering**, **live AT-SPI desktop button click**, **live `bwrap` container escape**, and **live multi-UID cross-session D-Bus calls** — are verified statically and via unit tests in `v4.5.0` and require a full desktop VM (scheduled for automated desktop-VM CI in `v4.6`).

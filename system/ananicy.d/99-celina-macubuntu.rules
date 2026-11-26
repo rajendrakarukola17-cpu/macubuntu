@@ -1,0 +1,22 @@
+# Tier 1: User-Interactive (Compositor, Audio, Input, Spotlight/Search)
+{"name": "gnome-shell",       "nice": -5,  "ioclass": "best-effort", "ionice": 0, "oom_score_adj": -500}
+{"name": "pipewire",          "nice": -10, "ioclass": "realtime",    "ionice": 0, "oom_score_adj": -500}
+{"name": "wireplumber",       "nice": -8,  "ioclass": "best-effort", "ionice": 0, "oom_score_adj": -500}
+{"name": "keyd",              "nice": -10, "ioclass": "best-effort", "ionice": 0, "oom_score_adj": -500}
+{"name": "celina-search",     "nice": -5,  "ioclass": "best-effort", "ionice": 0, "oom_score_adj": -400}
+
+# Tier 2: Celina Core Control Plane (Exempt from background throttling)
+{"name": "celina-daemon",     "nice": -2,  "ioclass": "best-effort", "ionice": 1, "oom_score_adj": -200}
+{"name": "celina-dbus",       "nice": -2,  "ioclass": "best-effort", "ionice": 1, "oom_score_adj": -200}
+{"name": "celina-router",     "nice": -2,  "ioclass": "best-effort", "ionice": 1, "oom_score_adj": -200}
+{"name": "celina-autonomy",   "nice": -2,  "ioclass": "best-effort", "ionice": 1, "oom_score_adj": -200}
+{"name": "celina-ocr",        "nice": 0,   "ioclass": "best-effort", "ionice": 2}
+
+# Tier 3: Local LLM Inference (High throughput when idle, yields cleanly to UI)
+{"name": "ollama",            "nice": 5,   "ioclass": "best-effort", "ionice": 5, "oom_score_adj": 300}
+{"name": "ollama_llama_server","nice": 5,  "ioclass": "best-effort", "ionice": 5, "oom_score_adj": 300}
+{"name": "llama-server",      "nice": 5,   "ioclass": "best-effort", "ionice": 5, "oom_score_adj": 300}
+
+# Tier 4: Zero-Trust Sandboxes & Background Indexing (Strictly clamped)
+{"name": "bwrap",             "nice": 12,  "ioclass": "idle",        "ionice": 7, "oom_score_adj": 600}
+{"name": "tracker-miner-fs-3","nice": 19,  "ioclass": "idle",        "ionice": 7, "oom_score_adj": 500}

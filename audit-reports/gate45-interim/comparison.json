@@ -1,0 +1,19 @@
+{
+  "baseline_passed": 15,
+  "candidate_passed": 17,
+  "task_count": 24,
+  "comparison": {
+    "delta": 0.08333333333333333,
+    "ci_low": 0.0,
+    "ci_high": 0.20833333333333334,
+    "improved": true,
+    "statistically_significant": false,
+    "security_regression": false,
+    "approved_for_promotion": false
+  },
+  "improved_tasks": [
+    "config_integrity-18",
+    "tool_args-15"
+  ],
+  "regressed_tasks": []
+}

@@ -1,15 +1,13 @@
-"""
-Celina AI (Celly) - Structured Subprocess Runner (Phase 2)
+"""Celina AI (Celly) - Structured Subprocess Runner (Phase 2)
 Eliminates false-success string parsing by returning a structured CommandResult
 with returncode, stdout, stderr, and timeout status for every OS invocation.
 """
 
 from __future__ import annotations
 
-import shutil
 import subprocess
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Mapping, Optional, Sequence
 
 
 @dataclass(frozen=True)
@@ -33,20 +31,13 @@ def run_command(
     cmd: Sequence[str],
     *,
     timeout: float = 5.0,
-    env: Optional[Mapping[str, str]] = None,
-    cwd: Optional[str] = None,
+    env: Mapping[str, str] | None = None,
+    cwd: str | None = None,
 ) -> CommandResult:
     """Safely executes a command list without shell=True and returns CommandResult."""
     cmd_list = [str(c) for c in cmd]
     if not cmd_list:
         return CommandResult(returncode=2, stdout="", stderr="Empty command.", command=())
-    if not shutil.which(cmd_list[0]):
-        return CommandResult(
-            returncode=127,
-            stdout="",
-            stderr=f"Required utility '{cmd_list[0]}' not found.",
-            command=tuple(cmd_list),
-        )
     try:
         proc = subprocess.run(
             cmd_list,

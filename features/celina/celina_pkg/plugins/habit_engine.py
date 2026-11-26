@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Plugin #2: Local Habit & Frequency Engine (Update 19)
+"""Celina AI (Celly) - Plugin #2: Local Habit & Frequency Engine (Update 19)
 
 Deterministic statistical tracking of user commands, time of day, and day of week.
 Stored in SQLite. Zero tokens, zero cloud, sub-5ms lookups.
@@ -10,12 +9,11 @@ Used for proactive suggestions: "Start Focus Mode?" at your usual time.
 from __future__ import annotations
 
 import datetime
-import json
 import os
+import re
 import sqlite3
-from collections import Counter
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 _DB_PATH = Path(os.environ.get("CELINA_HABIT_DB", Path.home() / ".celina" / "storage" / "shared" / "habits.db"))
 
@@ -55,8 +53,8 @@ def _conn() -> sqlite3.Connection:
         )
     """)
 
-    conn.commit()
-    return conn
+    c.commit()
+    return c
 
 
 def log_command(command: str) -> None:
@@ -68,8 +66,9 @@ def log_command(command: str) -> None:
             "INSERT INTO command_log (command, hour, weekday, date, ts) VALUES (?, ?, ?, ?, ?)",
             (command, now.hour, now.weekday(), now.strftime("%Y-%m-%d"), now.isoformat()),
         )
-        conn.commit()
+        c.commit()
         _update_pattern(c, command, now.hour, now.weekday())
+        c.commit()
         c.close()
     except Exception:
         pass
@@ -123,7 +122,7 @@ def _weekday_mode(c: sqlite3.Connection, command: str) -> list[tuple[int, int]]:
     return [(r[0], r[1]) for r in rows]
 
 
-def get_habit_pattern(command: str) -> Optional[dict[str, Any]]:
+def get_habit_pattern(command: str) -> dict[str, Any] | None:
     """Get the learned habit pattern for a command."""
     try:
         c = _conn()
@@ -147,8 +146,7 @@ def get_habit_pattern(command: str) -> Optional[dict[str, Any]]:
 
 
 def get_proactive_suggestions() -> list[dict[str, Any]]:
-    """
-    Return commands that are likely to be needed right now based on time/weekday patterns.
+    """Return commands that are likely to be needed right now based on time/weekday patterns.
     Only returns patterns with confidence >= 0.5 (5+ occurrences).
     """
     try:
@@ -188,7 +186,7 @@ def get_all_patterns() -> list[dict[str, Any]]:
     try:
         c = _conn()
         rows = c.execute(
-            "SELECT command, total_count, preferred_hour, preferred_weekday, confidence, last_seen FROM habit_patterns ORDER BY total_count DESC"
+            "SELECT command, total_count, preferred_hour, preferred_weekday, confidence, last_seen FROM habit_patterns ORDER BY total_count DESC",
         ).fetchall()
         c.close()
         return [
@@ -207,12 +205,12 @@ def get_all_patterns() -> list[dict[str, Any]]:
 
 
 __all__ = [
-    "log_command",
-    "get_habit_pattern",
-    "get_proactive_suggestions",
-    "get_all_patterns",
     "gear0_habit_classify",
     "gear0_habit_execute",
+    "get_all_patterns",
+    "get_habit_pattern",
+    "get_proactive_suggestions",
+    "log_command",
 ]
 
 
@@ -220,17 +218,17 @@ __all__ = [
 # Gear 0 Plugin #2 dispatch: Local Habit & Frequency Engine
 # ---------------------------------------------------------------------------
 
-_HABIT_QUERY_RE = __import__("re").compile(
+_HABIT_QUERY_RE = re.compile(
     r"^(?:please\s+)?(?:habit|habits|routine\s+pattern|what\s+do\s+i\s+usually)\??$",
-    __import__("re").IGNORECASE,
+    re.IGNORECASE,
 )
-_HABIT_SUGGEST_RE = __import__("re").compile(
+_HABIT_SUGGEST_RE = re.compile(
     r"^(?:please\s+)?(?:suggest|proactive|what\s+should\s+i\s+do|predict)\??$",
-    __import__("re").IGNORECASE,
+    re.IGNORECASE,
 )
 
 
-def gear0_habit_classify(query: str) -> Optional[str]:
+def gear0_habit_classify(query: str) -> str | None:
     """Classify query into a habit handler name, or None."""
     low = query.strip().lower()
     if _HABIT_QUERY_RE.match(low):
@@ -240,7 +238,7 @@ def gear0_habit_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_habit_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_habit_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0 Plugin #2 habit handler."""
     try:
         if handler == "get_all_patterns":

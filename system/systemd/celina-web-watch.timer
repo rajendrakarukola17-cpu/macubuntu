@@ -1,0 +1,20 @@
+[Unit]
+Description=Run Celina Active Web Watching periodically
+Documentation=file:///home/user/macubuntu/celina/tools/web_watch.py
+Requires=network-online.target
+After=network-online.target
+
+[Timer]
+# Default: every 2 hours. Override per-machine via /etc/systemd/system/
+# celina-web-watch.timer.d/override.conf if desired.
+OnBootSec=5min
+OnUnitActiveSec=2h
+# Only run on AC power (laptop-friendly): skip when on battery.
+# ConditionACPower=true requires systemd 255+; graceful if unsupported.
+ConditionACPower=true
+Persistent=true
+# If the machine was off at the scheduled time, run soon after boot.
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

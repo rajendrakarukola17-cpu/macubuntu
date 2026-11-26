@@ -1,18 +1,16 @@
-"""
-Celina AI (Celly) - Gear 0 Network (Update 19)
+"""Celina AI (Celly) - Gear 0 Network (Update 19)
 
 Local network status queries — DNS, connectivity, interfaces.
+
 Examples:
   - "Is my internet up?"
   - "What's my DNS?"
+
 """
 
 from __future__ import annotations
 
-import shutil
 import socket
-import subprocess
-from typing import Optional
 
 _CHECK_INTERNET_RE = __import__("re").compile(
     r"^(?:please\s+)?(?:is\s+my\s+)?internet\s+(?:up|down|working|connected)\??$",
@@ -64,7 +62,7 @@ def network_dns() -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_network_classify(query: str) -> Optional[str]:
+def gear0_network_classify(query: str) -> str | None:
     """Classify query into a network handler name, or None."""
     low = query.strip().lower()
     if _CHECK_INTERNET_RE.match(low):
@@ -74,7 +72,7 @@ def gear0_network_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_network_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_network_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Network handler."""
     try:
         if handler == "internet":
@@ -87,8 +85,8 @@ def gear0_network_execute(handler: str, query: str, dry_run: bool = False) -> Op
 
 
 __all__ = [
-    "network_internet_up",
-    "network_dns",
     "gear0_network_classify",
     "gear0_network_execute",
+    "network_dns",
+    "network_internet_up",
 ]

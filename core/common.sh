@@ -14,12 +14,47 @@ _MACUBUNTU_COMMON_LOADED=1
 
 umask 077
 
+# Capture the real (non-root) invoking user so privilege-dropping wrappers can
+# always return to the desktop user, even if a stage is somehow re-entered as root.
+REAL_USER="${SUDO_USER:-${USER:-}}"
+export REAL_USER
+
+# P2-01: Resolve the actual target user (the human, not root) once at startup.
+# When the installer runs under sudo, SUDO_USER is the human; PKEXEC_UID covers
+# polkit elevation; otherwise we're already the target user.
+if [[ -n "${SUDO_USER:-}" ]]; then
+    TARGET_USER="$SUDO_USER"
+    TARGET_UID="$(id -u "$TARGET_USER" 2>/dev/null || echo "")"
+    TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6 || true)"
+elif [[ -n "${PKEXEC_UID:-}" ]]; then
+    TARGET_USER="$(id -un "$PKEXEC_UID" 2>/dev/null || echo "")"
+    TARGET_UID="$PKEXEC_UID"
+    TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6 || true)"
+else
+    TARGET_USER="$(id -un)"
+    TARGET_UID="$(id -u)"
+    TARGET_HOME="$HOME"
+fi
+export TARGET_USER TARGET_UID TARGET_HOME
+
+# Validate that we resolved a real user
+if [[ -z "$TARGET_USER" || -z "$TARGET_UID" || -z "$TARGET_HOME" ]]; then
+    echo "❌ Cannot resolve target user (TARGET_USER='$TARGET_USER' UID='$TARGET_UID' HOME='$TARGET_HOME')" >&2
+    exit 1
+fi
+if [[ ! -d "$TARGET_HOME" ]]; then
+    echo "❌ Target user home directory does not exist: $TARGET_HOME" >&2
+    exit 1
+fi
+
 REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 LOCKFILE="${LOCKFILE:-$REPO_DIR/system/download-locks.sha256}"
 # shellcheck source=core/detect.sh
 source "$REPO_DIR/core/detect.sh"
 
-export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+# P2-05: PATH append (not prepend) to prevent user-writable dirs from shadowing
+# system binaries when running under sudo. User binaries come AFTER system dirs.
+export PATH="$PATH:$HOME/.local/bin:$HOME/.cargo/bin"
 
 # --- Strict, Eval-Free Profile Loader ---
 _assign_profile_kv() {
@@ -36,13 +71,26 @@ _assign_profile_kv() {
         INSTALL_THIRDPARTY|INSTALL_RUST_TOOLS|INSTALL_OPTIONAL|\
         ENABLE_EXPERIMENTAL_UINPUT|ENABLE_BIOMETRICS|\
         ENABLE_AIRPLAY_VIDEO|ENABLE_ANDROID_MIRROR|ENABLE_SYNCTHING|\
-        ENABLE_FLATSEAL|ENABLE_UNIVERSAL_CONTROL|ENABLE_BATTERY_CHARGE_LIMIT|\
+        ENABLE_FLATSEAL|ENABLE_UNIVERSAL_CONTROL|ENABLE_BATTERY_CHARGE_LIMIT|ENABLE_PHONE_HFP|\
         ENABLE_WAYLAND_FRACTIONAL_SCALING|ENABLE_VAAPI_GPU_DECODE|\
         ENABLE_NAUTILUS_QUICK_ACTIONS|ENABLE_KEEPASSXC|ENABLE_DISTROBOX|\
         ENABLE_CLIPBOARD_HISTORY|ENABLE_DYNAMIC_APPEARANCE|ENABLE_SAFARI_FIREFOX|\
         ENABLE_MACOS_CMD_KEYS|ENABLE_PERSISTENT_CONTINUITY_CAM|\
         ENABLE_PRO_AUDIO_BLUETOOTH|ENABLE_SAFE_SLEEP|ENABLE_SILENT_BOOT|\
-        REPLACE_DISK_SWAP|ENABLE_ACCESSIBILITY)
+        REPLACE_DISK_SWAP|ENABLE_ACCESSIBILITY|\
+        ENABLE_MGLRU|ENABLE_PRELOAD|ENABLE_FSTRIM|        ENABLE_ANANICY|ENABLE_PSD|ENABLE_FIREFOX_TUNING|ENABLE_TRACKPAD_GESTURES|        ENABLE_QUICK_LOOK|ENABLE_SCREEN_RECORDER|ENABLE_TILING|ENABLE_POWER_CPUFREQ|        ENABLE_TIMESNAP|ENABLE_SESSION_RESTORE|ENABLE_COLOR_PICKER|ENABLE_AMBIENT_LIGHT|        ENABLE_VMTOUCH|ENABLE_JOURNALD_LITE|ENABLE_CELINA_QOS|ENABLE_SHADER_CACHE|        ENABLE_DNS_CACHE|ENABLE_NOATIME|ENABLE_S2IDLE|ENABLE_MIMALLOC|        ENABLE_SNAP_REMOVAL|ENABLE_CPU_MITIGATIONS_OFF|ENABLE_CELINA_AI_SLICE|ENABLE_VM_TUNING|ENABLE_EPP_DYNAMIC|\
+        ENABLE_CELINA_ISLAND_SHELL|ENABLE_PERCEPTUAL_CHOREOGRAPHY|SCX_SCHEDULER|ENABLE_SCHED_EXT|CHOREOGRAPHY_SPEED_FACTOR|\
+        ENABLE_NET_BBR|ENABLE_WIFI_NO_POWERSAVE|ENABLE_TRACKER_CAP|\
+        ENABLE_LOW_LATENCY_KERNEL|LOW_LATENCY_KERNEL_CHOICE|ENABLE_CHROME_OZONE_WAYLAND|ENABLE_BTRFS_SNAPPER|ENABLE_NATIVE_WAYLAND_BLUR|ENABLE_EASYEFFECTS|ENABLE_PARENTAL_CONTROLS|ENABLE_DNS_FILTER|ENABLE_VOICE_PIPELINE_UPGRADE|\
+                ENABLE_S0IX_SLEEP|ENABLE_HIDPI_FONTS|ENABLE_WAYLAND_TEXT_INJECTION|ENABLE_VAULT_AUDIT|ENABLE_SELF_HEAL|\
+        ENABLE_MCP_GUARD|ENABLE_BITEMPORAL_KG|ENABLE_BLAST_RADIUS|ENABLE_MICRO_AFFECT|\
+        ZRAM_SIZE_EXPR|SWAPPINESS|VFS_CACHE_PRESSURE|DIRTY_BG_BYTES|DIRTY_BYTES|\
+        VM_PAGE_CLUSTER|VM_DIRTY_WRITEBACK_CENTISECS|MGLRU_MIN_TTL_MS|VMTOUCH_MAX_MB|\
+        CELINA_COMPRESSION_TIER|CELINA_HEADROOM_ML|CELINA_SLICE_HIGH|CELINA_SLICE_MAX|CELINA_CPU_WEIGHT|CELINA_IO_WEIGHT|\
+        BLUR_SIGMA|BLUR_APPGRID|\
+        LLM_MODELS_MAX|LLM_SLEEP_IDLE_SECONDS|LLM_PARALLEL_SLOTS|LLM_KV_CACHE_TYPE|LLM_CTX_DEFAULT|\
+        SERIALIZE_HEAVY_MODELS|ENABLE_LADYBUG_GRAPH|ENABLE_GLINER_SLOTS|KEEP_VOICE_HOT|\
+        ENABLE_ASTRA_1FPS_BUFFER|ENABLE_LIBKRUN_SANDBOX|SPOTLIGHT_BATCH_SIZE|RAM_PSI_EVICT_THRESHOLD)
             # Only set when not already overridden by caller environment
             if [[ -z "${!key+x}" ]]; then
                 printf -v "$key" '%s' "$val"
@@ -147,12 +195,13 @@ init_defaults() {
     export INSTALL_RUST_TOOLS="${INSTALL_RUST_TOOLS:-false}"
     export ENABLE_EXPERIMENTAL_UINPUT="${ENABLE_EXPERIMENTAL_UINPUT:-false}"
     export ENABLE_BIOMETRICS="${ENABLE_BIOMETRICS:-false}"
-    export ENABLE_AIRPLAY_VIDEO="${ENABLE_AIRPLAY_VIDEO:-true}"
-    export ENABLE_ANDROID_MIRROR="${ENABLE_ANDROID_MIRROR:-true}"
-    export ENABLE_SYNCTHING="${ENABLE_SYNCTHING:-true}"
+    export ENABLE_AIRPLAY_VIDEO="${ENABLE_AIRPLAY_VIDEO:-false}"
+    export ENABLE_ANDROID_MIRROR="${ENABLE_ANDROID_MIRROR:-false}"
+    export ENABLE_SYNCTHING="${ENABLE_SYNCTHING:-false}"
     export ENABLE_FLATSEAL="${ENABLE_FLATSEAL:-true}"
-    export ENABLE_UNIVERSAL_CONTROL="${ENABLE_UNIVERSAL_CONTROL:-true}"
+    export ENABLE_UNIVERSAL_CONTROL="${ENABLE_UNIVERSAL_CONTROL:-false}"
     export ENABLE_BATTERY_CHARGE_LIMIT="${ENABLE_BATTERY_CHARGE_LIMIT:-true}"
+    export ENABLE_PHONE_HFP="${ENABLE_PHONE_HFP:-false}"
     export ENABLE_WAYLAND_FRACTIONAL_SCALING="${ENABLE_WAYLAND_FRACTIONAL_SCALING:-true}"
     export ENABLE_VAAPI_GPU_DECODE="${ENABLE_VAAPI_GPU_DECODE:-true}"
     export ENABLE_NAUTILUS_QUICK_ACTIONS="${ENABLE_NAUTILUS_QUICK_ACTIONS:-true}"
@@ -168,6 +217,61 @@ init_defaults() {
     export ENABLE_SILENT_BOOT="${ENABLE_SILENT_BOOT:-false}"
     export REPLACE_DISK_SWAP="${REPLACE_DISK_SWAP:-false}"
     export ENABLE_ACCESSIBILITY="${ENABLE_ACCESSIBILITY:-false}"
+    export ENABLE_MGLRU="${ENABLE_MGLRU:-true}"
+    export ENABLE_PRELOAD="${ENABLE_PRELOAD:-true}"
+    export ENABLE_FSTRIM="${ENABLE_FSTRIM:-true}"
+    export ENABLE_ANANICY="${ENABLE_ANANICY:-false}"
+    export ENABLE_PSD="${ENABLE_PSD:-auto}"
+    export ENABLE_FIREFOX_TUNING="${ENABLE_FIREFOX_TUNING:-true}"
+    export ENABLE_TRACKPAD_GESTURES="${ENABLE_TRACKPAD_GESTURES:-false}"
+    export ENABLE_QUICK_LOOK="${ENABLE_QUICK_LOOK:-true}"
+    export ENABLE_SCREEN_RECORDER="${ENABLE_SCREEN_RECORDER:-false}"
+    export ENABLE_TILING="${ENABLE_TILING:-true}"
+    export ENABLE_POWER_CPUFREQ="${ENABLE_POWER_CPUFREQ:-false}"
+    export ENABLE_TIMESNAP="${ENABLE_TIMESNAP:-false}"
+    export ENABLE_SESSION_RESTORE="${ENABLE_SESSION_RESTORE:-false}"
+    export ENABLE_COLOR_PICKER="${ENABLE_COLOR_PICKER:-false}"
+    export ENABLE_AMBIENT_LIGHT="${ENABLE_AMBIENT_LIGHT:-false}"
+    export ENABLE_VM_TUNING="${ENABLE_VM_TUNING:-true}"
+    export ENABLE_SHADER_CACHE="${ENABLE_SHADER_CACHE:-true}"
+    export ENABLE_DNS_CACHE="${ENABLE_DNS_CACHE:-true}"
+    export ENABLE_VMTOUCH="${ENABLE_VMTOUCH:-false}"
+    export ENABLE_JOURNALD_LITE="${ENABLE_JOURNALD_LITE:-false}"
+    export ENABLE_CELINA_QOS="${ENABLE_CELINA_QOS:-true}"
+    export ENABLE_NOATIME="${ENABLE_NOATIME:-false}"
+    export ENABLE_S2IDLE="${ENABLE_S2IDLE:-false}"
+    export ENABLE_MIMALLOC="${ENABLE_MIMALLOC:-false}"
+    export ENABLE_SNAP_REMOVAL="${ENABLE_SNAP_REMOVAL:-true}"
+    export ENABLE_CPU_MITIGATIONS_OFF="${ENABLE_CPU_MITIGATIONS_OFF:-true}"
+    export ENABLE_CELINA_AI_SLICE="${ENABLE_CELINA_AI_SLICE:-true}"
+    export ENABLE_EPP_DYNAMIC="${ENABLE_EPP_DYNAMIC:-true}"
+    export ENABLE_CELINA_ISLAND_SHELL="${ENABLE_CELINA_ISLAND_SHELL:-true}"
+    export ENABLE_PERCEPTUAL_CHOREOGRAPHY="${ENABLE_PERCEPTUAL_CHOREOGRAPHY:-true}"
+    export SCX_SCHEDULER="${SCX_SCHEDULER:-scx_bpfland}"
+    export ENABLE_SCHED_EXT="${ENABLE_SCHED_EXT:-true}"
+    export CHOREOGRAPHY_SPEED_FACTOR="${CHOREOGRAPHY_SPEED_FACTOR:-0.65}"
+    export ENABLE_NET_BBR="${ENABLE_NET_BBR:-true}"
+    export ENABLE_WIFI_NO_POWERSAVE="${ENABLE_WIFI_NO_POWERSAVE:-true}"
+    export ENABLE_TRACKER_CAP="${ENABLE_TRACKER_CAP:-true}"
+    export ENABLE_BTRFS_SNAPPER="${ENABLE_BTRFS_SNAPPER:-false}"
+    export ENABLE_LOW_LATENCY_KERNEL="${ENABLE_LOW_LATENCY_KERNEL:-false}"
+    export LOW_LATENCY_KERNEL_CHOICE="${LOW_LATENCY_KERNEL_CHOICE:-xanmod}"
+    export ENABLE_CHROME_OZONE_WAYLAND="${ENABLE_CHROME_OZONE_WAYLAND:-false}"
+    export ENABLE_NATIVE_WAYLAND_BLUR="${ENABLE_NATIVE_WAYLAND_BLUR:-false}"
+    export ENABLE_EASYEFFECTS="${ENABLE_EASYEFFECTS:-false}"
+    export ENABLE_PARENTAL_CONTROLS="${ENABLE_PARENTAL_CONTROLS:-false}"
+    export ENABLE_DNS_FILTER="${ENABLE_DNS_FILTER:-false}"
+    export ENABLE_VOICE_PIPELINE_UPGRADE="${ENABLE_VOICE_PIPELINE_UPGRADE:-false}"
+    export ENABLE_S0IX_SLEEP="${ENABLE_S0IX_SLEEP:-false}"
+    export ENABLE_HIDPI_FONTS="${ENABLE_HIDPI_FONTS:-false}"
+    export ENABLE_WAYLAND_TEXT_INJECTION="${ENABLE_WAYLAND_TEXT_INJECTION:-false}"
+    export ENABLE_VAULT_AUDIT="${ENABLE_VAULT_AUDIT:-false}"
+    export ENABLE_SELF_HEAL="${ENABLE_SELF_HEAL:-false}"
+    export ENABLE_MCP_GUARD="${ENABLE_MCP_GUARD:-false}"
+    export ENABLE_BITEMPORAL_KG="${ENABLE_BITEMPORAL_KG:-false}"
+    export ENABLE_BLAST_RADIUS="${ENABLE_BLAST_RADIUS:-false}"
+    export ENABLE_MICRO_AFFECT="${ENABLE_MICRO_AFFECT:-false}"
+
 
     # Built-in conflict guardrails (prevents overlapping islands & dead shortcuts)
     if is_true "$ENABLE_CELINA" && is_true "$ENABLE_DYNAMIC_ISLAND_EXT"; then
@@ -180,7 +284,167 @@ init_defaults() {
     fi
 }
 
-# --- Shared Cross-Stage State (Never Writes to $HOME During DRY_RUN=1) ---
+# --- Rollback Snapshot Infrastructure ---
+# Pre-change snapshots of irreversible system files for emergency rollback.
+# Snapshots live outside $WORKDIR (which is mktemp'd and cleaned) so they
+# survive installer restarts. Each snapshot is byte-identical: path, mode,
+# ownership, and SHA-256 are recorded in a manifest.json.
+
+SNAPSHOT_ROOT="${SNAPSHOT_ROOT:-/var/lib/macubuntu/snapshots}"
+SNAPSHOT_MAX="${SNAPSHOT_MAX:-20}"
+export SNAPSHOT_ROOT SNAPSHOT_MAX
+
+snapshot_file() {
+    local src="$1"
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        echo "      [dry-run] snapshot $src"
+        return 0
+    fi
+    if [[ -z "$src" ]]; then
+        echo "❌ snapshot_file: empty source path" >&2
+        return 1
+    fi
+
+    init_runtime_state  # ensures RUN_SNAP_ID + SNAPSHOT_DIR are set
+    local snap_id="${RUN_SNAP_ID}"
+    local snap_dir="$SNAPSHOT_ROOT/$snap_id"
+
+    run sudo install -d -m 700 "$SNAPSHOT_ROOT"
+    run sudo install -d -m 700 "$snap_dir"
+
+    local manifest="$snap_dir/manifest.json"
+    # Create manifest if missing (first snapshot of this run)
+    if [[ ! -f "$manifest" ]]; then
+        run sudo python3 - "$manifest" "$snap_id" <<'PYEOF'
+import json, sys, datetime
+mfile, snap_id = sys.argv[1], sys.argv[2]
+m = {"id": snap_id, "created": datetime.datetime.now(datetime.timezone.utc).isoformat(), "files": []}
+with open(mfile, "w") as fh:
+    json.dump(m, fh, indent=2)
+PYEOF
+    fi
+
+    if [[ ! -e "$src" ]]; then
+        # Brand-new file that doesn't exist yet — record existed: false so
+        # rollback_all() can clean it up after the run creates it.
+        run sudo python3 - "$manifest" "$src" <<'PYEOF'
+import json, sys
+mfile, path = sys.argv[1], sys.argv[2]
+m = json.load(open(mfile))
+# Keep the FIRST entry for any path (true pre-run state is never overwritten).
+already = any(f.get("path") == path for f in m.get("files", []))
+if not already:
+    m["files"].append({"path": path, "existed": False})
+    with open(mfile, "w") as fh:
+        json.dump(m, fh, indent=2)
+PYEOF
+        echo "      Recorded new-file placeholder $src (snap $snap_id)"
+        return 0
+    fi
+
+    # Check if we already have a snapshot entry for this path (keep FIRST only).
+    local already_snap
+    already_snap="$(run sudo python3 - "$manifest" "$src" <<'PYEOF'
+import json, sys
+mfile, path = sys.argv[1], sys.argv[2]
+m = json.load(open(mfile))
+print("true" if any(f.get("path") == path for f in m.get("files", [])) else "false")
+PYEOF
+)"
+    if [[ "$already_snap" == "true" ]]; then
+        echo "      Already snapshotted $src (keeping first entry)"
+        return 0
+    fi
+
+    local dest_dir="$snap_dir$(dirname "$src")"
+    run sudo install -d -m 700 "$dest_dir"
+    local dest="$dest_dir/$(basename "$src")"
+    run sudo install -m "$(stat -c '%a' "$src")" -o "$(stat -c '%u' "$src")" -g "$(stat -c '%g' "$src")" "$src" "$dest" 2>/dev/null || { echo "❌ _snapshot_add: failed to snapshot $src" >&2; return 1; }
+
+    run sudo python3 - "$manifest" "$src" "$dest" <<'PYEOF'
+import hashlib, json, sys, os
+mfile, src_path, dest_path = sys.argv[1], sys.argv[2], sys.argv[3]
+m = json.load(open(mfile))
+sha = hashlib.sha256(open(src_path, 'rb').read()).hexdigest()
+mode = oct(os.stat(src_path).st_mode & 0o777)[2:].zfill(4)
+uid = os.stat(src_path).st_uid
+gid = os.stat(src_path).st_gid
+m["files"].append({
+    "path": src_path,
+    "existed": True,
+    "sha256": sha,
+    "mode": mode,
+    "uid": uid,
+    "gid": gid,
+})
+with open(mfile, "w") as fh:
+    json.dump(m, fh, indent=2)
+PYEOF
+    echo "      Snapshotted $src (snap $snap_id)"
+}
+
+_snapshot_prune() {
+    run sudo bash -c "ls -1dt '$SNAPSHOT_ROOT'/* 2>/dev/null | tail -n +$((SNAPSHOT_MAX+1)) | xargs -r rm -rf"
+}
+
+rollback_all() {
+    local snap_id="${1:-$RUN_SNAP_ID}"
+    if [[ -z "$snap_id" ]]; then
+        snap_id="$(ls -1dt "$SNAPSHOT_ROOT"/* 2>/dev/null | head -1 | xargs -r basename)"
+    fi
+    [[ -n "$snap_id" && -f "$SNAPSHOT_ROOT/$snap_id/manifest.json" ]] || { echo "❌ No snapshot to roll back"; return 1; }
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then
+        echo "      [dry-run] rollback $snap_id"
+        return 0
+    fi
+
+    run sudo python3 - "$SNAPSHOT_ROOT/$snap_id" <<'PYEOF'
+import hashlib, json, os, shutil, sys
+snap = sys.argv[1]
+manifest_path = os.path.join(snap, "manifest.json")
+if not os.path.exists(manifest_path):
+    print("❌ No manifest in " + snap, file=sys.stderr)
+    sys.exit(1)
+m = json.load(open(manifest_path))
+
+# Iterate in reverse so later-created files are removed before earlier-restored ones.
+for f in reversed(m.get("files", [])):
+    p = f["path"]
+    existed = f.get("existed", True)
+
+    if not existed:
+        # Brand-new file created during the run — unlink it if present.
+        if os.path.exists(p):
+            try:
+                os.unlink(p)
+                print("removed " + p)
+            except OSError as exc:
+                print("⚠️  could not remove " + p + ": " + str(exc), file=sys.stderr)
+        continue
+
+    # Pre-existing file — restore from backup atomically with original perms.
+    src = os.path.join(snap, p.lstrip("/"))
+    if not os.path.exists(src):
+        print("⚠️  no backup for " + p + ", skipping", file=sys.stderr)
+        continue
+
+    # Verify SHA-256 integrity of the backup before restoring.
+    h = hashlib.sha256(open(src, "rb").read()).hexdigest()
+    if h != f.get("sha256", ""):
+        print("❌ snapshot corrupt for " + p + " (sha256 mismatch)", file=sys.stderr)
+        sys.exit(1)
+
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    shutil.copy2(src, p)
+    try:
+        os.chmod(p, int(f.get("mode", "644"), 8))
+    except (ValueError, OSError):
+        pass
+    print("restored " + p)
+PYEOF
+    echo "      Rollback of $snap_id complete"
+}
+
 init_runtime_state() {
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
         export WORKDIR="${WORKDIR:-/tmp/macubuntu-dryrun-virtual}"
@@ -195,8 +459,15 @@ init_runtime_state() {
     fi
     export MANUAL_FILE="${MANUAL_FILE:-$WORKDIR/manual.list}"
     export FAILED_FILE="${FAILED_FILE:-$WORKDIR/failed.list}"
+    export SNAPSHOT_DIR="${SNAPSHOT_ROOT:-/var/lib/macubuntu/snapshots}"
     touch "$MANUAL_FILE" "$FAILED_FILE"
     chmod 600 "$MANUAL_FILE" "$FAILED_FILE"
+
+    # P5: Per-run transaction snapshot ID — generated once per run so all
+    # snapshot_file() calls during the same run append into the SAME directory.
+    if [[ -z "${RUN_SNAP_ID:-}" ]]; then
+        export RUN_SNAP_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    fi
 }
 
 record_manual() {
@@ -228,6 +499,14 @@ step() {
     echo "  --> $*"
 }
 
+log_info() {
+    echo "  [info] $*"
+}
+
+log_error() {
+    echo "  [error] $*" >&2
+}
+
 # ============================================================================
 # Strict Zero-Side-Effect Dry-Run Wrappers
 # Every filesystem, package, service, or network mutation MUST route here.
@@ -241,11 +520,51 @@ run() {
 }
 
 run_as_user() {
+    local target_user="${TARGET_USER:-${REAL_USER:-${SUDO_USER:-${USER:-}}}}"
+    if [[ -z "$target_user" ]]; then
+        echo "❌ run_as_user: cannot determine target user (TARGET_USER/REAL_USER/SUDO_USER/USER all empty)" >&2
+        return 2
+    fi
+    local target_uid target_home
+    target_uid="$(id -u "$target_user" 2>/dev/null || echo "")"
+    target_home="$(getent passwd "$target_user" 2>/dev/null | cut -d: -f6 || true)"
+    if [[ -z "$target_uid" || -z "$target_home" ]]; then
+        echo "❌ run_as_user: cannot resolve UID/home for user '$target_user'" >&2
+        return 2
+    fi
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-        echo "      [dry-run] (user) $*"
+        echo "      [dry-run] (user:$target_user uid:$target_uid) $*"
         return 0
     fi
-    "$@"
+    # Already running as the target user — invoke directly (no sudo needed / no password prompt).
+    if [[ "$(id -un 2>/dev/null || echo unknown)" == "$target_user" ]]; then
+        "$@"
+        return $?
+    fi
+    # Drop privileges to the target desktop user.
+    # XDG_RUNTIME_DIR and DBUS_SESSION_BUS_ADDRESS are REQUIRED for gsettings/dconf/flatpak/systemctl --user.
+    if command -v runuser >/dev/null 2>&1 && [[ "$(id -un)" == "root" ]]; then
+        runuser -u "$target_user" -- env \
+            HOME="$target_home" \
+            USER="$target_user" \
+            LOGNAME="$target_user" \
+            XDG_RUNTIME_DIR="/run/user/$target_uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$target_uid/bus" \
+            "$@"
+        return $?
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo -u "$target_user" -- env \
+            HOME="$target_home" \
+            USER="$target_user" \
+            LOGNAME="$target_user" \
+            XDG_RUNTIME_DIR="/run/user/$target_uid" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$target_uid/bus" \
+            "$@"
+        return $?
+    else
+        echo "❌ run_as_user: neither runuser nor sudo available to drop privileges to '$target_user'" >&2
+        return 126
+    fi
 }
 
 ensure_dir() {
@@ -284,9 +603,21 @@ write_root_file() {
         cat >/dev/null
         return 0
     fi
-    sudo install -d -m 755 "$(dirname "$path")"
-    sudo tee "$path" >/dev/null
-    sudo chmod "$mode" "$path"
+    snapshot_file "$path"
+    # P5: Create temp file inside $WORKDIR (never inside /etc/ as non-root user)
+    init_runtime_state  # ensures WORKDIR exists
+    local tmp; tmp="$(mktemp "$WORKDIR/rootfile.XXXXXX")"
+    # Trap to clean up temp file on error/exit
+    trap 'rm -f "$tmp" 2>/dev/null' RETURN
+    cat > "$tmp"
+    local parent; parent="$(dirname "$path")"
+    sudo install -d -m 755 "$parent"
+    # Heal pre-existing dirs (e.g. leftovers from earlier umask-077 runs) to 0755
+    # so /etc drop-in dirs are never left world-inaccessible.
+    sudo chmod 755 "$parent"
+    sudo install -m "$mode" "$tmp" "$path"
+    rm -f "$tmp"
+    trap - RETURN
 }
 
 copy_root_file() {
@@ -295,7 +626,13 @@ copy_root_file() {
         echo "      [dry-run] sudo install -m $mode $src -> $dst"
         return 0
     fi
-    sudo install -d -m 755 "$(dirname "$dst")"
+    snapshot_file "$dst"
+    local parent
+    parent="$(dirname "$dst")"
+    sudo install -d -m 755 "$parent"
+    # Heal pre-existing dirs (e.g. leftovers from earlier umask-077 runs) to 0755
+    # so /etc drop-in dirs are never left world-inaccessible.
+    sudo chmod 755 "$parent"
     sudo install -m "$mode" "$src" "$dst"
 }
 
@@ -346,12 +683,12 @@ systemctl_disable() {
 systemctl_user_enable() {
     local unit="$1"
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-        echo "      [dry-run] systemctl --user enable --now $unit"
+        echo "      [dry-run] (user:$TARGET_USER) systemctl --user enable --now $unit"
         return 0
     fi
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl --user daemon-reload 2>/dev/null || true
-        systemctl --user enable --now "$unit" 2>/dev/null || return 1
+        run_as_user systemctl --user daemon-reload 2>/dev/null || true
+        run_as_user systemctl --user enable --now "$unit" 2>/dev/null || return 1
     fi
 }
 
@@ -381,6 +718,10 @@ download_verified() {
     local entry ltype url ref expected_sha dt lic
     entry="$(lock_lookup "$lock_id")" || return 1
     IFS='|' read -r ltype url ref expected_sha dt lic <<< "$entry"
+
+    # Supply-chain dependency guard: refuse to download if required tools are missing.
+    command -v curl >/dev/null 2>&1 || { echo "❌ download_verified: 'curl' is required but not installed." >&2; return 127; }
+    command -v sha256sum >/dev/null 2>&1 || { echo "❌ download_verified: 'sha256sum' is required but not installed." >&2; return 127; }
 
     if [[ "$ltype" != "file" ]]; then
         echo "❌ Lock entry '$lock_id' is type '$ltype', expected 'file'." >&2
@@ -427,6 +768,10 @@ download_verified() {
 clone_pinned_repo() {
     local lock_id="$1" dest="$2"
     local entry ltype url exact_commit sha dt lic
+
+    # Supply-chain dependency guard: refuse to clone if git is missing.
+    command -v git >/dev/null 2>&1 || { echo "❌ clone_pinned_repo: 'git' is required but not installed." >&2; return 127; }
+
     entry="$(lock_lookup "$lock_id")" || return 1
     IFS='|' read -r ltype url exact_commit sha dt lic <<< "$entry"
 
@@ -530,7 +875,7 @@ apt_install_first() {
 
 install_flatpak() {
     step "Flatpak: $1"
-    run flatpak install --user -y --noninteractive flathub "$1" \
+    run_as_user flatpak install --user -y --noninteractive flathub "$1" \
         || record_manual "Install Flatpak manually: $1"
 }
 
@@ -547,13 +892,13 @@ pip_install() {
 gset() {
     local schema="$1" key="$2" val="$3"
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-        echo "      [dry-run] gsettings set $schema $key $val"
+        echo "      [dry-run] (user:$TARGET_USER) gsettings set $schema $key $val"
         return 0
     fi
-    if gsettings list-keys "$schema" 2>/dev/null | grep -qx "$key"; then
-        gsettings set "$schema" "$key" "$val" || record_fail "gsettings $schema $key"
+    if run_as_user gsettings list-keys "$schema" 2>/dev/null | grep -qx "$key"; then
+        run_as_user gsettings set "$schema" "$key" "$val" || record_fail "gsettings $schema $key"
     else
-        echo "      (skipped: $schema $key not available)"
+        echo "      (skipped: $schema $key not available for user $TARGET_USER)"
     fi
 }
 
@@ -666,7 +1011,7 @@ register_gnome_shortcut() {
     local path="${base}/custom-keybindings/${slug}/"
 
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-        echo "      [dry-run] bind shortcut '$name' ($binding) -> $cmd"
+        echo "      [dry-run] (user:$TARGET_USER) bind shortcut '$name' ($binding) -> $cmd"
         return 0
     fi
     if ! command -v dconf >/dev/null 2>&1; then
@@ -675,7 +1020,7 @@ register_gnome_shortcut() {
     fi
 
     local current updated g_name g_cmd g_binding
-    current="$(dconf read "${base}/custom-keybindings" 2>/dev/null || true)"
+    current="$(run_as_user dconf read "${base}/custom-keybindings" 2>/dev/null || true)"
     updated="$(python3 - "$current" "$path" <<'PY'
 import ast, sys
 raw, new_p = sys.argv[1], sys.argv[2]
@@ -694,10 +1039,10 @@ PY
     g_name="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$name")"
     g_cmd="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$cmd")"
     g_binding="$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1]))' "$binding")"
-    dconf write "${base}/custom-keybindings" "$updated" || true
-    dconf write "${path}name" "$g_name" || true
-    dconf write "${path}command" "$g_cmd" || true
-    dconf write "${path}binding" "$g_binding" || true
+    run_as_user dconf write "${base}/custom-keybindings" "$updated" || true
+    run_as_user dconf write "${path}name" "$g_name" || true
+    run_as_user dconf write "${path}command" "$g_cmd" || true
+    run_as_user dconf write "${path}binding" "$g_binding" || true
 }
 
 print_summary() {

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Local Semantic Memory (Update 19)
+"""Celina AI (Celly) - Gear 0 Local Semantic Memory (Update 19)
 
 Micro-RAG: embeds local notes, contacts, and command history into vector arrays
 stored in SQLite via sqlite-vec. Semantic search stays 100% on-device.
@@ -13,12 +12,10 @@ import hashlib
 import json
 import math
 import sqlite3
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
-    import sqlite_vec  # type: ignore
     _HAS_SQLITE_VEC = True
 except Exception:
     _HAS_SQLITE_VEC = False
@@ -69,8 +66,7 @@ def _get_conn() -> sqlite3.Connection:
 
 
 def _embed_text(text: str) -> list[float]:
-    """
-    Simple deterministic embedding using TF-IDF-like hashing.
+    """Simple deterministic embedding using TF-IDF-like hashing.
     Falls back to numpy cosine similarity search without external ML models.
     If sentence-transformers is available, uses it for better embeddings.
     """
@@ -109,7 +105,7 @@ def _cosine_sim(a: list[float], b: list[float]) -> float:
     return dot / (na * nb + 1e-12)
 
 
-def memory_store(content: str, metadata: Optional[dict[str, Any]] = None) -> str:
+def memory_store(content: str, metadata: dict[str, Any] | None = None) -> str:
     """Store a text snippet with its embedding for semantic search."""
     try:
         conn = _get_conn()
@@ -145,7 +141,7 @@ def memory_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
     try:
         conn = _get_conn()
         rows = conn.execute(
-            "SELECT content, embedding, metadata, created_at FROM memory_vectors"
+            "SELECT content, embedding, metadata, created_at FROM memory_vectors",
         ).fetchall()
         conn.close()
 
@@ -172,7 +168,7 @@ def memory_search(query: str, top_k: int = 5) -> list[dict[str, Any]]:
         return []
 
 
-def memory_note_add(title: str, content: str, tags: Optional[list[str]] = None) -> str:
+def memory_note_add(title: str, content: str, tags: list[str] | None = None) -> str:
     """Add a personal note."""
     try:
         conn = _get_conn()
@@ -238,9 +234,9 @@ def memory_summary() -> dict[str, Any]:
 
 
 __all__ = [
-    "memory_store",
-    "memory_search",
     "memory_note_add",
     "memory_note_search",
+    "memory_search",
+    "memory_store",
     "memory_summary",
 ]

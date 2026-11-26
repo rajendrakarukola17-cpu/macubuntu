@@ -31,7 +31,7 @@ from celina_pkg import inference_adaptive, landlock_policy, os_hardening, router
 def test_sched_ext_configs_polkit_voice_hooks_and_probe(tmp_path: Path):
     # 1. Valid TOML for /etc/scx_loader/config.toml
     scx_cfg = tomllib.loads((REPO_ROOT / "system/scx/config.toml").read_text(encoding="utf-8"))
-    assert scx_cfg["default_sched"] == "scx_rusty"
+    assert scx_cfg["default_sched"] == "scx_bpfland"
     assert scx_cfg["default_mode"] == "Auto"
     assert "--pinned-slice-us" in scx_cfg["scheds"]["scx_lavd"]["lowlatency_mode"]
     assert "500" in scx_cfg["scheds"]["scx_lavd"]["lowlatency_mode"]
@@ -81,12 +81,9 @@ def test_sched_ext_configs_polkit_voice_hooks_and_probe(tmp_path: Path):
 
 
 def test_cgroup_v2_slice_ollama_hardening_and_psi_kv_trimming(tmp_path: Path):
-    # 1. local-inference.slice + ollama-8gb-ram.conf + ollama-hardening.conf
+    # 1. local-inference.slice + ollama-hardening.conf (ollama-8gb-ram.conf removed; unified into Stage 35 tier-adapted 90-macubuntu-qos.conf)
     sl = (REPO_ROOT / "system/systemd/local-inference.slice").read_text(encoding="utf-8")
     assert "CPUQuota=250%" in sl and "MemoryHigh=5G" in sl and "MemoryMax=6G" in sl and "MemorySwapMax=2G" in sl
-
-    ol8 = (REPO_ROOT / "system/systemd/ollama-8gb-ram.conf").read_text(encoding="utf-8")
-    assert "Slice=local-inference.slice" in ol8 and "MemoryHigh=5G" in ol8 and "MemoryMax=6G" in ol8
 
     hard = (REPO_ROOT / "system/systemd/ollama-hardening.conf").read_text(encoding="utf-8")
     for directive in (
@@ -94,7 +91,8 @@ def test_cgroup_v2_slice_ollama_hardening_and_psi_kv_trimming(tmp_path: Path):
         "ProtectSystem=strict",
         "ProtectHome=yes",
         "PrivateTmp=yes",
-        "PrivateDevices=yes",
+        "DevicePolicy=closed",
+        "DeviceAllow=/dev/dri rw",
         "ProtectKernelTunables=yes",
         "ProtectKernelModules=yes",
         "ProtectControlGroups=yes",
@@ -131,7 +129,8 @@ def test_cgroup_v2_slice_ollama_hardening_and_psi_kv_trimming(tmp_path: Path):
     prof_hi = inference_adaptive.build_adaptive_inference_profile(
         base_num_ctx=4096, ram_gb=8, avail_ram_mb=3200, psi_full_avg10=18.0
     )
-    assert prof_hi.num_ctx == 3072
+    # CONSTRAINED tier caps num_ctx at 2048, then PSI trims 25% → 1536
+    assert prof_hi.num_ctx == 1536
 
     fake_router = object.__new__(router.CelinaRouter)
     assert fake_router._read_psi(psi_path=psi_file) == pytest.approx(15.40)

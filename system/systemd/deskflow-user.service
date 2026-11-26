@@ -1,0 +1,17 @@
+[Unit]
+Description=Deskflow Universal Control (Wayland libei/TLS KVM)
+After=graphical-session.target pipewire.service
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+# Deskflow runs over libei on Wayland with TLS encryption
+ExecStart=/usr/bin/deskflow --config "${HOME}/.config/deskflow/deskflow.conf"
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+# Deskflow needs access to libei portal for Wayland input emulation
+Environment="DESKFLOW_CONFIG=${HOME}/.config/deskflow/deskflow.conf"
+
+[Install]
+WantedBy=default.target

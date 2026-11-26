@@ -2,7 +2,7 @@
 # Default throughput scheduler (scx_rusty) for background Ollama inference;
 # switches to latency-criticality aware scx_lavd during active Celina voice/UI turns.
 
-default_sched = "scx_rusty"
+default_sched = "scx_bpfland"
 default_mode  = "Auto"
 
 [scheds.scx_rusty]

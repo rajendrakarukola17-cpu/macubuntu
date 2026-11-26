@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Apple Intelligence-Style Edge Lighting Engine (v4.2)
+"""Celina AI (Celly) - Apple Intelligence-Style Edge Lighting Engine (v4.2)
 Native GTK3 + Cairo RGBA composited aurora animations (0% CPU & 0 MB extra RAM when idle):
   1. Dynamic Island Pill Glow: flowing iridescent spectrum halo around the pill while
      listening, thinking, or responding.
@@ -10,7 +9,7 @@ Native GTK3 + Cairo RGBA composited aurora animations (0% CPU & 0 MB extra RAM w
 
 import math
 import time
-from typing import Any, Optional
+from typing import Any
 
 try:
     import cairo  # type: ignore[import-not-found]
@@ -33,10 +32,9 @@ EDGE_DIRTY_BORDER_PX = 36
 
 
 def compute_edge_dirty_rects(
-    width: int, height: int, border_px: int = EDGE_DIRTY_BORDER_PX
+    width: int, height: int, border_px: int = EDGE_DIRTY_BORDER_PX,
 ) -> list[tuple[int, int, int, int]]:
-    """
-    Computes 4 non-overlapping edge rectangles (x, y, w, h) covering ONLY the screen perimeter.
+    """Computes 4 non-overlapping edge rectangles (x, y, w, h) covering ONLY the screen perimeter.
     Using queue_draw_area() on these strips cuts fullscreen Cairo/Wayland pixel upload by >90%
     on 1080p/4K displays compared to invalidating the entire monitor surface every frame.
     """
@@ -106,7 +104,7 @@ def _sample_palette(mode: str, t: float) -> tuple[float, float, float]:
 
 
 def _rounded_rect_path(
-    cr: Any, x: float, y: float, w: float, h: float, r: float
+    cr: Any, x: float, y: float, w: float, h: float, r: float,
 ) -> None:
     r = max(0.0, min(r, w / 2.0, h / 2.0))
     cr.new_sub_path()
@@ -118,7 +116,7 @@ def _rounded_rect_path(
 
 
 def _make_orbit_gradient(
-    width: float, height: float, phase: float, mode: str, alpha: float
+    width: float, height: float, phase: float, mode: str, alpha: float,
 ) -> Any:
     """Creates a smoothly orbiting diagonal linear gradient across the bounding box."""
     cx, cy = width / 2.0, height / 2.0
@@ -142,8 +140,7 @@ def paint_apple_pill_glow(
     intensity: float,
     mode: str = "responding",
 ) -> None:
-    """
-    Paints an Apple Intelligence iridescent halo around the Dynamic Island rounded pill.
+    """Paints an Apple Intelligence iridescent halo around the Dynamic Island rounded pill.
     Call inside a GTK draw callback with intensity in (0.0..1.0].
     """
     if intensity <= 0.01 or width < 20 or height < 20:
@@ -164,7 +161,7 @@ def paint_apple_pill_glow(
         cr.set_source(grad)
         cr.set_line_width(stroke_w)
         _rounded_rect_path(
-            cr, inset, inset, width - 2.0 * inset, height - 2.0 * inset, max(6.0, radius - inset)
+            cr, inset, inset, width - 2.0 * inset, height - 2.0 * inset, max(6.0, radius - inset),
         )
         cr.stroke()
 
@@ -175,8 +172,7 @@ _GTK_WINDOW_BASE = Gtk.Window if Gtk is not None else object
 
 
 class EdgeGlowOverlay(_GTK_WINDOW_BASE):  # type: ignore[misc]
-    """
-    Click-through fullscreen Apple Intelligence edge-lighting overlay.
+    """Click-through fullscreen Apple Intelligence edge-lighting overlay.
     Lights up all 4 edges of the primary monitor while Celina executes desktop tasks,
     and automatically hides at 0% CPU once faded out.
     """
@@ -189,7 +185,7 @@ class EdgeGlowOverlay(_GTK_WINDOW_BASE):  # type: ignore[misc]
         self._alpha = 0.0
         self._target_alpha = 0.0
         self._mode = "task"
-        self._timer_id: Optional[int] = None
+        self._timer_id: int | None = None
         self._last_tick_ts: float = 0.0
         self._mon_w = 1920
         self._mon_h = 1080

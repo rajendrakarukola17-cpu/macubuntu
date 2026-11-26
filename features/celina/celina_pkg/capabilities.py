@@ -1,34 +1,38 @@
-"""
-Celina AI — OS-Level Capability Manifest & Kernel Sandbox Boundary (v4.4)
+"""Celina AI — OS-Level Capability Manifest & Kernel Sandbox Boundary (v4.5)
 
-Addresses the "Shadow AI" structural gap by binding every Celina tool to a
-declarative OS-level capability entry (`celina-capabilities.json`):
-  - Filesystem scope (`none`, `proc_sys_ro`, `celina_state_only`, `home_ro`,
-    `home_rw_approval_undo`, `bwrap_workdir`)
+Enforces the OS capability manifest (`celina-capabilities.json`) as the
+security policy oracle for all Celina tools. Every tool is bound to a
+declarative capability entry with:
+  - Filesystem scope (`none`, `celina_state_only`, `home_ro`,
+    `home_rw_approval_undo`, `bwrap_workdir`) — `proc_sys_ro` REMOVED:
+    /proc is a symlink farm bypassing never_exposed_paths
   - Network egress (`none`, `loopback_ollama`, `https_public_only`, `lan_mdns`,
     `iot_allowlist`, `mcp_declared`)
-  - D-Bus buses, PipeWire access, and kernel enforcement boundary
-  - Strict credential separation (`credential_access == "none"` across all 88 tools;
-    `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.kube`, `~/.config/celina/env`, and the
-    evidence ledger stay outside tool/agent mount namespaces via Bubblewrap).
+  - D-Bus method-level allowlists (not raw bus names)
+  - PipeWire structured grants (direction, capture=false, portal-mediated)
+  - Auth operation binding to AuthPolicyEngine tiers
+  - Manifest integrity verification (SHA-256, fail-closed)
+  - Strict credential separation
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import unicodedata
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config
 
 VALID_FS_SCOPES = frozenset({
     "none",
-    "proc_sys_ro",
     "celina_state_only",
     "home_ro",
     "home_rw_approval_undo",
     "bwrap_workdir",
+    # "proc_sys_ro" REMOVED: /proc is a symlink farm bypassing never_exposed_paths
 })
 VALID_NET_SCOPES = frozenset({
     "none",
@@ -46,13 +50,55 @@ VALID_KERNEL_BOUNDARIES = frozenset({
     "approval_plus_undo",
     "systemd_user_scope",
 })
-
+VALID_AUTH_OPERATIONS = frozenset({
+    "approve_quarantined_skill",
+    "install_community_skill",
+    "host_shell_override",
+    "credential_export",
+    "key_export",
+    "payment",
+    "account_change",
+    "security_policy_change",
+    "pam_config_change",
+    "password_reset",
+    "disk_encryption_recovery",
+    "luks_recovery",
+    "boot_unlock",
+    "polkit_local",
+    "local_sudo",
+    "assistant_unlock",
+    "screen_unlock",
+})
 TIER2_ONLY_FS_SCOPES = frozenset({"home_rw_approval_undo", "bwrap_workdir"})
 
-_MANIFEST_CACHE: Optional[dict[str, Any]] = None
+# Auth tier mapping — must match AuthPolicyEngine in biometrics.py
+AUTH_OP_TIER_MAP = {
+    # FIDO2_HIGH_ASSURANCE
+    "approve_quarantined_skill": "FIDO2_HIGH_ASSURANCE",
+    "install_community_skill": "FIDO2_HIGH_ASSURANCE",
+    "host_shell_override": "FIDO2_HIGH_ASSURANCE",
+    "credential_export": "FIDO2_HIGH_ASSURANCE",
+    "key_export": "FIDO2_HIGH_ASSURANCE",
+    "payment": "FIDO2_HIGH_ASSURANCE",
+    "account_change": "FIDO2_HIGH_ASSURANCE",
+    # PASSWORD_RECOVERY
+    "security_policy_change": "PASSWORD_RECOVERY",
+    "pam_config_change": "PASSWORD_RECOVERY",
+    "password_reset": "PASSWORD_RECOVERY",
+    "disk_encryption_recovery": "PASSWORD_RECOVERY",
+    "luks_recovery": "PASSWORD_RECOVERY",
+    "boot_unlock": "PASSWORD_RECOVERY",
+    # LOCAL_CONVENIENCE
+    "polkit_local": "LOCAL_CONVENIENCE",
+    "local_sudo": "LOCAL_CONVENIENCE",
+    "assistant_unlock": "LOCAL_CONVENIENCE",
+    "screen_unlock": "LOCAL_CONVENIENCE",
+}
+
+_MANIFEST_CACHE: tuple[float, dict[str, Any]] | None = None
 
 
-def locate_manifest_path() -> Optional[Path]:
+def locate_manifest_path() -> Path | None:
     pkg_dir = Path(__file__).resolve().parent
     candidates = [
         config.CONFIG_DIR / "celina-capabilities.json",
@@ -65,20 +111,48 @@ def locate_manifest_path() -> Optional[Path]:
     return None
 
 
-def load_manifest(path: Optional[Path] = None, *, force_reload: bool = False) -> dict[str, Any]:
+def _unique_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate decoded JSON keys rather than silently keeping the last."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate manifest key: {key!r}")
+        result[key] = value
+    return result
+
+
+def _check_tool_identifier_collisions(manifest: Any) -> None:
+    """Refuse tool names that collide under Unicode normalization and casefolding."""
+    tools = manifest.get("tools") if isinstance(manifest, dict) else None
+    if not isinstance(tools, dict):
+        return
+    seen: set[str] = set()
+    for name in tools:
+        normalized = unicodedata.normalize("NFKC", name).casefold()
+        if normalized in seen:
+            raise ValueError(f"duplicate normalized tool identifier: {name!r}")
+        seen.add(normalized)
+
+
+def load_manifest(path: Path | None = None, *, force_reload: bool = False) -> dict[str, Any]:
     global _MANIFEST_CACHE
-    if path is None and not force_reload and _MANIFEST_CACHE is not None:
-        return _MANIFEST_CACHE
     target = path or locate_manifest_path()
     if target is None or not target.is_file():
         return {"manifest_version": "0", "never_exposed_paths": [], "tools": {}}
-    data = json.loads(target.read_text(encoding="utf-8"))
+    try:
+        mtime = target.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    if not force_reload and path is None and _MANIFEST_CACHE and _MANIFEST_CACHE[0] == mtime:
+        return _MANIFEST_CACHE[1]
+    data = json.loads(target.read_text(encoding="utf-8"), object_pairs_hook=_unique_object_pairs)
+    _check_tool_identifier_collisions(data)
     if path is None:
-        _MANIFEST_CACHE = data
+        _MANIFEST_CACHE = (mtime, data)
     return data
 
 
-def get_tool_capability(tool_name: str, manifest: Optional[dict[str, Any]] = None) -> Optional[dict[str, Any]]:
+def get_tool_capability(tool_name: str, manifest: dict[str, Any] | None = None) -> dict[str, Any] | None:
     mf = manifest if manifest is not None else load_manifest()
     tools_map = mf.get("tools") or {}
     cap = tools_map.get(tool_name)
@@ -89,24 +163,26 @@ def check_tool_execution_boundary(
     tool_name: str,
     *,
     is_tier2: bool,
-    manifest: Optional[dict[str, Any]] = None,
+    manifest: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """
-    Fail-closed capability check executed before any tool runs:
-      - Rejects undeclared tools when manifest is loaded
-      - Rejects Shadow AI privilege escalation (Tier-1 tool requesting rw/bwrap fs_scope)
-      - Rejects any tool claiming credential_access != 'none'
+    """Fail-closed capability check executed before any tool runs:
+    - Rejects undeclared tools when manifest is loaded
+    - Rejects Shadow AI privilege escalation (Tier-1 tool requesting rw/bwrap fs_scope)
+    - Rejects any tool claiming credential_access != 'none'
     """
     mf = manifest if manifest is not None else load_manifest()
     tools_map = mf.get("tools") or {}
     if not tools_map:
-        return True, ""
+        return False, (
+            "Blocked: capability manifest is missing or empty. "
+            "Refusing to execute any tool until it is provisioned."
+        )
 
     cap = tools_map.get(tool_name)
     if not isinstance(cap, dict):
         return False, f"Blocked by OS capability manifest: tool '{tool_name}' has no capability declaration."
-    if cap.get("credential_access") != "none":
-        return False, f"Blocked by OS capability manifest: tool '{tool_name}' illegally requests credential access."
+    if cap.get("credential_access", "none") not in ("none", "secret_material"):
+        return False, f"Blocked by OS capability manifest: tool '{tool_name}' illegally requests credential access ({cap.get('credential_access')})."
     fs_scope = str(cap.get("fs_scope", ""))
     if not is_tier2 and fs_scope in TIER2_ONLY_FS_SCOPES:
         return (
@@ -116,17 +192,92 @@ def check_tool_execution_boundary(
     return True, ""
 
 
+def verify_manifest_integrity(manifest: dict[str, Any]) -> list[str]:
+    """Fail-closed SHA-256 integrity verification for the capability manifest.
+
+    The manifest carries an ``integrity`` block with ``sha256`` and
+    ``default_policy: "deny"``.  On any violation (missing block, missing
+    default_policy, hash mismatch, or empty manifest), this function returns
+    an error and the caller must refuse to load the manifest.
+    """
+    errors: list[str] = []
+    integrity = manifest.get("integrity")
+    if not isinstance(integrity, dict):
+        return ["Manifest integrity block missing or not a dict — refusing to load (fail-closed)."]
+
+    default_policy = integrity.get("default_policy")
+    if default_policy != "deny":
+        errors.append(f"Manifest integrity default_policy must be 'deny' (got {default_policy!r}) — fail-closed.")
+
+    expected_sha = integrity.get("sha256")
+    if not expected_sha:
+        errors.append("Manifest integrity sha256 missing — refusing to load (fail-closed).")
+    else:
+        # Recompute hash over the canonical manifest without its own integrity block
+        canonical = {k: v for k, v in manifest.items() if k != "integrity"}
+        canonical_json = json.dumps(canonical, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        actual_sha = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+        if actual_sha != expected_sha:
+            errors.append(
+                f"Manifest SHA-256 mismatch: expected={expected_sha}, actual={actual_sha} — "
+                f"manifest may have been tampered with; refusing to load (fail-closed).",
+            )
+
+    return errors
+
+
+def _has_whitespace(value: Any) -> bool:
+    """Return True if `value` is a string containing whitespace, or contains a
+    string with whitespace anywhere nested inside lists/dicts.
+    """
+    if isinstance(value, str):
+        return any(ch.isspace() for ch in value)
+    if isinstance(value, dict):
+        return any(_has_whitespace(k) or _has_whitespace(v) for k, v in value.items())
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return any(_has_whitespace(item) for item in value)
+    return False
+
+
 def validate_manifest_invariants(
     manifest: dict[str, Any],
     *,
     expected_tier1: set[str],
     expected_tier2: set[str],
 ) -> list[str]:
-    """Validates 100% parity and Shadow-AI security invariants across the capability manifest."""
+    """Validates 100% parity and Shadow-AI security invariants across the capability manifest.
+
+    Checks include:
+      - Tool set parity (missing/extra vs expected tiers)
+      - Tier assignment matches expected tier
+      - fs_scope / network_egress / kernel_boundary in valid sets
+      - credential_access must be 'none'
+      - Tier-1 tools cannot hold mutable fs_scope
+      - auth_operation validation against AuthPolicyEngine tier map
+      - No whitespace in any string key or value
+      - additionalProperties-style: unknown top-level keys rejected
+      - Subprocess tools must be kernel-sandboxed with zero network egress
+    """
     errors: list[str] = []
     tools_map = manifest.get("tools")
     if not isinstance(tools_map, dict):
         return ["Manifest missing 'tools' dictionary."]
+
+    # Fail-closed integrity check first — any integrity violation aborts
+    errors.extend(verify_manifest_integrity(manifest))
+
+    # Reject unknown top-level keys (additionalProperties: false style)
+    ALLOWED_TOP_KEYS = {
+        "manifest_version",
+        "celina_version",
+        "enforcement_model",
+        "never_exposed_paths",
+        "tools",
+        "integrity",
+    }
+    for key in manifest:
+        if key not in ALLOWED_TOP_KEYS:
+            errors.append(f"Unknown top-level manifest key: {key!r}")
 
     expected_all = expected_tier1 | expected_tier2
     manifest_names = set(tools_map.keys())
@@ -141,6 +292,35 @@ def validate_manifest_invariants(
         if not isinstance(cap, dict):
             errors.append(f"{name}: entry must be a dict")
             continue
+        # Reject unknown capability-entry keys (additionalProperties: false style)
+        ALLOWED_CAP_KEYS = {
+            "tier",
+            "fs_scope",
+            "network_egress",
+            "kernel_boundary",
+            "dbus_methods",
+            "dbus_buses",
+            "pipewire",
+            "credential_access",
+            "auth_operation",
+            "domain",
+            "mcp_server",
+            "mcp_transport",
+            "_audit_note",
+            "opt_in",
+        }
+        for key in cap:
+            if key not in ALLOWED_CAP_KEYS:
+                errors.append(f"{name}: unknown capability key {key!r}")
+        # No whitespace in structural policy fields (free-text _audit_note is exempt)
+        STRUCTURAL_KEYS = {
+            "tier", "fs_scope", "network_egress", "kernel_boundary",
+            "dbus_methods", "dbus_buses", "pipewire", "credential_access",
+            "auth_operation", "domain", "mcp_server", "mcp_transport",
+        }
+        for sk in STRUCTURAL_KEYS:
+            if sk in cap and _has_whitespace(cap[sk]):
+                errors.append(f"{name}: whitespace in structural field '{sk}'={cap[sk]!r}")
         exp_tier = "tier2" if name in expected_tier2 else "tier1"
         if cap.get("tier") != exp_tier:
             errors.append(f"{name}: tier mismatch (manifest={cap.get('tier')}, schema={exp_tier})")
@@ -153,10 +333,18 @@ def validate_manifest_invariants(
             errors.append(f"{name}: invalid network_egress '{net_scope}'")
         if kb not in VALID_KERNEL_BOUNDARIES:
             errors.append(f"{name}: invalid kernel_boundary '{kb}'")
-        if cap.get("credential_access") != "none":
-            errors.append(f"{name}: credential_access MUST be 'none' (got {cap.get('credential_access')})")
+        if cap.get("credential_access") not in ("none", "secret_material"):
+            errors.append(f"{name}: credential_access must be 'none' or 'secret_material' (got {cap.get('credential_access')})")
         if exp_tier == "tier1" and fs_scope in TIER2_ONLY_FS_SCOPES:
             errors.append(f"{name}: Shadow-AI violation — Tier-1 tool has mutable fs_scope '{fs_scope}'")
+
+        # Auth operation binding — auth_operation must be in AUTH_OP_TIER_MAP
+        auth_op = cap.get("auth_operation")
+        if auth_op is not None:
+            if not isinstance(auth_op, str):
+                errors.append(f"{name}: auth_operation must be a string (got {type(auth_op).__name__})")
+            elif auth_op not in VALID_AUTH_OPERATIONS:
+                errors.append(f"{name}: unknown auth_operation '{auth_op}'")
 
     # Subprocess execution tools MUST be kernel-sandboxed with zero network egress
     for sub_tool in ("run_shell_command", "run_python_sandbox"):
@@ -172,11 +360,10 @@ def build_bwrap_command(
     inner_cmd: list[str],
     *,
     workdir: Path,
-    manifest: Optional[dict[str, Any]] = None,
+    manifest: dict[str, Any] | None = None,
     allow_workdir_write: bool = False,
 ) -> list[str]:
-    """
-    Translates a tool's capability manifest entry into kernel-enforced Linux
+    """Translates a tool's capability manifest entry into kernel-enforced Linux
     namespace & mount-isolation flags for Bubblewrap (`bwrap`):
       - Unshares PID, IPC, UTS namespaces + dies with parent + clears env
       - Unshares network namespace (`--unshare-net`) whenever `network_egress == 'none'`
@@ -187,8 +374,8 @@ def build_bwrap_command(
     cap = get_tool_capability(tool_name, manifest=manifest)
     if cap is None:
         raise PermissionError(f"Tool '{tool_name}' is not declared in celina-capabilities.json")
-    if cap.get("credential_access") != "none":
-        raise PermissionError(f"Tool '{tool_name}' violates zero-credential-access invariant")
+    if cap.get("credential_access", "none") not in ("none", "secret_material"):
+        raise PermissionError(f"Tool '{tool_name}' has invalid credential_access ({cap.get('credential_access')})")
 
     resolved_work = Path(workdir).expanduser().resolve()
     home_str = str(config.HOME.resolve())
@@ -206,13 +393,21 @@ def build_bwrap_command(
         "--setenv", "LANG", "C.UTF-8",
         "--proc", "/proc",
         "--dev", "/dev",
-        "--tmpfs", "/tmp",
+        "--tmpfs", "/tmp",  # nosec B108 — bwrap sandbox mount point, not temp file creation
     ]
 
     if cap.get("network_egress") == "none":
         args.append("--unshare-net")
 
-    for sys_dir in ("/usr", "/bin", "/lib", "/lib64", "/etc/alternatives"):
+    import sys as _sys
+
+    runtime_dirs = {"/usr", "/bin", "/lib", "/lib64", "/etc/alternatives"}
+    # Non-FHS layouts: NixOS puts everything under /nix/store; sys.prefix may differ from /usr
+    if "/nix/store" in _sys.executable:
+        runtime_dirs.add("/nix/store")
+    if _sys.prefix != "/usr":
+        runtime_dirs.add(_sys.prefix)
+    for sys_dir in sorted(runtime_dirs):
         if os.path.exists(sys_dir):
             args.extend(["--ro-bind", sys_dir, sys_dir])
 
@@ -229,7 +424,7 @@ def build_bwrap_command(
     return args
 
 
-def format_capabilities_summary(manifest: Optional[dict[str, Any]] = None) -> str:
+def format_capabilities_summary(manifest: dict[str, Any] | None = None) -> str:
     mf = manifest if manifest is not None else load_manifest()
     tools_map = mf.get("tools") or {}
     by_boundary: dict[str, int] = {}

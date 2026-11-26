@@ -1,0 +1,58 @@
+[project]
+name = "macubuntu-celina"
+version = "4.4.0"
+description = "Celina AI assistant - security-focused local-first agent framework"
+requires-python = ">=3.12"
+
+[tool.ruff]
+# Default: exclude obvious false-positive zones from strict rules
+line-length = 100
+src = ["features/celina"]
+
+[tool.ruff.lint]
+# Select all rules by default, then override per-module below
+select = ["ALL"]
+ignore = [
+    # UP045: type: ignore without code — handled by mypy instead
+    "UP045",
+    # BLE001: blind except — many are intentional for optional deps
+    "BLE001",
+    # S110: try-except-pass — many are intentional for optional imports
+    "S110",
+    # F401: unused imports — may be re-exported
+    "F401",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Security-critical modules: enforce S, B, ASYNC rules strictly
+"features/celina/celina_pkg/approval.py" = []
+"features/celina/celina_pkg/evidence.py" = []
+"features/celina/celina_pkg/config.py" = []
+"features/celina/celina_pkg/connectors/base.py" = []
+"features/celina/celina_pkg/net_policy.py" = []
+"features/celina/celina_pkg/tools.py" = []
+"features/celina/celina_pkg/cli_bridge.py" = []
+
+# Test files: relax some rules
+"tests/**" = [
+    "S101",  # assert in tests
+    "BLE001",  # blind except in test mocks
+    "S110",  # try-except-pass in test fixtures
+]
+
+# Hardware/platform-specific code: relax import rules
+"features/celina/celina_hardware/**" = [
+    "F401",  # optional hardware imports
+    "BLE001",  # blind except for optional hardware
+    "S110",  # try-except-pass for optional hardware
+]
+
+# Optional dependency modules
+"features/celina/celina_pkg/*_optional.py" = [
+    "F401",
+    "BLE001",
+    "S110",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["celina_pkg", "config", "tools"]

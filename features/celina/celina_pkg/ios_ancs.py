@@ -1,5 +1,4 @@
-"""
-Celina AI - Local iOS Bluetooth LE ANCS (Apple Notification Center Service) Bridge (v4.3)
+"""Celina AI - Local iOS Bluetooth LE ANCS (Apple Notification Center Service) Bridge (v4.3)
 Real spec-compliant BlueZ D-Bus GATT client for Apple ANCS v1.0:
   - Discovers ONLY paired BLE devices actually exposing ANCS_SERVICE_UUID via BlueZ ObjectManager
     (never mistakes headphones, keyboards, or mice for an iPhone).
@@ -21,9 +20,10 @@ import shutil
 import struct
 import subprocess
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable, Optional
+from typing import Any
 
 from . import config
 
@@ -110,7 +110,7 @@ _CATEGORY_LABELS = {
 
 _OTP_RE = re.compile(
     r"(?i)(?:code|otp|passcode|verification|pin|security|login|2fa)[^\d]{0,24}\b\d{4,8}\b"
-    r"|\b\d{4,8}\b[^\n]{0,24}(?:code|otp|passcode|verification|pin|security|login|2fa)"
+    r"|\b\d{4,8}\b[^\n]{0,24}(?:code|otp|passcode|verification|pin|security|login|2fa)",
 )
 
 NotificationCallback = Callable[[str, str, str], None]
@@ -170,11 +170,11 @@ class ANCSEndpoint:
     connected: bool
     service_path: str
     notification_source_path: str
-    control_point_path: Optional[str] = None
-    data_source_path: Optional[str] = None
+    control_point_path: str | None = None
+    data_source_path: str | None = None
 
 
-def parse_notification_source(payload: bytes) -> Optional[ANCSNotificationEvent]:
+def parse_notification_source(payload: bytes) -> ANCSNotificationEvent | None:
     """Parses Apple's exact 8-byte Notification Source GATT packet (<BBBBI)."""
     if not isinstance(payload, (bytes, bytearray)) or len(payload) < 8:
         return None
@@ -196,8 +196,7 @@ def build_get_notification_attributes_cmd(
     max_subtitle: int = 64,
     max_message: int = 240,
 ) -> tuple[bytes, tuple[int, ...]]:
-    """
-    Constructs Apple's GetNotificationAttributes Control Point command (CommandID=0).
+    """Constructs Apple's GetNotificationAttributes Control Point command (CommandID=0).
     Returns (command_bytes, expected_attribute_ids) so the Data Source assembler knows
     how many TLV tuples to expect across BLE MTU chunks.
     """
@@ -232,8 +231,7 @@ def sanitize_notification_text(text: str, *, redact_body: bool = False) -> str:
 
 @dataclass
 class ANCSDataSourceAssembler:
-    """
-    Reassembles fragmented BLE GATT Data Source responses (CommandID=0) into ANCSNotificationDetail.
+    """Reassembles fragmented BLE GATT Data Source responses (CommandID=0) into ANCSNotificationDetail.
     Bounded to max_buffer_bytes (4096) to prevent unbounded memory growth on malformed streams.
     """
 
@@ -301,14 +299,13 @@ class ANCSDataSourceAssembler:
                     title=parsed.get(int(ANCSAttributeID.TITLE), ""),
                     subtitle=parsed.get(int(ANCSAttributeID.SUBTITLE), ""),
                     message=parsed.get(int(ANCSAttributeID.MESSAGE), ""),
-                )
+                ),
             )
         return completed
 
 
 def discover_ancs_endpoints(managed_objects: dict[str, dict[str, dict[str, Any]]]) -> list[ANCSEndpoint]:
-    """
-    Pure discovery helper over BlueZ `org.freedesktop.DBus.ObjectManager.GetManagedObjects()`.
+    """Pure discovery helper over BlueZ `org.freedesktop.DBus.ObjectManager.GetManagedObjects()`.
     Returns ONLY BlueZ devices that actually expose Apple's ANCS primary GATT service UUID.
     """
     devices: dict[str, dict[str, Any]] = {}
@@ -351,7 +348,7 @@ def discover_ancs_endpoints(managed_objects: dict[str, dict[str, dict[str, Any]]
                 notification_source_path=ns_path,
                 control_point_path=ch_map.get(ANCS_CONTROL_POINT_UUID),
                 data_source_path=ch_map.get(ANCS_DATA_SOURCE_UUID),
-            )
+            ),
         )
     return endpoints
 
@@ -359,6 +356,7 @@ def discover_ancs_endpoints(managed_objects: dict[str, dict[str, dict[str, Any]]
 @dataclass(frozen=True)
 class BluetoothBatteryInfo:
     """Represents a Bluetooth device exposing org.bluez.Battery1 (e.g. AirPods, headphones, mouse)."""
+
     device_path: str
     device_name: str
     percentage: int
@@ -401,7 +399,7 @@ def discover_bluetooth_batteries(managed_objects: dict[str, dict[str, dict[str, 
                 percentage=pct,
                 connected=bool(dev.get("Connected", True)),
                 icon=str(dev.get("Icon") or ""),
-            )
+            ),
         )
     return found
 
@@ -417,7 +415,7 @@ def get_bluetooth_battery_status(bus: Any = None) -> str:
     return ", ".join(f"{'🎧 ' if b.is_audio else '🔋 '}{b.device_name} ({b.percentage}%)" for b in bats)
 
 
-def _get_bluez_managed_objects(bus: Any = None) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+def _get_bluez_managed_objects(bus: Any = None) -> tuple[dict[str, Any] | None, str | None]:
     try:
         import gi
 
@@ -458,8 +456,7 @@ def get_ios_ancs_status(bus: Any = None) -> str:
 
 
 class IOSAncsBridge:
-    """
-    Event-driven BlueZ D-Bus ANCS + AirPods/Bluetooth Battery listener (0.0% idle CPU, zero polling).
+    """Event-driven BlueZ D-Bus ANCS + AirPods/Bluetooth Battery listener (0.0% idle CPU, zero polling).
     - Survives iPhone & AirPods hotplug/reconnects via ObjectManager.InterfacesAdded & Device1.Connected.
     - Subscribes to Apple Notification Source & Data Source GATT characteristics and dispatches
       privacy-sanitized notifications to `on_notification(app_id, title, body)` and desktop banners.
@@ -469,9 +466,9 @@ class IOSAncsBridge:
 
     def __init__(
         self,
-        on_notification: Optional[NotificationCallback] = None,
+        on_notification: NotificationCallback | None = None,
         *,
-        on_bt_battery: Optional[BluetoothBatteryCallback] = None,
+        on_bt_battery: BluetoothBatteryCallback | None = None,
         redact_body: bool = False,
         desktop_notify: bool = True,
         bus: Any = None,
@@ -483,13 +480,13 @@ class IOSAncsBridge:
         self._bus = bus
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._loop: Any = None
-        self._endpoint: Optional[ANCSEndpoint] = None
+        self._endpoint: ANCSEndpoint | None = None
         self._assembler = ANCSDataSourceAssembler()
         self._pending_events: dict[int, ANCSNotificationEvent] = {}
-        self._last_uid: Optional[int] = None
-        self._last_event: Optional[ANCSNotificationEvent] = None
+        self._last_uid: int | None = None
+        self._last_event: ANCSNotificationEvent | None = None
         self._sub_ids: list[int] = []
         self._gatt_sub_ids: list[int] = []
         self._started_notify_paths: list[str] = []
@@ -500,20 +497,19 @@ class IOSAncsBridge:
         return self._thread is not None and self._thread.is_alive()
 
     @property
-    def connected_device(self) -> Optional[str]:
+    def connected_device(self) -> str | None:
         return self._endpoint.device_name if self._endpoint else None
 
     @property
-    def last_notification_uid(self) -> Optional[int]:
+    def last_notification_uid(self) -> int | None:
         return self._last_uid
 
     @property
-    def last_notification_event(self) -> Optional[ANCSNotificationEvent]:
+    def last_notification_event(self) -> ANCSNotificationEvent | None:
         return self._last_event
 
     def start(self) -> bool:
-        """
-        Starts the event-driven BlueZ System D-Bus hotplug loop whenever BlueZ is accessible.
+        """Starts the event-driven BlueZ System D-Bus hotplug loop whenever BlueZ is accessible.
         Attaches immediately if an iPhone is already connected, or automatically attaches on hotplug!
         """
         with self._lock:
@@ -567,7 +563,7 @@ class IOSAncsBridge:
             except Exception:
                 pass
 
-    def handle_notification_source_bytes(self, payload: bytes, *, write_control_point: Optional[Callable[[bytes], None]] = None) -> Optional[ANCSNotificationEvent]:
+    def handle_notification_source_bytes(self, payload: bytes, *, write_control_point: Callable[[bytes], None] | None = None) -> ANCSNotificationEvent | None:
         """Processes a raw 8-byte ANCS Notification Source packet (usable both live and in tests)."""
         ev = parse_notification_source(payload)
         if ev is None:
@@ -613,7 +609,7 @@ class IOSAncsBridge:
         self,
         *,
         positive: bool = False,
-        write_control_point: Optional[Callable[[bytes], None]] = None,
+        write_control_point: Callable[[bytes], None] | None = None,
     ) -> str:
         """Sends Apple ANCS PerformNotificationAction (Accept/Answer or Dismiss/Decline) to iPhone."""
         uid = self._last_uid
@@ -837,7 +833,7 @@ class IOSAncsBridge:
                 None,
                 Gio.DBusSignalFlags.NONE,
                 _on_bluez_hotplug,
-            )
+            ),
         )
         self._sub_ids.append(
             conn.signal_subscribe(
@@ -848,7 +844,7 @@ class IOSAncsBridge:
                 None,
                 Gio.DBusSignalFlags.NONE,
                 _on_bluez_hotplug,
-            )
+            ),
         )
 
         try:
@@ -870,14 +866,14 @@ class IOSAncsBridge:
             self._loop = None
 
 
-_DEFAULT_ANCS_BRIDGE: Optional[IOSAncsBridge] = None
+_DEFAULT_ANCS_BRIDGE: IOSAncsBridge | None = None
 _BRIDGE_LOCK = threading.Lock()
 
 
 def start_ios_bridge(
-    on_notification: Optional[NotificationCallback] = None,
+    on_notification: NotificationCallback | None = None,
     *,
-    on_bt_battery: Optional[BluetoothBatteryCallback] = None,
+    on_bt_battery: BluetoothBatteryCallback | None = None,
     redact_body: bool = False,
 ) -> bool:
     global _DEFAULT_ANCS_BRIDGE

@@ -3,7 +3,8 @@ Description=Celina Wayland Input Daemon (ydotoold)
 After=graphical-session.target
 
 [Service]
-ExecStart=/usr/bin/ydotoold --socket-path %t/.ydotool_socket --socket-perm 0600
+Environment=YDOTOOL_SOCKET=%t/.ydotool_socket
+ExecStart=/usr/bin/ydotoold --socket-path %t/.ydotool_socket --socket-perm 0660
 Restart=on-failure
 RestartSec=3
 

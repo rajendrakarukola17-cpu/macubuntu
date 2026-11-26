@@ -69,6 +69,12 @@ export const CELINA_IFACE_XML = `
     <signal name="StatusChanged">
       <arg type="s" name="status_json"/>
     </signal>
+    <signal name="StateChanged">
+      <arg type="s" name="state_json"/>
+    </signal>
+    <signal name="ActivityChanged">
+      <arg type="s" name="activity_json"/>
+    </signal>
     <signal name="PrivacyDotsChanged">
       <arg type="b" name="mic_active"/>
       <arg type="b" name="cam_active"/>
@@ -78,6 +84,9 @@ export const CELINA_IFACE_XML = `
       <arg type="b" name="active"/>
       <arg type="s" name="mode"/>
     </signal>
+    <signal name="LiteModeChanged">
+      <arg type="b" name="enabled"/>
+    </signal>
   </interface>
 </node>`;
 
@@ -85,12 +94,15 @@ const CelinaProxy = Gio.DBusProxy.makeProxyWrapper(CELINA_IFACE_XML);
 const AutonomyProxy = Gio.DBusProxy.makeProxyWrapper(AUTONOMY_IFACE_XML);
 
 export class CelinaDBusClient {
-    constructor({onStatus, onPrivacy, onTaskState, onMCPAction, onEdgeGlow, onOffline} = {}) {
+    constructor({onStatus, onState, onActivity, onPrivacy, onTaskState, onMCPAction, onEdgeGlow, onLiteMode, onOffline} = {}) {
         this._onStatus = onStatus ?? null;
+        this._onState = onState ?? null;
+        this._onActivity = onActivity ?? null;
         this._onPrivacy = onPrivacy ?? null;
         this._onTaskState = onTaskState ?? null;
         this._onMCPAction = onMCPAction ?? null;
         this._onEdgeGlow = onEdgeGlow ?? null;
+        this._onLiteMode = onLiteMode ?? null;
         this._onOffline = onOffline ?? null;
         this._proxy = null;
         this._autonomyProxy = null;
@@ -126,6 +138,22 @@ export class CelinaDBusClient {
                     })
                 );
                 this._signalIds.push(
+                    proxy.connectSignal('StateChanged', (_p, _s, [raw]) => {
+                        try {
+                            const { state } = JSON.parse(raw);
+                            this._onState?.(state);
+                        } catch (_) { /* ignore malformed payload */ }
+                    })
+                );
+                this._signalIds.push(
+                    proxy.connectSignal('ActivityChanged', (_p, _s, [raw]) => {
+                        try {
+                            const { activity } = JSON.parse(raw);
+                            this._onActivity?.(activity);
+                        } catch (_) { /* ignore malformed payload */ }
+                    })
+                );
+                this._signalIds.push(
                     proxy.connectSignal('PrivacyDotsChanged', (_p, _s, [mic, cam, screen]) => {
                         this._onPrivacy?.({mic, cam, screen});
                     })
@@ -133,6 +161,11 @@ export class CelinaDBusClient {
                 this._signalIds.push(
                     proxy.connectSignal('EdgeGlowChanged', (_p, _s, [active, mode]) => {
                         this._onEdgeGlow?.({active: Boolean(active), mode: String(mode || 'task')});
+                    })
+                );
+                this._signalIds.push(
+                    proxy.connectSignal('LiteModeChanged', (_p, _s, [enabled]) => {
+                        this._onLiteMode?.(Boolean(enabled));
                     })
                 );
                 this._gObjectSignalIds.push(

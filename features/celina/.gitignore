@@ -1,0 +1,27 @@
+# Compiled binaries
+*.so
+*.o
+*.a
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg/
+.build/
+dist/
+build/
+
+# Celina storage
+.celina/storage/
+.local/share/celina/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,21 @@
+[Unit]
+Description=macubuntu Hardware Probe — writes /etc/macubuntu/hardware.json
+Documentation=file:///usr/share/macubuntu/ARCHITECTURE.md
+Before=basic.target
+Wants=systemd-remount-fs.service
+After=systemd-remount-fs.service
+ConditionPathExists=/proc/meminfo
+ConditionPathExists=/proc/cpuinfo
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /usr/lib/macubuntu/lib/hw_detect.sh
+RemainAfterExit=yes
+# No sandbox: needs to read /proc, /sys, /dev, run lsblk/findmnt/nvidia-smi
+# Runs as root system service — /etc/macubuntu writable without ProtectSystem
+ReadWritePaths=/etc/macubuntu
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=basic.target

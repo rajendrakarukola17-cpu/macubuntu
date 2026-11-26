@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=macubuntu Center
+GenericName=System Control Center
+Comment=Apple-grade control panel for macubuntu + Celina AI OS
+Exec=python3 /home/user/macubuntu/apps/macubuntu-center/main.py
+Icon=org.macubuntu.Center
+Terminal=false
+Type=Application
+Categories=System;Settings;DesktopSettings;
+Keywords=macubuntu;celina;settings;system;control;install;wipe;
+StartupNotify=true
+X-GNOME-UsesNotifications=true

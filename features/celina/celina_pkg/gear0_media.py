@@ -1,20 +1,20 @@
-"""
-Celina AI (Celly) - Gear 0 Media (Update 19)
+"""Celina AI (Celly) - Gear 0 Media (Update 19)
 
 Local media playback control via MPRIS (Spotify, VLC, etc.) and system volume.
 Zero cloud, sub-5ms.
+
 Examples:
   - "Play music"
   - "Pause playback"
   - "Next track"
   - "Volume up"
+
 """
 
 from __future__ import annotations
 
 import shutil
 import subprocess
-from typing import Optional
 
 _MEDIA_PLAY_RE = __import__("re").compile(
     r"^(?:please\s+)?(?:play|resume|start)\s+(?:music|playback|media)\??$",
@@ -48,7 +48,7 @@ def _mpris_command(command: str) -> str:
         return "Media control unavailable (playerctl not found)."
     try:
         result = subprocess.run(
-            ["playerctl", command], capture_output=True, text=True, timeout=5
+            ["playerctl", command], capture_output=True, text=True, timeout=5,
         )
         if result.returncode == 0:
             return f"✓ Media: {command}"
@@ -121,7 +121,7 @@ def media_volume_down() -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_media_classify(query: str) -> Optional[str]:
+def gear0_media_classify(query: str) -> str | None:
     """Classify query into a media handler name, or None."""
     low = query.strip().lower()
     if _MEDIA_PLAY_RE.match(low):
@@ -139,7 +139,7 @@ def gear0_media_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_media_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_media_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Media handler."""
     try:
         if handler == "play":
@@ -160,12 +160,12 @@ def gear0_media_execute(handler: str, query: str, dry_run: bool = False) -> Opti
 
 
 __all__ = [
-    "media_play",
-    "media_pause",
-    "media_next",
-    "media_previous",
-    "media_volume_up",
-    "media_volume_down",
     "gear0_media_classify",
     "gear0_media_execute",
+    "media_next",
+    "media_pause",
+    "media_play",
+    "media_previous",
+    "media_volume_down",
+    "media_volume_up",
 ]

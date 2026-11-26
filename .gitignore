@@ -1,23 +1,53 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
+# Generated coverage artifacts
+.coverage
+.coverage.*
 .pytest_cache/
 
-# Local secrets, state & logs
-.env
-env
-*.log
-.config/
-semantic_memory.json
-memory.db
-tasks.db
-cache.db
-spotlight_index.db
+# Local audit/coverage scratch artifacts (do not commit)
+audit-reports/backups/
+audit-reports/verify-output/
+audit-reports/bandit.json
+audit-reports/coverage.json
+audit-reports/import-cycles.txt
+audit-reports/import-graph.txt
+audit-reports/import-results.txt
+audit-reports/inventory.txt
+audit-reports/module-list.txt
+audit-reports/mypy.txt
+audit-reports/phase-0.md
+audit-reports/phase-1.md
+audit-reports/phase-2.md
+audit-reports/phase-3.md
+audit-reports/phase-3b.md
+audit-reports/phase-4.md
+audit-reports/phase-5.md
+audit-reports/phase-6.md
+audit-reports/pip-audit.json
+audit-reports/pip-freeze.txt
+audit-reports/py-size-sorted.txt
+audit-reports/pytest-collect.txt
+audit-reports/pytest-full.txt
+audit-reports/ruff.json
+audit-reports/ruff_baseline.json
+audit-reports/tools-cov-final.json
+audit-reports/tools-cov-final2.json
+audit-reports/tools-cov-r*.json
 
-# OS / Editor
+# Local scratch / todo files
+.todo_stages.md
+STATUS_REPORT.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+.env
+
+# OS
 .DS_Store
-.vscode/
-.idea/
+Thumbs.db

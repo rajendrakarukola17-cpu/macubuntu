@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.0
+    hooks:
+      - id: mypy
+        additional_dependencies: []
+        args: [--strict, --follow-imports=skip, celina_pkg/approval.py, celina_pkg/evidence.py, celina_pkg/config.py, celina_pkg/connectors/base.py, celina_pkg/net_policy.py, celina_pkg/tools.py, celina_pkg/cli_bridge.py]
+        pass_filenames: false
+
+  - repo: local
+    hooks:
+      - id: bandit
+        name: bandit security scan
+        entry: bandit -r features/celina/celina_pkg -lll
+        language: system
+        pass_filenames: false
+
+      - id: pip-audit
+        name: pip-audit vulnerability scan
+        entry: pip-audit
+        language: system
+        pass_filenames: false
+
+      - id: detect-secrets
+        name: detect-secrets secret scan
+        entry: detect-secrets scan --force . --baseline .secrets.baseline
+        language: system
+        pass_filenames: false
+
+      - id: pytest
+        name: Run test suite
+        entry: PYTHONPATH=features/celina python3 -m pytest tests/ tests/audit/unit/ -q --tb=no
+        language: system
+        pass_filenames: false
+        always_run: true

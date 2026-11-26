@@ -1,0 +1,268 @@
+........................................................................ [  2%]
+........................................................................ [  4%]
+........................................................................ [  7%]
+........................................................................ [  9%]
+........................................................................ [ 11%]
+........................................................................ [ 14%]
+........................................................................ [ 16%]
+........................................................................ [ 18%]
+...........................................................
+  evidence.detect_prompt_injection: 56/56 = 100.0%
+.
+  router._sanitize_tool_prompt_content: 56/56 = 100.0%
+............ [ 21%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 37%]
+........................................................................ [ 40%]
+........................................................................ [ 42%]
+........................................................................ [ 45%]
+........................................................................ [ 47%]
+........................................................................ [ 49%]
+........................................................................ [ 52%]
+........................................................................ [ 54%]
+........................................................................ [ 56%]
+........................................................................ [ 59%]
+........................................................................ [ 61%]
+........................................................................ [ 64%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 71%]
+.........sssss.......................................................... [ 73%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+........................................................................ [ 87%]
+........................................................................ [ 90%]
+........................................................................ [ 92%]
+........................................................................ [ 94%]
+........................................................................ [ 97%]
+........................................................................ [ 99%]
+........                                                                 [100%]LOADED_CELINA_ORIGINS_INSPECTED=207
+LOADED_CELINA_ORIGINS_OUTSIDE_WORKTREE=0
+
+=============================== warnings summary ===============================
+tests/test_agent_harness.py::test_engine_registry_register_create
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4353f0cb80>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_agent_harness.py::test_engine_registry_register_create
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4353f0e200>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_audit_p0_p1_fixes.py::test_deep_audit_12_fixes_regression
+  /usr/local/lib/python3.13/unittest/mock.py:2253: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4353f0fc40>
+    def __init__(self, name, parent):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_audit_p0_p1_fixes.py::test_six_everyday_agents_and_multi_agent_trainer
+  /tmp/gate4_origin_probe.py:16: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4353f0fe20>
+    for name, module in list(sys.modules.items()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_audit_p0_p1_fixes.py::test_six_everyday_agents_and_multi_agent_trainer
+  /tmp/gate4_origin_probe.py:16: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4353f0de40>
+    for name, module in list(sys.modules.items()):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_brain_harness.py::test_verify_final_completion_empty_reply
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43493648b0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_brain_harness.py::test_verify_final_completion_empty_reply
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43493647c0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_brain_harness.py::test_verify_final_completion_empty_reply
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43493653f0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_brain_harness.py::test_verify_final_completion_empty_reply
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43493654e0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_brain_harness.py::test_verify_final_completion_empty_reply
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43493655d0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_brain_harness.py::test_verify_final_completion_empty_reply
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4349365210>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_celina_shortcuts_gui.py::test_parameter_map_has_known_actions
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43493672e0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_celina_shortcuts_gui.py::test_parameter_map_has_known_actions
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4349366980>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_data_oracle.py::test_translate_nl_sum_pattern
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3d300>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_evidence_lifecycle.py::test_chain_linkage
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4349367c40>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_evidence_lifecycle.py::test_chain_linkage
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43493671f0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_evidence_lifecycle.py::test_chain_linkage
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4349366b60>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_evidence_lifecycle.py::test_chain_linkage
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4349367b50>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_gear051_mirage_and_headroom.py::test_turbo_mode_calls_mirage_unload
+  /tmp/g45-final2-ztlPML/features/celina/celina_pkg/turbo_mode.py:208: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4353eb13f0>
+    gc.collect()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_gear051_mirage_and_headroom.py::test_turbo_mode_calls_mirage_unload
+  /tmp/g45-final2-ztlPML/features/celina/celina_pkg/turbo_mode.py:208: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4353eb17b0>
+    gc.collect()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_gear051_mirage_and_headroom.py::test_turbo_mode_calls_mirage_unload
+  /tmp/g45-final2-ztlPML/features/celina/celina_pkg/turbo_mode.py:208: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3cd60>
+    gc.collect()
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3f880>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3de40>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3f100>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3ee30>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3e7a0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3dd50>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3ea70>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3ec50>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3ce50>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3e2f0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3f010>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3e4d0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3eb60>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3ed40>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3e6b0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3f1f0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3c7c0>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3fb50>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_token_speed.py::test_token_speed_accelerator_stats
+  <frozen posixpath>:561: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f4348f3fa60>
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_v5_autonomy_core.py::test_autonomy_engine_observe_only_approval_checkpoint_and_evidence_tamper
+  /tmp/g45-final2-ztlPML/features/celina/celina_pkg/planner/task_graph.py:155: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x7f43490e4400>
+    rows = self._conn.execute(
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.13.18-final-0 _______________
+
+Coverage JSON written to file /tmp/g45-final2-coverage.json
+3027 passed, 5 skipped, 41 warnings in 84.37s (0:01:24)

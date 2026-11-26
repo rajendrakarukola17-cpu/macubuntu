@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# celina-vmtouch-ctl: Touch-only, budget-capped, PSI-aware RAM warmer (NEVER mlock)
+set -euo pipefail
+
+PINLIST="${XDG_CACHE_HOME:-$HOME/.cache}/celina-pinlist.txt"
+PSI_MEM_LIMIT="${PSI_MEM_LIMIT:-12.0}"   # Evict if memory stall avg10 exceeds 12%
+
+ram_budget_mb() {
+    local ram_mb tier pct
+    ram_mb="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)"
+    tier="$(awk '/^MemTotal:/ {mb=int($2/1024); if (mb <= 10240) print "CONSTRAINED"; else if (mb <= 22528) print "BALANCED"; else print "HEADROOM"}' /proc/meminfo)"
+    case "$tier" in
+        CONSTRAINED) pct=10 ;;  # ~1 GB max on 8 GB (leaves room for Ollama + GNOME)
+        BALANCED)    pct=15 ;;
+        HEADROOM)    pct=20 ;;
+    esac
+    echo $(( ram_mb * pct / 100 ))
+}
+
+psi_mem_avg10() {
+    awk -F'[= ]+' '/^some / {for(i=1;i<=NF;i++) if($i=="avg10") print $(i+1)}' /proc/pressure/memory 2>/dev/null || echo "0.0"
+}
+
+build_pinlist() {
+    mkdir -p "$(dirname "$PINLIST")"
+    local budget_kb=$(( $(ram_budget_mb) * 1024 ))
+    local used_kb=0
+    : > "$PINLIST"
+
+    # Strictly READ-ONLY binaries & shared objects (NEVER live SQLite/WAL or logs)
+    local candidates=(
+        /usr/bin/gnome-shell
+        /usr/lib/x86_64-linux-gnu/libmutter-*.so*
+        /usr/lib/firefox/libxul.so
+        /usr/bin/python3
+        /usr/bin/rofi
+    )
+
+    for f in "${candidates[@]}"; do
+        [[ -f "$f" && -r "$f" ]] || continue
+        local sz_kb
+        sz_kb="$(du -k "$f" | awk '{print $1}')"
+        if (( used_kb + sz_kb <= budget_kb )); then
+            echo "$f" >> "$PINLIST"
+            used_kb=$(( used_kb + sz_kb ))
+        fi
+    done
+}
+
+cmd_warm() {
+    command -v vmtouch >/dev/null 2>&1 || exit 0
+    # Skip warming if memory is already under PSI stall or Ollama is actively consuming RAM
+    local psi
+    psi="$(psi_mem_avg10)"
+    if awk -v p="$psi" -v lim="$PSI_MEM_LIMIT" 'BEGIN {exit !(p >= lim)}'; then
+        echo "PSI memory stall (${psi}%) above threshold (${PSI_MEM_LIMIT}%); skipping warm."
+        exit 0
+    fi
+    build_pinlist
+    [[ -s "$PINLIST" ]] || exit 0
+    # -t = touch into page cache (reclaimable). NEVER use -l (mlock).
+    vmtouch -q -t -b "$PINLIST"
+}
+
+cmd_evict() {
+    command -v vmtouch >/dev/null 2>&1 || exit 0
+    [[ -s "$PINLIST" ]] && vmtouch -q -e -b "$PINLIST" || true
+}
+
+cmd_status() {
+    [[ -s "$PINLIST" ]] || { echo "No pinlist generated."; exit 0; }
+    echo "Budget: $(ram_budget_mb) MB | PSI some avg10: $(psi_mem_avg10)%"
+    vmtouch -b "$PINLIST"
+}
+
+case "${1:-status}" in
+    warm)   cmd_warm ;;
+    evict)  cmd_evict ;;
+    status) cmd_status ;;
+    *) echo "Usage: $0 {warm|evict|status}" >&2; exit 2 ;;
+esac

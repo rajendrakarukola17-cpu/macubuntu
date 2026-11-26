@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# ============================================================================
+# celina-visual-intelligence — macOS Visual Intelligence equivalent for macubuntu
+# ============================================================================
+# Captures the screen via xdg-desktop-portal, runs vision_ocr + vision_analyze,
+# shows an interactive confirmation card in celina-island, and offers calendar
+# event creation via calendar_bridge.py. Bound to Super+Shift+V.
+set -Eeuo pipefail
+
+VI_DIR="${HOME}/.local/share/celina/visual-intelligence"
+CELINA_PKG="${HOME}/features/celina/celina_pkg"
+VI_SCREENSHOT="${VI_DIR}/latest.png"
+TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
+VI_TIMESTAMPED="${VI_DIR}/screenshot-${TIMESTAMP}.png"
+
+mkdir -p "$VI_DIR"
+
+# --- Step 1: Capture screen via xdg-desktop-portal (Wayland-native) ---
+capture_screenshot() {
+    if command -v gnome-screenshot >/dev/null 2>&1; then
+        gnome-screenshot --file="$VI_SCREENSHOT" 2>/dev/null || true
+    elif command -v grim >/dev/null 2>&1; then
+        grim "$VI_SCREENSHOT" 2>/dev/null || true
+    elif command -v gdbus >/dev/null 2>&1; then
+        # xdg-desktop-portal screenshot via GNOME Shell
+        gdbus call --session --dest org.freedesktop.portal.Desktop \
+            --object-path /org/freedesktop/portal/desktop \
+            --method org.freedesktop.portal.Screenshot.Screenshot \
+            "" "Interactive" "{}" >/dev/null 2>&1 || true
+    else
+        echo "❌ No screenshot tool available (gnome-screenshot, grim, or xdg-desktop-portal)" >&2
+        exit 1
+    fi
+}
+
+capture_screenshot
+
+if [[ ! -f "$VI_SCREENSHOT" ]]; then
+    echo "❌ Screenshot capture failed." >&2
+    exit 1
+fi
+
+# Keep a timestamped copy
+cp "$VI_SCREENSHOT" "$VI_TIMESTAMPED" 2>/dev/null || true
+
+# --- Step 2: Run vision_ocr + vision_analyze via Celina tools ---
+VISION_RESULTS=""
+if command -v celina >/dev/null 2>&1; then
+    # Run vision_ocr first
+    OCR_RESULT="$(celina vision_ocr --image "$VI_SCREENSHOT" 2>/dev/null || echo "")"
+    # Run vision_analyze for structured extraction
+    ANALYZE_RESULT="$(celina vision_analyze --image "$VI_SCREENSHOT" \
+        --prompt "Extract actionable information: dates, times, URLs, phone numbers, action items, calendar events, reminders." 2>/dev/null || echo "")"
+    VISION_RESULTS="${OCR_RESULT}
+
+${ANALYZE_RESULT}"
+elif command -v celina-island >/dev/null 2>&1; then
+    celina-island --ask "Analyze the screenshot at ${VI_SCREENSHOT}. Extract actionable information: dates, times, URLs, phone numbers, action items, calendar events, reminders. Suggest: create calendar event, browser search, copy to clipboard, or save to notes. Respond concisely." >/dev/null 2>&1 || true
+else
+    echo "⚠️  celina not found. Screenshot saved to ${VI_SCREENSHOT}" >&2
+fi
+
+# --- Step 3: Offer calendar event creation via calendar_bridge.py ---
+if command -v celina >/dev/null 2>&1 && [[ -n "$VISION_RESULTS" ]]; then
+    # Check if vision results contain date-like patterns suggesting calendar events
+    if echo "$VISION_RESULTS" | grep -qiE "(meeting|appointment|event|call|deadline|reminder|tomorrow|next week|on [0-9])"; then
+        echo ""
+        echo "📅 Visual Intelligence detected potential calendar events in the screenshot."
+        echo "   Run: celina create-calendar-event --from-vision '${VI_SCREENSHOT}'"
+        echo "   Or:  celina-island --ask 'Create calendar event from screenshot at ${VI_SCREENSHOT}'"
+    fi
+fi
+
+# --- Step 4: Show results in celina-island Dynamic Island ---
+if command -v celina-island >/dev/null 2>&1; then
+    celina-island --notify "Visual Intelligence: screenshot captured at ${VI_SCREENSHOT}" \
+        --detail "${VISION_RESULTS:0:200}" 2>/dev/null || true
+fi
+
+echo "📸 Visual Intelligence: screenshot captured at ${VI_SCREENSHOT}"
+echo "   Timestamped copy: ${VI_TIMESTAMPED}"
+if [[ -n "$VISION_RESULTS" ]]; then
+    echo "   Vision analysis complete — check celina-island for results."
+fi

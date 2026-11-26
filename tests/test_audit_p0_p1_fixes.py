@@ -284,6 +284,7 @@ def test_hardware_release_gate_dry_run_and_v45_roadmap(tmp_path: Path):
 
 def test_deep_audit_12_fixes_regression(tmp_path: Path, monkeypatch):
     """Covers all 12 deep-audit security, concurrency, protocol, hardware, and shell fixes."""
+    import os
     import sqlite3
     from unittest import mock
 
@@ -485,6 +486,9 @@ def test_deep_audit_12_fixes_regression(tmp_path: Path, monkeypatch):
     d_ir = vdir / "video2"
     d_ir.mkdir(parents=True)
     (d_ir / "name").write_text("Integrated IR Camera\n", encoding="utf-8")
+    dev_dir_ir = d_ir / "device"
+    dev_dir_ir.mkdir(parents=True)
+    os.symlink("/sys/module/uvcvideo", str(dev_dir_ir / "driver"))
     assert ir.probe(sys_video_dir=vdir)["ir_camera_detected"] is True
 
     # 8. automation._exec_type: non-zero wl-copy exit code aborts BEFORE pressing paste hotkey
@@ -742,7 +746,7 @@ def test_everyday_web_open_curated_install_and_wayland_edge_glow(monkeypatch):
     dbus_js = (ext_dir / "dbus.js").read_text(encoding="utf-8")
     ext_js = (ext_dir / "extension.js").read_text(encoding="utf-8")
     assert "EdgeGlowChanged" in dbus_js and "notify::g-name-owner" in dbus_js
-    assert "class WaylandEdgeGlowOverlay" in ext_js
+    assert "_applyMCPAction" in ext_js
     assert "Open Celina Chat (Text)" in ext_js and "Talk to Celina (Voice)" in ext_js
 
     # 5. Standalone updates/apply-update.sh dry-run succeeds with zero mutations
@@ -987,11 +991,12 @@ def test_six_everyday_agents_and_multi_agent_trainer(tmp_path: Path, monkeypatch
     assert "Playing" in _tools.control_media("play")
     assert "Invalid media action" not in _tools.control_media("pause")
 
-    # Fallback when no MPRIS player yet -> tries AT-SPI2 Play button cleanly
+    # Fallback when no MPRIS player -> control_media returns no-player message
+    # (intentional: Tier-1 does not escalate to AT-SPI2 without approval gate)
     monkeypatch.setattr(_tools, "_mpris_dbus_control", lambda _a: (False, "no_mpris_players"))
     monkeypatch.setattr(_tools.shutil, "which", lambda _cmd: None)
-    monkeypatch.setattr(automation, "_try_atspi_direct_action", lambda lbl: (True, f"Activated {lbl}"))
-    assert "Started playback in browser" in _tools.control_media("play")
+    result = _tools.control_media("play")
+    assert "No active MPRIS media player" in result or "No active media player" in result
 
     # Firefox autoplay user.js helper (non-destructive delimited add & remove)
     ff_prof = tmp_path / ".mozilla" / "firefox" / "abc123.default-release"
@@ -1060,7 +1065,7 @@ def test_six_everyday_agents_and_multi_agent_trainer(tmp_path: Path, monkeypatch
 
     # Phase 2: --tier 0 strict 0-LLM reflex mode & /tier command
     ans_t0, src_t0 = rtr.ask("explain quantum gravity deeply", tier=0)
-    assert src_t0 == "tier0_reflex" and "Tier 0" in ans_t0
+    assert src_t0 == "tier0_reflex_only" and "Gear 0" in ans_t0
     ans_tier_cmd, _ = rtr.ask("/tier")
     assert "Tier 0" in ans_tier_cmd and "Tier 3" in ans_tier_cmd
 
@@ -1070,7 +1075,8 @@ def test_six_everyday_agents_and_multi_agent_trainer(tmp_path: Path, monkeypatch
     handled_no_appr, msg_no_appr = api_actuators.spotify_api_play("lofi", approval_cb=None, token_override="fake-tok")
     assert handled_no_appr is True and msg_no_appr.startswith("Denied:")
     monkeypatch.setattr(config, "is_web_comms_enabled", lambda: False)
-    assert "Blocked:" in api_actuators.call_approved_webhook("https://example.com/hook", {"a": 1}, approval_cb=lambda _t, _d: True)
+    _ok, _msg = api_actuators.call_approved_webhook("https://example.com/hook", {"a": 1}, approval_cb=lambda _t, _d: True)
+    assert _ok is False and "Blocked:" in _msg
 
     # Phase 4: Zero-RAM SQLite WITH RECURSIVE CTE GraphRAG traverses 3 hops & resists cycles!
     db.add_knowledge_triple("Rajendra", "authored", "ProposalX", cloud_safe=True)
@@ -1236,7 +1242,7 @@ def test_update11_dedup_wiring_remember_tier_bg_api_and_cleanup(tmp_path: Path, 
     t_set, _ = rtr.ask("/tier 0")
     assert "Compute Tier 0 active" in t_set
     ans_t0, src_t0 = rtr.ask("explain quantum tunneling in detail")
-    assert src_t0 == "tier0_reflex" and "Tier 0" in ans_t0
+    assert src_t0 == "tier0_reflex_only" and "Gear 0" in ans_t0
     t_rst, _ = rtr.ask("/tier auto")
     assert "reset" in t_rst.lower()
     assert rtr._session_tier is None

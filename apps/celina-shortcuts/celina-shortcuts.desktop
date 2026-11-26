@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Celina Shortcuts
+GenericName=Shortcuts
+Comment=Apple Shortcuts-parity automation app for Celina AI OS
+Exec=celina-shortcuts %f
+Icon=org.macubuntu.CelinaShortcuts
+Terminal=false
+Type=Application
+Categories=Office;System;Utility;
+Keywords=shortcut;automation;celina;macos;workflow;
+MimeType=text/x-cshortcut-yaml;
+StartupNotify=true
+StartupWMClass=org.macubuntu.CelinaShortcuts

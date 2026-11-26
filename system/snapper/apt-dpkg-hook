@@ -1,0 +1,6 @@
+// macubuntu Snapper pre/post hook for apt/dpkg operations
+// Creates btrfs snapshots before and after risky package changes
+// Place at: /etc/apt/apt.conf.d/99-macubuntu-snapper
+
+DPkg::Pre-Install-Pkgs {"/usr/bin/snapper create --type pre --description 'apt-pre $(date +%Y%m%d-%H%M%S)' --cleanup-algorithm number";};
+DPkg::Post-Install-Pkgs {"/usr/bin/snapper create --type post --description 'apt-post $(date +%Y%m%d-%H%M%S)' --cleanup-algorithm number --pre-algorithm-number 10";};
