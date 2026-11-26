@@ -566,26 +566,31 @@ Key security-relevant files: `celina.service` (`NoNewPrivileges=true`, `UMask=00
 
 ## 13. Stages / Installation Pipeline
 
-`install.sh` runs 10 stages in order. Stage 00 is a hard pre-flight gate.
+`install.sh` runs up to 19 modular stage scripts under `stages/` in numerical order. Stage 00 is a hard pre-flight gate.
 
 | Stage | File | Purpose |
 |---|---|---|
-| **00** | `stages/00-preflight.sh` | Hard-abort if 7-way 102-tool parity check or Tier-2 mutation lock fails |
-| **10** | `stages/10-base-deps.sh` | Base system dependencies (vmtouch, ananicy-cpp, gnome-sushi REMOVED — owned by stages 35 and 45) |
+| **00** | `stages/00-preflight.sh` | Hard-abort if manifest/parity checks or Tier-2 mutation lock fails |
+| **10** | `stages/10-base-deps.sh` | Base system dependencies (`vmtouch`, `ananicy-cpp`, `gnome-sushi` REMOVED — owned by stages 35 and 45) |
 | **20** | `stages/20-appearance.sh` | Appearance theming |
-| **25** | `stages/25-desktop-dock.sh` | Desktop dock configuration (disables tiling-assistant@ubuntu.com before enabling leleat fork) |
+| **25** | `stages/25-desktop-dock.sh` | Desktop dock configuration (disables `tiling-assistant@ubuntu.com` before enabling leleat fork) |
 | **30** | `stages/30-input-typography.sh` | Input & typography |
+| **32** | `stages/32-low-latency-kernel.sh` | Optional low-latency kernel setup |
+| **33** | `stages/33-preload.sh` | Preload / warm-cache tuning |
+| **34** | `stages/34-snap-removal.sh` | Optional snap removal / deb transition |
 | **35** | `stages/35-memory-zram.sh` | zram compressed memory + fstab validation + Perf Fusion drop-ins (QoS, DNS cache, journald, ananicy, vmtouch, EPP) |
 | **40** | `stages/40-continuity-audio.sh` | Continuity audio (AirPlay, PipeWire) |
-| **45** | `stages/45-apps-backups-search.sh` | Apps, backups, search indexing (sole owner of gnome-sushi, timeshift moved to stage 61) |
+| **45** | `stages/45-apps-backups-search.sh` | Apps, backups, search indexing (sole owner of `gnome-sushi`, `timeshift` moved to stage 61) |
+| **46** | `stages/46-browser-tuning.sh` | Browser tuning & Firefox Safari chrome setup |
+| **49** | `stages/49-cpu-mitigations-off.sh` | Opt-in CPU mitigation tuning |
 | **50** | `stages/50-power.sh` | Power management, hibernate, LUKS |
-| **55** | `stages/55-security-biometrics.sh` | Security, biometrics, fprintd PAM |
-| **60** | `stages/60-extras.sh` | Extra utilities (gnome-sushi removed — owned by stage 45) |
-| **61** | `stages/61-recovery-polish.sh` | Recovery & polish (sole owner of timeshift) |
-| **70** | `stages/70-feature-celina.sh` | Celina AI OS feature installation (PYTHONPATH set to `features/celina` parent dir) |
-| **99** | `stages/99-verify.sh` | Post-install verification (ollama, bwrap, celina --help, PAM state, swap presence) |
+| **55** | `stages/55-security-biometrics.sh` | Security, biometrics, `fprintd` PAM |
+| **60** | `stages/60-extras.sh` | Extra utilities (`gnome-sushi` removed — owned by stage 45) |
+| **61** | `stages/61-recovery-polish.sh` | Recovery & polish (sole owner of `timeshift`) |
+| **70** | `stages/70-feature-celina.sh` | Celina AI OS feature installation (`PYTHONPATH` set to `features/celina` parent dir) |
+| **99** | `stages/99-verify.sh` | Post-install verification (`ollama`, `bwrap`, `celina --help`, PAM state, swap presence, macubuntu Center smoke & bundle checks) |
 
-**Core scripts:** `core/common.sh` (`snapshot_file()`, `rollback_all()`, `init_runtime_state()`), `core/detect.sh` (hardware detection).
+**Core & Hardware Helpers:** `core/common.sh` (`snapshot_file()`, `rollback_all()`, `init_runtime_state()`), `core/detect.sh` (hardware detection), `lib/hw_detect.sh`, `lib/npu_detect.sh`.
 
 **Installer features:** `--rollback` option, `--dry-run` zero-side-effect verification, `--system-only` / `--user-only` modes.
 
@@ -714,4 +719,161 @@ bash tools/verify_perf_stack.sh
 
 ---
 
----\n\n## 19. macubuntu Center — System Installer & Deployment GUI (`apps/macubuntu-center/`)\n\nmacubuntu Center is a **complete system installer/deployment tool**, not just a control plane. It is a GTK4/libadwaita application (`Adw.Application`) with an Apple Liquid-Glass design system, providing a full OS installation wizard, system wipe/reset, and post-install configuration.\n\n### File Inventory\n\n| File | Purpose |\n|---|---|\n| `main.py` | GTK4/libadwaita app: sidebar navigation, 16 pages, X-Ray strip, metrics, decisions, drop-zone updater, Model Hub, API Keys, Access, Install wizard, Reset wipe |\n| `backend.py` | Telemetry, Keyring vault, model fit, `.mubundle` inspector, access policy |\n| `installer.py` | `InstallWizard`, `SystemWiper`, `PackageManager`, `DownloadManager` + offline mode & stage selection backend |\n| `style.css` | Apple Liquid-Glass GTK4 design system |\n| `data/org.macubuntu.Center.desktop` | `.desktop` launcher into GNOME App Grid |\n\n### InstallWizard Flow (7 Steps)\n\n| Step | ID | Description |\n|---|---|---|\n| 1 | `download` | Download packages & stages (skipped in offline mode) |\n| 2 | `verify` | Verify `.mubundle` signatures (Ed25519) |\n| 3 | `install_base` | Install base system |\n| 4 | `install_stages` | Run macubuntu install stages |\n| 5 | `configure_hardware` | Configure hardware profile (ZRAM, App Nap, power, etc.) |\n| 6 | `start_services` | Start Celina services |\n| 7 | `reboot` | Restart required |\n\nEach step row in the UI shows a status pill (`Pending`/`Running`/`Done`/`Error`) and a `Gtk.ProgressBar` with percentage text. An overall progress bar and status label track aggregate progress.\n\n### 25 Install Wizard Features\n\nThe Install page (`_page_install()`) collects all install-time configuration through `Adw.PreferencesGroup` cards. Each card tracks state in `self._install_*` instance variables with safe defaults and exposes `_on_install_*()` handlers:\n\n| # | Feature | Card | State Variables | Handler(s) |\n|---|---|---|---|---|\n| 1 | Offline install mode | Installation Source | `_install_offline_mode`, `_install_staged_bundles`, `_install_selected_stages` | `_on_install_source_toggled`, `_on_install_browse_bundle`, `_on_install_bundle_dropped`, `_refresh_bundle_list`, `_on_install_stage_toggled` |\n| 3 | LUKS disk encryption | Disk Encryption | `_install_luks_enabled`, `_install_luks_passphrase` | `_on_install_luks_toggled`, `_on_install_luks_passphrase_changed`, `_on_install_save_recovery_key`, `_on_install_copy_recovery_key` |\n| 4 | User account creation | Create Your Account | `_install_user_full_name`, `_install_user_account`, `_install_user_password`, `_install_user_admin`, `_install_user_auto_login`, `_install_user_require_pw_wake` | `_on_install_user_full_changed`, `_on_install_user_acct_changed`, `_on_install_user_pw_changed`, `_on_install_user_admin_toggled`, `_on_install_user_std_toggled`, `_on_install_user_auto_login_toggled`, `_on_install_user_require_pw_toggled` |\n| 5 | ZRAM compressed swap | ZRAM Compressed Swap | `_install_zram_enabled`, `_install_zram_size`, `_install_zram_alg` | `_on_install_zram_toggled`, `_on_install_zram_size_changed`, `_on_install_zram_alg_changed` |\n| 6 | Snapshot rollback | System Snapshots | `_install_snapshot_enabled` | `_on_install_snapshot_toggled` |\n| 7 | App Nap controls | App Nap | `_install_app_nap_enabled` | `_on_install_app_nap_toggled` |\n| 8 | Hardware profile presets | Hardware Profile Preset | `_install_hardware_profile` | `_on_install_profile_changed` |\n| 9 | Network configuration | Network Configuration | `_install_network_dhcp`, `_install_network_static_ip`, `_install_network_gateway`, `_install_network_dns` | `_on_install_net_dhcp_toggled`, `_on_install_net_ip_changed`, `_on_install_net_gw_changed`, `_on_install_net_dns_changed` |\n| 10 | Storage configuration | Storage Configuration | `_install_storage_auto_partition`, `_install_storage_btrfs` | `_on_install_stor_auto_toggled`, `_on_install_stor_btrfs_toggled` |\n| 11 | Software selection | Software Selection | `_install_software` (dict: office, creative, development, gaming, multimedia) | `_on_install_software_toggled` |\n| 12 | Timezone configuration | Timezone | `_install_timezone` | `_on_install_tz_changed` |\n| 13 | Locale & keyboard | Locale & Keyboard | `_install_locale`, `_install_keyboard` | `_on_install_locale_changed`, `_on_install_kb_changed` |\n| 14 | Accessibility options | Accessibility | `_install_a11y_screen_reader`, `_install_a11y_high_contrast`, `_install_a11y_large_text`, `_install_a11y_sticky_keys` | `_on_install_a11y_toggled` |\n| 15 | Power management | Power Management | `_install_power_profile`, `_install_power_sleep` | `_on_install_power_profile_changed`, `_on_install_power_sleep_changed` |\n| 16 | Security configuration | Security | `_install_security_firewall`, `_install_security_autoupdate`, `_install_security_snapd` | `_on_install_sec_firewall_toggled`, `_on_install_sec_autoupdate_toggled`, `_on_install_sec_snapd_toggled` |\n| 17 | Backup configuration | Backups | `_install_backup_enabled`, `_install_backup_target` | `_on_install_bak_enabled_toggled`, `_on_install_bak_target_changed` |\n| 18 | Update preferences | Update Preferences | `_install_update_channel`, `_install_update_auto` | `_on_install_upd_channel_changed`, `_on_install_upd_auto_toggled` |\n| 19 | Services configuration | Services | `_install_svc_celina`, `_install_svc_npu`, `_install_svc_app_nap` | `_on_install_svc_toggled` |\n| 20 | Install summary/finish page | Install Summary | `_install_finish_shown` | (read-only summary display) |\n| 21 | GPG key management | GPG Keys (on Access page) | `_install_gpg_keys` (list) | `_on_gpg_import_key` |\n| 22 | Model Hub integration | AI Models | `_install_models` (list) | `_on_install_model_toggled` |\n| 23 | API Keys integration | API Keys (Optional) | `_install_api_keys_configured` | `_on_install_api_keys_toggled` |\n| 24 | Access & Permissions | Access & Permissions | `_install_access_landlock`, `_install_access_sandbox` | `_on_install_acc_landlock_toggled`, `_on_install_acc_sandbox_toggled` |\n| 25 | System Wipe integration | Selective Wipe Options / Confirm Reset | `_install_wipe_keep_home`, `_install_wipe_keep_configs`, `_install_wipe_confirm` | `_on_install_wipe_keep_home_toggled`, `_on_install_wipe_keep_configs_toggled`, `_on_install_wipe_confirm_changed` |\n\n### Offline Mode (.mubundle Staging)\n\nWhen Offline Install is selected, the installer:\n- Shows a drag & drop drop zone (`Gtk.DropTarget`) for `.mubundle` files\n- Provides a multi-file browse dialog (`Gtk.FileDialog.open_multiple`)\n- Lists staged bundles with name, path, and a signed/unsigned pill\n- Short-circuits `DownloadManager.run_download()` — no network download\n- Filters stages by `selected_stages` (empty = all 18 stages)\n\n### System Wipe / Reset to Ubuntu\n\nThe Reset page (`_page_reset()`) provides:\n- A warning pill about destructive action\n- **What Will Be Removed** preview (packages, services, files, total count)\n- **Selective Wipe Options**: Keep home directory, Keep user configs\n- **Confirm Reset**: Type `WIPE` to enable the wipe button\n- `SystemWiper` executes in a background thread with progress callbacks\n- Reboot button shown on completion\n\n### Backend Classes (`installer.py`)\n\n| Class | Responsibility |\n|---|---|\n| `InstallWizard` | Orchestrates the 7-step install flow; accepts `target_tier`, `offline_mode`, `staged_bundles`, `selected_stages`; exposes `plan.overall_progress`, `run_next()`, `is_complete()` |\n| `SystemWiper` | Executes the system wipe with progress callback; `get_wipe_preview()` returns removal summary |\n| `PackageManager` | Installs/removes packages during base system install |\n| `DownloadManager` | Downloads packages/stages (skipped in offline mode) |\n\n### Polkit & pkexec Architecture\n\n| Component | File | Purpose |\n|---|---|---|\n| Polkit action | `polkit/org.macubuntu.center.policy` | `org.macubuntu.center` action with `auth_admin` authorization |\n| pkexec worker | `libexec/macubuntu-updater-helper` | Privileged updater worker (Ed25519 signature verification + Snapper snapshots + Stage 99) |\n| Signed packager | `scripts/pack-update.sh` | Builds signed `.mubundle` tarballs (payload + manifest + SHA256SUMS + Ed25519 signature) |\n| .desktop launcher | `data/org.macubuntu.Center.desktop` | GNOME App Grid entry point |\n\n---\n\n## 20. Stage 99 Integrity & Parity Gate Additions\n\n`stages/stage-99-verify.sh` was extended with two new verification blocks:\n\n### Block 11 — Headless GTK Smoke Test\n\nVerifies all 4 macubuntu Center source files parse cleanly without requiring a display server or GTK bindings:\n- `apps/macubuntu-center/main.py` (ast.parse)\n- `apps/macubuntu-center/installer.py` (ast.parse)\n- `apps/macubuntu-center/backend.py` (ast.parse)\n- `apps/macubuntu-center/style.css` (non-empty check)\n\n### Block 12 — Pack-Update `.mubundle` Signature Verification Test\n\nEnd-to-end test of the signed bundle format:\n1. Generates a test Ed25519 key pair\n2. Creates a test payload directory\n3. Packs a signed `.mubundle` via `scripts/pack-update.sh`\n4. Extracts and verifies SHA256SUMS checksums\n5. Verifies Ed25519 signature of SHA256SUMS against the public key (fail-closed on mismatch)\n\n**Note:** The `.mubundle` pack step requires `zstd` (not available in sandbox); the test passes on the target Ubuntu 26.04 desktop.\n\n---\n\n## 21. Remaining 8 Unwired Screens (Master Agent Prompt)\n\nThe following 8 screens exist in `NAV_SECTIONS` but do not yet have `_page_*()` implementations. A master agent prompt at `AGENT_PROMPT_REMAINING_SCREENS.md` provides full implementation instructions:\n\n| Screen ID | Title | Section | Backend Socket |\n|---|---|---|---|\n| `performance` | Performance & App Nap | SYSTEM | `/run/user/$UID/celina/app_nap.sock` |\n| `appearance` | Appearance & Input | SYSTEM | (UI only) |\n| `continuity` | Continuity & Power | SYSTEM | cgroup v2 (`/sys/fs/cgroup/`) |\n| `recovery` | Snapshots & Recovery | SYSTEM | `/run/user/$UID/celina/snapshot.sock` |\n| `knowledge` | Knowledge & Memory | CELINA AI & MODELS | SQLite (`$HOME/.local/share/celina/db/memory.db`) |\n| `voice` | Voice & Live Playground | CELINA AI & MODELS | `/run/user/$UID/celina/voice.sock` |\n| `agents` | Agents & Shortcuts | ACCESS & TRUST | `/run/user/$UID/celina/agents.sock` |\n| `security` | 106 Tools & MCP03 | ACCESS & TRUST | `/run/user/$UID/celina/mcp.sock` |\n\nEach screen must:\n- Return a `Gtk.ScrolledWindow` wrapping `_wrap_page(title, subtitle, body)`\n- Use `Adw.PreferencesGroup` for setting groups\n- Register in `_populate_pages()` via `self.stack.add_named()`\n- Connect to its backend socket via JSON-over-UDS pattern\n- Use `_spring_reveal()` for page entrance animation\n- Follow all standing constraints (P5 atomic writes, `uid_provenance=\"untrusted\"` fail-closed, DRY_RUN safety, stdlib-only, etc.)\n\nThe master agent prompt (`AGENT_PROMPT_REMAINING_SCREENS.md`) includes full code patterns, socket connection templates, animation helpers, and the complete list of standing constraints that must not be violated.\n\n---\n\n**End of Architecture Document** — v4.5, Update 27  \n**Status:** Controls specified and code-verified; threat model and operational gaps documented in §9–§10. macubuntu Center installer + 25 features + Stage 99 additions complete. Remaining 8 screens pending per §21. Tag `v0.6.2-deconflicted-green` at commit `4a3d16d`.
+## 19. macubuntu Center — System Installer & Deployment GUI (`apps/macubuntu-center/`)
+
+macubuntu Center is a **complete system installer/deployment tool**, not just a control plane. It is a GTK4/libadwaita application (`Adw.Application`) with an Apple Liquid-Glass design system, providing a full OS installation wizard, system wipe/reset, and post-install configuration.
+
+### File Inventory
+
+| File | Purpose |
+|---|---|
+| `apps/macubuntu-center/main.py` | GTK4/libadwaita app: sidebar navigation, 16 pages, X-Ray strip, metrics, decisions, drop-zone updater, Model Hub, API Keys, Access, Install wizard, Reset wipe |
+| `apps/macubuntu-center/backend.py` | Telemetry, Keyring vault, model fit, `.mubundle` inspector, access policy |
+| `apps/macubuntu-center/installer.py` | `InstallWizard`, `SystemWiper`, `PackageManager`, `DownloadManager` + offline mode & stage selection backend |
+| `apps/macubuntu-center/style.css` | Apple Liquid-Glass GTK4 design system |
+| `data/org.macubuntu.Center.desktop` | `.desktop` launcher into GNOME App Grid |
+
+### InstallWizard Flow (7 Steps)
+
+| Step | ID | Description |
+|---|---|---|
+| 1 | `download` | Download packages & stages (skipped in offline mode) |
+| 2 | `verify` | Verify `.mubundle` signatures (Ed25519) |
+| 3 | `install_base` | Install base system |
+| 4 | `install_stages` | Run macubuntu install stages |
+| 5 | `configure_hardware` | Configure hardware profile (ZRAM, App Nap, power, etc.) |
+| 6 | `start_services` | Start Celina services |
+| 7 | `reboot` | Restart required |
+
+Each step row in the UI shows a status pill (`Pending`/`Running`/`Done`/`Error`) and a `Gtk.ProgressBar` with percentage text. An overall progress bar and status label track aggregate progress.
+
+### 25 Install Wizard Features
+
+The Install page (`_page_install()`) collects all install-time configuration through `Adw.PreferencesGroup` cards. Each card tracks state in `self._install_*` instance variables with safe defaults and exposes `_on_install_*()` handlers:
+
+| # | Feature | Card | State Variables | Handler(s) |
+|---|---|---|---|---|
+| 1 | Offline install mode | Installation Source | `_install_offline_mode`, `_install_staged_bundles`, `_install_selected_stages` | `_on_install_source_toggled`, `_on_install_browse_bundle`, `_on_install_bundle_dropped`, `_refresh_bundle_list`, `_on_install_stage_toggled` |
+| 3 | LUKS disk encryption | Disk Encryption | `_install_luks_enabled`, `_install_luks_passphrase` | `_on_install_luks_toggled`, `_on_install_luks_passphrase_changed`, `_on_install_save_recovery_key`, `_on_install_copy_recovery_key` |
+| 4 | User account creation | Create Your Account | `_install_user_full_name`, `_install_user_account`, `_install_user_password`, `_install_user_admin`, `_install_user_auto_login`, `_install_user_require_pw_wake` | `_on_install_user_full_changed`, `_on_install_user_acct_changed`, `_on_install_user_pw_changed`, `_on_install_user_admin_toggled`, `_on_install_user_std_toggled`, `_on_install_user_auto_login_toggled`, `_on_install_user_require_pw_toggled` |
+| 5 | ZRAM compressed swap | ZRAM Compressed Swap | `_install_zram_enabled`, `_install_zram_size`, `_install_zram_alg` | `_on_install_zram_toggled`, `_on_install_zram_size_changed`, `_on_install_zram_alg_changed` |
+| 6 | Snapshot rollback | System Snapshots | `_install_snapshot_enabled` | `_on_install_snapshot_toggled` |
+| 7 | App Nap controls | App Nap | `_install_app_nap_enabled` | `_on_install_app_nap_toggled` |
+| 8 | Hardware profile presets | Hardware Profile Preset | `_install_hardware_profile` | `_on_install_profile_changed` |
+| 9 | Network configuration | Network Configuration | `_install_network_dhcp`, `_install_network_static_ip`, `_install_network_gateway`, `_install_network_dns` | `_on_install_net_dhcp_toggled`, `_on_install_net_ip_changed`, `_on_install_net_gw_changed`, `_on_install_net_dns_changed` |
+| 10 | Storage configuration | Storage Configuration | `_install_storage_auto_partition`, `_install_storage_btrfs` | `_on_install_stor_auto_toggled`, `_on_install_stor_btrfs_toggled` |
+| 11 | Software selection | Software Selection | `_install_software` (dict: office, creative, development, gaming, multimedia) | `_on_install_software_toggled` |
+| 12 | Timezone configuration | Timezone | `_install_timezone` | `_on_install_tz_changed` |
+| 13 | Locale & keyboard | Locale & Keyboard | `_install_locale`, `_install_keyboard` | `_on_install_locale_changed`, `_on_install_kb_changed` |
+| 14 | Accessibility options | Accessibility | `_install_a11y_screen_reader`, `_install_a11y_high_contrast`, `_install_a11y_large_text`, `_install_a11y_sticky_keys` | `_on_install_a11y_toggled` |
+| 15 | Power management | Power Management | `_install_power_profile`, `_install_power_sleep` | `_on_install_power_profile_changed`, `_on_install_power_sleep_changed` |
+| 16 | Security configuration | Security | `_install_security_firewall`, `_install_security_autoupdate`, `_install_security_snapd` | `_on_install_sec_firewall_toggled`, `_on_install_sec_autoupdate_toggled`, `_on_install_sec_snapd_toggled` |
+| 17 | Backup configuration | Backups | `_install_backup_enabled`, `_install_backup_target` | `_on_install_bak_enabled_toggled`, `_on_install_bak_target_changed` |
+| 18 | Update preferences | Update Preferences | `_install_update_channel`, `_install_update_auto` | `_on_install_upd_channel_changed`, `_on_install_upd_auto_toggled` |
+| 19 | Services configuration | Services | `_install_svc_celina`, `_install_svc_npu`, `_install_svc_app_nap` | `_on_install_svc_toggled` |
+| 20 | Install summary/finish page | Install Summary | `_install_finish_shown` | (read-only summary display) |
+| 21 | GPG key management | GPG Keys (on Access page) | `_install_gpg_keys` (list) | `_on_gpg_import_key` |
+| 22 | Model Hub integration | AI Models | `_install_models` (list) | `_on_install_model_toggled` |
+| 23 | API Keys integration | API Keys (Optional) | `_install_api_keys_configured` | `_on_install_api_keys_toggled` |
+| 24 | Access & Permissions | Access & Permissions | `_install_access_landlock`, `_install_access_sandbox` | `_on_install_acc_landlock_toggled`, `_on_install_acc_sandbox_toggled` |
+| 25 | System Wipe integration | Selective Wipe Options / Confirm Reset | `_install_wipe_keep_home`, `_install_wipe_keep_configs`, `_install_wipe_confirm` | `_on_install_wipe_keep_home_toggled`, `_on_install_wipe_keep_configs_toggled`, `_on_install_wipe_confirm_changed` |
+
+### Offline Mode (`.mubundle` Staging)
+
+When Offline Install is selected, the installer:
+- Shows a drag & drop drop zone (`Gtk.DropTarget`) for `.mubundle` files
+- Provides a multi-file browse dialog (`Gtk.FileDialog.open_multiple`)
+- Lists staged bundles with name, path, and a signed/unsigned pill
+- Short-circuits `DownloadManager.run_download()` — no network download
+- Filters stages by `selected_stages` (empty = all stages)
+
+### System Wipe / Reset to Ubuntu
+
+The Reset page (`_page_reset()`) provides:
+- A warning pill about destructive action
+- **What Will Be Removed** preview (packages, services, files, total count)
+- **Selective Wipe Options**: Keep home directory, Keep user configs
+- **Confirm Reset**: Type `WIPE` to enable the wipe button
+- `SystemWiper` executes in a background thread with progress callbacks
+- Reboot button shown on completion
+
+### Backend Classes (`installer.py`)
+
+| Class | Responsibility |
+|---|---|
+| `InstallWizard` | Orchestrates the 7-step install flow; accepts `target_tier`, `offline_mode`, `staged_bundles`, `selected_stages`; exposes `plan.overall_progress`, `run_next()`, `is_complete()` |
+| `SystemWiper` | Executes the system wipe with progress callback; `get_wipe_preview()` returns removal summary |
+| `PackageManager` | Installs/removes packages during base system install |
+| `DownloadManager` | Downloads packages/stages (skipped in offline mode) |
+
+### Polkit & `pkexec` Architecture
+
+| Component | File | Purpose |
+|---|---|---|
+| Polkit action | `polkit/org.macubuntu.center.policy` | `org.macubuntu.center` action with `auth_admin` authorization |
+| pkexec worker | `libexec/macubuntu-updater-helper` | Privileged updater worker (Ed25519 signature verification + Snapper snapshots + Stage 99) |
+| Signed packager | `scripts/pack-update.sh` | Builds signed `.mubundle` tarballs (payload + manifest + SHA256SUMS + Ed25519 signature) |
+| `.desktop` launcher | `data/org.macubuntu.Center.desktop` | GNOME App Grid entry point |
+
+---
+
+## 20. Stage 99 Integrity & Parity Gate Additions
+
+`stages/99-verify.sh` includes smoke and verification coverage:
+
+### Headless GTK Smoke Test
+Verifies `apps/macubuntu-center/` source files (`main.py`, `installer.py`, `backend.py`, `style.css`) parse cleanly without requiring a live display server.
+
+### Pack-Update `.mubundle` Signature Verification Test
+End-to-end signed bundle verification using `scripts/pack-update.sh` (Ed25519 key pair + SHA256SUMS + fail-closed signature check; requires `zstd` on the target desktop).
+
+---
+
+## 21. Remaining 8 Unwired Screens (Master Agent Prompt)
+
+The following 8 screens exist in `NAV_SECTIONS` and await `_page_*()` implementations as specified in `AGENT_PROMPT_REMAINING_SCREENS.md`:
+
+| Screen ID | Title | Section | Backend Socket |
+|---|---|---|---|
+| `performance` | Performance & App Nap | SYSTEM | `/run/user/$UID/celina/app_nap.sock` |
+| `appearance` | Appearance & Input | SYSTEM | (UI only) |
+| `continuity` | Continuity & Power | SYSTEM | cgroup v2 (`/sys/fs/cgroup/`) |
+| `recovery` | Snapshots & Recovery | SYSTEM | `/run/user/$UID/celina/snapshot.sock` |
+| `knowledge` | Knowledge & Memory | CELINA AI & MODELS | SQLite (`$HOME/.local/share/celina/db/memory.db`) |
+| `voice` | Voice & Live Playground | CELINA AI & MODELS | `/run/user/$UID/celina/voice.sock` |
+| `agents` | Agents & Shortcuts | ACCESS & TRUST | `/run/user/$UID/celina/agents.sock` |
+| `security` | 106 Tools & MCP03 | ACCESS & TRUST | `/run/user/$UID/celina/mcp.sock` |
+
+---
+
+## 22. Gate 4.7 Integration — Security, Model Selection, Self-Improve & Packaging
+
+The unified `macubuntu` repository (`master`) integrates the full **celina-gate47** hardening and subsystem suite alongside Update 19/20:
+
+### 22.1 Gate 4.7 Approval Security & Execution Boundary
+- **Design & Scope:** `GATE47_APPROVAL_SECURITY_DESIGN.md` and `GATE47_RELEASE_SCOPE.md` define canonical UTF-8 JSON request binding, SHA-256 verification, opaque single-use broker grants, and fail-closed defaults (`gear0_5_1_mirage.py` disabled/fail-closed absent signed-manifest policy).
+- **Modules (`features/celina/celina_pkg/`):** `approval_broker.py`, `approval_transport.py`, `policy.py`, `controlled_computer_use.py`, `security/`, `vault_audit.py`.
+- **OS Sandboxing & Service Hardening:** `seccomp-bpf.policy`, `celina.service`, `polkit/org.macubuntu.center.policy`.
+
+### 22.2 Model Selection & Routing (`MODEL_SELECTION_ARCHITECTURE.md`)
+- **Modules (`features/celina/celina_pkg/`):** `model_selector.py` (`select_whisper_model()`, `select_ollama_model()`, `select_edge0_model()`, `decide_cloud_routing()`), `model_integrity.py`, `router_gear0.py`, `router_providers.py`, `router_receipts.py`, `frontier_escalation.py`, `llm/`.
+- Resource-aware selection (RAM, disk, CPU/GPU/NPU) with explicit env overrides and zero implicit unapproved downloads.
+
+### 22.3 Self-Improve & Protected Core Manifest
+- **Protected Core Hash Lock:** `selfimprove/protected_hashes.json` tracks SHA-256 hashes of 6 critical modules (`approval.py`, `config.py`, `connectors/base.py`, `evidence.py`, `landlock_policy.py`, `net_policy.py`), alongside `selfimprove/l7_sensitive_paths.json`.
+- **Self-Improve Engine:** `features/celina/celina_pkg/selfimprove/` (L2–L7 evaluators, patcher, worktree, wiring facade), `self_heal.py`, `self_model.py`, `docs/selfimprove/`, `tests/selfimprove/`.
+
+### 22.4 Memory, Knowledge Graph, MCP & Runtime Extensions
+- **Knowledge & Compression:** `bitemporal_kg.py`, `graph_store.py`, `memory_wal.py`, `context_compressor.py`, `seed_knowledge.py`, `world_model.py`, `sensory_buffer.py`, `persona.py`.
+- **Runtime, Bus & MCP:** `event_bus.py`, `brain_harness.py`, `harness.py`, `cli_bridge.py`, `doctor.py`, `registry.py`, `prompt_transpiler.py`, `web_scraper.py`, `runtime/`, `neural/`, `shortcuts/`, `mcp/`, `mcp_dbus_desktop.py`, `mcp_media_ondemand.py`, `mcp_proactive_observer.py`.
+- **Desktop Apps & Release Tooling:** `apps/celina-shortcuts/`, `apps/macubuntu-center/`, `celina/tools/`, `extensions/celina-island@macubuntu/`, `build-release.sh`, `build-zipapp.sh`, `setup-ab-install.sh`, `pyproject.toml`, `CODEOWNERS`, `.pre-commit-config.yaml`, `.secrets.baseline`.
+
+### 22.5 Verification Gate Pipeline (`scripts/verify_all.sh`)
+- **Gate 0:** `tools/manifest_integrity.py --verify` (canonical SHA-256 + byte-identical manifest check)
+- **Gate 0b:** `tools/validate_configs.py` (JSON Schema + whitespace validation)
+- **Gate 1–3 & Hygiene:** `pytest` with branch coverage floor (`tests/`, `tests/audit/`, `tests/selfimprove/`), `bandit`, `pip-audit`, `mypy`, `ruff`, `detect-secrets` (outputs to `audit-reports/`).
+
+---
+
+**End of Architecture Document** — v4.5 (Unified `macubuntu` + Gate 4.7)  
+**Status:** Controls specified and code-verified; `celina-gate47` integrated on `master`. Threat model and operational gaps documented in §9–§10; remaining 8 UI screens pending per §21.
