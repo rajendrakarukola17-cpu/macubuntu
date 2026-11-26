@@ -1,0 +1,118 @@
+name: macubuntu Security, Reliability & Hardware CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-security-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test & lint tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck libglib2.0-bin dpkg-dev
+          python3 -m pip install --upgrade pip pytest
+
+      - name: Bash syntax check (bash -n) on all shell scripts
+        run: |
+          find . -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      - name: ShellCheck static analysis (warning severity)
+        run: |
+          find . -name '*.sh' -print0 | xargs -0 shellcheck -S error
+
+      - name: Python syntax compilation (py_compile)
+        run: |
+          python3 -m compileall -q features/celina/celina_pkg features/celina/celina_hardware system/nautilus system/firefox tests
+
+      - name: Validate JSON configuration schemas
+        run: |
+          for f in features/celina/config/*.json; do
+            python3 -m json.tool "$f" >/dev/null
+          done
+
+      - name: Verify 100% 7-way tool parity across schema, handlers, config, disk policy, domains, risk map & capability manifest
+        run: |
+          python3 -c '
+          import json, sys
+          sys.path.insert(0, "features/celina")
+          from celina_pkg import approval, config, tools
+          disk = json.loads(open("features/celina/config/neural-schema.json").read())
+          cap_disk = json.loads(open("system/capabilities/celina-capabilities.json").read())
+          tp = disk["security_policy"]
+          schema_names = {t["function"]["name"] for t in tools.TOOL_SCHEMAS}
+          impl_names = set(tools._AUTO_TOOL_MAP) | set(tools._APPROVAL_TOOL_MAP) | {"run_skill", "autonomous_gui_task"}
+          cfg_names = config.TIER1_AUTO_TOOLS | config.TIER2_APPROVAL_TOOLS
+          disk_names = set(tp["tier1_auto_tools"]) | set(tp["tier2_approval_tools"])
+          dom_names = {n for d in disk["tool_domains"].values() for n in d.get("tools", [])}
+          risk_names = set(approval.TOOL_RISK_MAP.keys())
+          cap_names = set(cap_disk.get("tools", {}).keys())
+          assert schema_names == impl_names == cfg_names == disk_names == dom_names == risk_names == cap_names
+          ndom = len(disk["tool_domains"])
+          print(f"Verified 100% 7-way parity across {len(schema_names)} tools & {ndom} domains.")
+          '
+
+      - name: Run full security, reliability, dry-run, rollback & hardware test suite
+        run: |
+          pytest -v
+
+      - name: Verify zero-side-effect dry-run across all profiles, uninstall & Tier B sandbox
+        run: |
+          for prof in default-8gb macos-only power-user; do
+            TMP_HOME="$(mktemp -d)"
+            HOME="$TMP_HOME" XDG_CONFIG_HOME="$TMP_HOME/.config" XDG_DATA_HOME="$TMP_HOME/.local/share" \
+              bash ./install.sh --dry-run --profile "$prof"
+            test -z "$(ls -A "$TMP_HOME")"
+            rm -rf "$TMP_HOME"
+          done
+          for extra in "--top-panel hidden --animation-speed fast" "--model granite3.1-moe:1b --fail-fast" "--macos-cmd-keys --silent-boot" "--system-only" "--user-only" "--accessibility --replace-swap --upgrade"; do
+            TMP_HOME="$(mktemp -d)"
+            # shellcheck disable=SC2086
+            HOME="$TMP_HOME" bash ./install.sh --dry-run $extra
+            test -z "$(ls -A "$TMP_HOME")"
+            rm -rf "$TMP_HOME"
+          done
+          TMP_HOME="$(mktemp -d)"
+          HOME="$TMP_HOME" bash ./install.sh --doctor >/dev/null || true
+          test -z "$(ls -A "$TMP_HOME")"
+          rm -rf "$TMP_HOME"
+          TMP_HOME="$(mktemp -d)"
+          HOME="$TMP_HOME" LC_ALL=C.UTF-8 bash ./install.sh --locale >/dev/null
+          test -z "$(ls -A "$TMP_HOME")"
+          rm -rf "$TMP_HOME"
+          TMP_HOME="$(mktemp -d)"
+          HOME="$TMP_HOME" bash ./tools/enroll-mok.sh --dry-run >/dev/null
+          test -z "$(ls -A "$TMP_HOME")"
+          rm -rf "$TMP_HOME"
+          TMP_HOME="$(mktemp -d)"
+          HOME="$TMP_HOME" bash ./uninstall.sh --dry-run
+          test -z "$(ls -A "$TMP_HOME")"
+          rm -rf "$TMP_HOME"
+          TMP_HOME="$(mktemp -d)"
+          HOME="$TMP_HOME" bash ./tools/experimental-deep-stack.sh --dry-run --generate-test-keys
+          test -z "$(ls -A "$TMP_HOME")"
+          rm -rf "$TMP_HOME"
+
+      - name: Validate GNOME Shell extension schema, eBPF/Compute probes & .deb packaging
+        run: |
+          glib-compile-schemas --strict --dry-run system/gnome/extensions/celina-island@macubuntu.org/schemas
+          python3 -m json.tool system/gnome/extensions/celina-island@macubuntu.org/metadata.json >/dev/null
+          bash ./tools/build-ebpf.sh --check
+          bash ./tools/build-ebpf.sh --dry-run
+          bash ./tools/detect-compute.sh --json >/dev/null
+          TMP_OUT="$(mktemp -d)"
+          bash ./tools/build-deb.sh --out "$TMP_OUT"
+          dpkg-deb --info "$TMP_OUT"/macubuntu_*_all.deb
+          dpkg-deb --contents "$TMP_OUT"/macubuntu_*_all.deb | grep -q "celina-island@macubuntu.org/schemas/gschemas.compiled"
+          rm -rf "$TMP_OUT"

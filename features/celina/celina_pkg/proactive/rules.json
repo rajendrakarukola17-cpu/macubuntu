@@ -1,0 +1,49 @@
+{
+  "schema_version": "5.0",
+  "rules": [
+    {
+      "id": "standup-focus",
+      "cooldown_sec": 900,
+      "when": {
+        "calendar_event": "standup",
+        "focus_mode": "none"
+      },
+      "then": {
+        "tool": "set_focus_mode",
+        "arguments": {
+          "mode": "work"
+        }
+      }
+    },
+    {
+      "id": "low-battery-dim",
+      "cooldown_sec": 600,
+      "when": {
+        "battery_pct": {
+          "lt": 20
+        },
+        "on_ac": false
+      },
+      "then": {
+        "tool": "set_brightness",
+        "arguments": {
+          "percent": 40
+        }
+      }
+    },
+    {
+      "id": "high-mem-offload-suggestion",
+      "cooldown_sec": 300,
+      "when": {
+        "memory_pressure": {
+          "gt": 0.85
+        }
+      },
+      "then": {
+        "tool": "offload_model",
+        "arguments": {},
+        "reason": "memory pressure high"
+      }
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[Unit]
+Description=macubuntu Nightly Encrypted BorgBackup Snapshot (Time Machine Automation)
+
+[Service]
+Type=oneshot
+Nice=15
+IOSchedulingClass=idle
+ExecStart=/usr/share/macubuntu/tools/celina-borg-backup.sh
+NoNewPrivileges=yes
+UMask=0077

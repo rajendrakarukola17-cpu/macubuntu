@@ -1,0 +1,36 @@
+[Unit]
+Description=Celina AI Memory & Kicker Knowledge-Graph Promotion Micro-Daemon (Zero Network)
+Documentation=file:///usr/share/macubuntu/ARCHITECTURE.md
+PartOf=celina.service
+After=celina.service
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=CELINA_DAEMON_ROLE=memory
+ExecStart=/bin/sh -c 'VENV="${HOME}/.local/share/celina/venv/bin/python3"; [ -x "$VENV" ] || VENV=python3; PYTHONPATH="${HOME}/.local/share/celina/app:/usr/share/macubuntu/features/celina" exec "$VENV" -m celina_pkg.kg_promoter --daemon'
+Restart=on-failure
+RestartSec=5s
+
+# Strict zero-network, userns-free unprivileged hardening (SQLite WAL files only)
+NoNewPrivileges=yes
+UMask=0077
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @module @raw-io @obsolete @debug @cpu-emulation @keyring @clock
+SystemCallErrorNumber=EPERM
+
+MemoryHigh=96M
+MemoryMax=256M
+CPUQuota=15%
+OOMScoreAdjust=-250
+
+[Install]
+WantedBy=default.target

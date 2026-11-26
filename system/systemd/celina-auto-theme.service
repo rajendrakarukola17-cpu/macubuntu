@@ -1,0 +1,8 @@
+[Unit]
+Description=macubuntu Auto Dark Mode (Sunset-to-Sunrise Color Scheme Switch)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/share/macubuntu/tools/celina-auto-theme.sh
+NoNewPrivileges=yes
+UMask=0077

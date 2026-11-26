@@ -1,0 +1,10 @@
+[Unit]
+Description=macubuntu Auto Dark Mode Periodic Timer (Every 10 Minutes, Diff-Gated)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

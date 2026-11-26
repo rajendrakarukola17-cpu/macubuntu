@@ -1,0 +1,68 @@
+/* ==========================================================================
+ * Celina AI (Celly) - macOS Spotlight Theme for Rofi
+ * Save as config/rofi-spotlight.rasi
+ * ========================================================================== */
+
+* {
+    font: "Inter 12";
+    background-color: transparent;
+    text-color: #f5f5f7;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+window {
+    background-color: rgba(30, 30, 34, 0.88);
+    border: 1px;
+    border-radius: 16px;
+    padding: 20px;
+    width: 640px;
+    x-offset: 0px;
+    y-offset: -15%;
+}
+
+mainbox {
+    children: [inputbar, listview];
+    spacing: 15px;
+}
+
+inputbar {
+    background-color: rgba(255, 255, 255, 0.08);
+    border: 1px;
+    border-radius: 10px;
+    padding: 12px;
+    children: [prompt, entry];
+}
+
+prompt {
+    text-color: #a855f7;
+    margin: 0px 12px 0px 4px;
+}
+
+entry {
+    placeholder: "Ask Celina (Celly) or search...";
+    placeholder-color: rgba(255, 255, 255, 0.45);
+}
+
+listview {
+    lines: 7;
+    spacing: 4px;
+    scrollbar: false;
+}
+
+element {
+    padding: 10px;
+    border-radius: 8px;
+}
+
+element selected {
+    background-color: rgba(168, 85, 247, 0.40);
+}
+
+element-text {
+    vertical-align: 0.5;
+}
+
+element-icon {
+    size: 24px;
+    margin: 0px 10px 0px 0px;
+}

@@ -1,0 +1,4 @@
+# macubuntu Optimized Battery Charging (80% Charge Threshold)
+# Applies automatically ONLY on laptops whose kernel power_supply driver exposes
+# charge_control_end_threshold (ThinkPad, ASUS, Framework, Huawei, MSI, Dell, etc.).
+SUBSYSTEM=="power_supply", KERNEL=="BAT*", ATTR{charge_control_end_threshold}=="*", ATTR{charge_control_end_threshold}="80"

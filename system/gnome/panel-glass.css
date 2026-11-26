@@ -1,0 +1,57 @@
+/* MACUBUNTU-CELINA-PANEL-START */
+/* Eliminates Ubuntu's solid black top bar & 1px border line across all GNOME Shell states */
+#panel,
+#panel.solid,
+#panel:overview,
+#panel.lock-screen,
+#panel.unlock-screen,
+#panel.login-screen {
+    background-color: transparent !important;
+    background-gradient-direction: none !important;
+    background-image: none !important;
+    border: none !important;
+    border-top: none !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+}
+
+#panel .panel-corner {
+    -panel-corner-radius: 0px !important;
+    -panel-corner-background-color: transparent !important;
+    -panel-corner-border-width: 0px !important;
+    -panel-corner-border-color: transparent !important;
+}
+
+/* Keep floating clock & status icons razor-sharp over both bright and dark wallpapers */
+#panel .panel-button {
+    color: rgba(255, 255, 255, 0.96) !important;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.55) !important;
+    -natural-hpadding: 8px;
+}
+
+#panel .panel-button:hover,
+#panel .panel-button:active,
+#panel .panel-button:checked {
+    background-color: rgba(255, 255, 255, 0.14) !important;
+    border-radius: 999px !important;
+    box-shadow: none !important;
+}
+
+/* Frosted macOS-style Lock Screen password pill & biometric icon polish */
+.unlock-dialog .login-dialog-prompt-entry {
+    background-color: rgba(255, 255, 255, 0.16) !important;
+    border: 1px solid rgba(255, 255, 255, 0.28) !important;
+    border-radius: 999px !important;
+    color: #ffffff !important;
+    padding: 8px 16px !important;
+}
+
+.unlock-dialog .login-dialog-prompt-entry:focus {
+    border-color: #0a84ff !important;
+    box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.32) !important;
+}
+
+.unlock-dialog .login-dialog-message-hint {
+    color: rgba(255, 255, 255, 0.88) !important;
+}
+/* MACUBUNTU-CELINA-PANEL-END */

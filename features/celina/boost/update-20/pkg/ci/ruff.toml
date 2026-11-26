@@ -1,0 +1,47 @@
+[lint]
+# Ruff lint rules for Celina Update 20
+select = [
+    "E",   # Pycodestyle errors
+    "F",   # Pyflakes
+    "I",   # Isort (import sorting)
+    "B",   # Flake8-bugbear
+    "C4",  # Flake8-comprehensions
+    "EM",  # Flake8-errmsg
+    "RET", # Flake8-return
+    "RUF", # Ruff-specific
+    "S",   # Flake8-bandit (security)
+    "UP",  # Pyupgrade
+    "W",   # Pycodestyle warnings
+]
+ignore = [
+    "E501",  # Line too long (not enforced)
+    "B008",  # Function calls in default arguments (common pattern)
+    "S101",  # assert used (tests use assert)
+    "S102",  # exec used (not used)
+    "S301",  # pickle (not used for security)
+    "S303",  # MD5 (used for non-security file hashing)
+    "S602",  # subprocess with shell=True (Gear 0 forbids — should be 0 occurrences)
+    "S603",  # subprocess without shell=True (OK — we use list form)
+    "S607",  # start process with partial path (OK for some system tools)
+]
+
+[lint.flake8-bandit]
+# S602 (shell=True) must be 0 in Gear 0 — severity elevated
+sensitive_calls = ["subprocess.Popen", "subprocess.run", "os.system"]
+
+[tool.ruff.line-length]
+# Not used; we don't enforce line length
+value = 88
+
+[tool.ruff]
+# Exclude generated/cache directories
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "node_modules",
+    "dist",
+    "build",
+    "update_archive",
+    "*.pyc",
+]

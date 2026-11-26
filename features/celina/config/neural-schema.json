@@ -1,0 +1,622 @@
+{
+  "schema_version": "4.4",
+  "persona": {
+    "name": "Celina",
+    "nickname": "Celly",
+    "role": "Executive OS Orchestrator, Project Astra Computer-Use Agent & Multilingual Chief-of-Staff",
+    "auto_match_user_language": true,
+    "default_language": "auto",
+    "supported_languages": ["en", "te", "hi"],
+    "system_instructions": "You are {name} (also affectionately called {nickname} by the user), an ultra-intelligent, decisive personal OS assistant running on Ubuntu 26.04 Wayland (8GB RAM). Act like a sharp real-person chief of staff: lead with your clearest verdict or action first, avoid robotic filler, and proactively offer at most ONE high-leverage suggestion or risk warning when genuinely useful. Match the language of the user's latest message strictly (reply in English when the user writes in English; reply in Telugu or Hindi only when the user writes in Telugu/Tenglish or Hindi/Hinglish). When the user asks to rename you or change your nickname, call set_assistant_identity immediately. When the user refers to highlighted/selected text ('summarize this', 'translate this', 'debug this'), call get_highlighted_text first. Use the active desktop window context when interpreting actions ('export this to PDF'). You can perform ANYTHING a human does on a computer: open ANY website, search URL, media page, login page, or desktop app via open_application (e.g. open_application(app_name='https://open.spotify.com/search/lofi%20beats')), control playback via control_media, manage files/LibreOffice docs/MCP/goals, and for any multi-step GUI/browser click/type workflow invoke autonomous_gui_task or click_on_text/type_text/press_hotkey (never read or enter user passwords — open the login page and let the user sign in). NEVER falsely claim you cannot open websites, play media, or control apps. You can also learn, record, save, and replay skills. Never invent facts or claim an action succeeded unless a tool returned success."
+  },
+  "swarm_roles": {
+    "architect": {
+      "name": "The Architect",
+      "triggers": ["plan", "architect", "architecture", "design", "roadmap", "break down", "project", "migrate", "goal", "milestone"],
+      "directive": "SWARM ROLE — THE ARCHITECT: Decompose the objective into a numbered DAG of concrete sub-tasks, identify dependencies and failure modes, and log or update multi-step objectives via manage_goal when appropriate."
+    },
+    "engineer": {
+      "name": "The Coder / Engineer",
+      "triggers": ["code", "debug", "traceback", "script", "python", "bash", "fix", "refactor", "compile", "git", "sql", "bug", "test"],
+      "directive": "SWARM ROLE — THE ENGINEER: Inspect actual files/logs first, isolate the single root cause, write clean modular code, and prefer sandboxed verification before declaring success."
+    },
+    "researcher": {
+      "name": "The Researcher",
+      "triggers": ["research", "search", "latest", "compare", "news", "paper", "specs", "fact check", "summarize", "benchmark"],
+      "directive": "SWARM ROLE — THE RESEARCHER: Cross-verify live sources via web_search/fetch_webpage or local documents, synthesize a verdict-first brief, and cite concrete dates or numbers."
+    },
+    "critic": {
+      "name": "The Critic / Verifier",
+      "directive": "SWARM ROLE — THE CRITIC: Audit proposed Tier-2 actions and outputs for security risks, data loss, privacy leaks, or hallucinated paths before final execution."
+    }
+  },
+  "cognition": {
+    "adaptive_thinking": true,
+    "second_thought_confidence_gate": {
+      "enabled": true,
+      "min_mean_logprob": 0.82,
+      "runtime_small_model": "qwen3:1.7b"
+    },
+    "tool_presentation": {
+      "mode": "hybrid_tiered",
+      "detailed_top_k": 8,
+      "include_name_only_catalog": true
+    },
+    "tree_of_thought_on_deep": true,
+    "critic_audit_on_tier2": true,
+    "gears": {
+      "fast": {
+        "reasoning_effort": "none",
+        "max_tokens": 220,
+        "temperature": 0.35,
+        "max_steps": 2,
+        "instruction": "GEAR 1 (FAST INSTINCT): This is a quick/simple request. Do NOT overthink or write long intros. Reply immediately in 1–2 crisp, helpful sentences."
+      },
+      "tactical": {
+        "reasoning_effort": "low",
+        "max_tokens": 600,
+        "temperature": 0.45,
+        "max_steps": 5,
+        "instruction": "GEAR 2 (TACTICAL ADVISOR): Think concisely and use tools directly when needed. Lead with ONE decisive recommendation or action result, state the core reason briefly, and optionally add ONE smart next-step suggestion."
+      },
+      "deep": {
+        "reasoning_effort": "high",
+        "max_tokens": 1500,
+        "temperature": 0.3,
+        "max_steps": 6,
+        "instruction": "GEAR 3 (DEEP STRATEGIST): This is an important or complex problem. Think rigorously: verify facts/files/screen via tools, examine edge cases, trade-offs, and hidden risks, then commit to a clear verdict and concrete action plan."
+      }
+    },
+    "fast_overrides": ["quick:", "fast:", "brief:", "short:", "tldr"],
+    "deep_overrides": ["deep:", "think deeply", "think hard", "analyze carefully", "step by step"],
+    "deep_triggers": [
+      "architect", "architecture", "debug", "compare", "tradeoff", "trade-off",
+      "strategy", "financial", "invest", "career", "legal", "medical",
+      "optimize", "refactor", "migrate", "prove", "why does", "root cause",
+      "plan my", "pros and cons", "security audit", "design a", "system design",
+      "automate complex", "multi-step workflow"
+    ],
+    "tactical_triggers": [
+      "slow", "lag", "fix", "error", "recommend", "suggest", "which should i",
+      "best way", "how to", "summarize", "edit", "update", "create",
+      "document", "libreoffice", "search", "find", "send", "organize",
+      "automate", "script", "install", "download", "battery", "ram", "click", "screen",
+      "ocr", "learn", "skill", "record", "workflow", "macro", "type", "press",
+      "mcp", "github", "linear", "notion", "git", "cache", "astra", "scroll",
+      "drag", "fill form", "youtube", "spotify", "play", "song", "songs",
+      "music", "video", "watch", "listen", "login", "sign in", "open", "launch",
+      "website", "netflix", "amazon", "flipkart", "browser"
+    ]
+  },
+  "edge_lighting": {
+    "enabled": true,
+    "fullscreen_on_task": true,
+    "island_on_response": true
+  },
+  "cache": {
+    "enabled": true,
+    "ram_hot_max_items": 32,
+    "ram_idle_offload_sec": 300,
+    "disk_offload_interval_sec": 600,
+    "max_entries": 300,
+    "max_size_mb": 10,
+    "ttl_seconds": {
+      "llm_fast": 21600,
+      "llm_tactical": 7200,
+      "llm_deep": 3600,
+      "web_search": 900,
+      "fetch_webpage": 1800,
+      "document": 43200
+    }
+  },
+  "automation": {
+    "enabled": true,
+    "ocr_languages": "eng+tel+hin",
+    "default_step_delay_sec": 0.4,
+    "max_workflow_steps": 25,
+    "astra_max_steps": 10,
+    "require_approval_for_gui_actions": true,
+    "require_approval_for_skill_replay": true
+  },
+  "privacy": {
+    "strict_mode": true,
+    "auto_redact_pii": true,
+    "require_consent_for_cloud_local_data": true,
+    "require_consent_for_cloud_pii": true,
+    "prefer_local_for_private_files": true,
+    "hard_blocked_paths": [
+      ".ssh",
+      ".gnupg",
+      ".aws",
+      ".kube",
+      ".netrc",
+      ".git-credentials",
+      "keyrings",
+      "Login Data",
+      "cookies.sqlite"
+    ],
+    "local_sensitive_tools": [
+      "read_file",
+      "read_document",
+      "search_in_files",
+      "get_clipboard",
+      "get_highlighted_text",
+      "run_shell_command",
+      "read_screen",
+      "find_text_on_screen",
+      "inspect_ui_elements",
+      "mcp_call_tool",
+      "get_upcoming_events",
+      "search_contacts",
+      "search_browser_bookmarks",
+      "prepare_meeting_context",
+      "transcribe_system_audio",
+      "get_secret_vault_status",
+      "mount_ios_device",
+      "respond_ios_notification",
+      "writing_tool_transform",
+      "live_text_ocr",
+      "audit_app_permissions"
+    ]
+  },
+  "routing": {
+    "default_mode": "auto",
+    "max_agent_steps": 5,
+    "cloud_model": "openrouter/free",
+    "vision_model": "openrouter/free",
+    "local_model": "qwen3:1.7b",
+    "ollama_num_ctx": 4096,
+    "request_timeout_sec": 20,
+    "local_timeout_sec": 180
+  },
+  "languages": {
+    "en": {
+      "name": "English",
+      "native_name": "English",
+      "badge": "EN",
+      "piper_voice": "en_US-amy-medium",
+      "piper_repo_path": "en/en_US/amy/medium/en_US-amy-medium",
+      "espeak_voice": "en-us+f3"
+    },
+    "te": {
+      "name": "Telugu",
+      "native_name": "తెలుగు",
+      "badge": "తె",
+      "unicode_range": ["0C00", "0C7F"],
+      "piper_voice": "te_IN-maya-medium",
+      "piper_repo_path": "te/te_IN/maya/medium/te_IN-maya-medium",
+      "espeak_voice": "te+f3"
+    },
+    "hi": {
+      "name": "Hindi",
+      "native_name": "हिन्दी",
+      "badge": "हिं",
+      "unicode_range": ["0900", "097F"],
+      "piper_voice": "hi_IN-priyamvada-medium",
+      "piper_repo_path": "hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium",
+      "espeak_voice": "hi+f3"
+    }
+  },
+  "stt": {
+    "whisper_model": "base",
+    "whisper_idle_offload_seconds": 180,
+    "auto_detect_language": true,
+    "vad_engine": "auto",
+    "silero_vad_threshold": 0.50,
+    "audio_ducking": true,
+    "duck_volume_pct": 25,
+    "tts_engine": "auto",
+    "kokoro_voice_en": "af_bella",
+    "kokoro_voice_hi": "hf_alpha",
+    "silence_stop_seconds": 1.2,
+    "start_timeout_seconds": 5.0,
+    "max_duration_seconds": 15.0
+  },
+  "security_policy": {
+    "max_file_backups": 20,
+    "tier1_auto_tools": [
+      "get_system_stats",
+      "set_volume",
+      "set_brightness",
+      "control_media",
+      "control_connectivity",
+      "open_application",
+      "toggle_app_nap",
+      "open_document",
+      "list_running_apps",
+      "search_files",
+      "search_in_files",
+      "read_file",
+      "read_document",
+      "get_clipboard",
+      "get_highlighted_text",
+      "set_clipboard",
+      "set_timer",
+      "web_search",
+      "fetch_webpage",
+      "fetch_url_text",
+      "get_weather",
+      "get_news_headlines",
+      "get_current_time_zone",
+      "remember_fact",
+      "search_memory",
+      "link_knowledge",
+      "manage_goal",
+      "save_workspace_snapshot",
+      "set_assistant_identity",
+      "get_hardware_capabilities",
+      "set_focus_mode",
+      "diagnose_systemd_service",
+      "get_secret_vault_status",
+      "spotlight_query",
+      "route_app_audio",
+      "get_continuity_status",
+      "audit_app_permissions",
+      "search_active_app_menus",
+      "writing_tool_transform",
+      "live_text_ocr",
+      "get_upcoming_events",
+      "search_contacts",
+      "search_browser_bookmarks",
+      "prepare_meeting_context",
+      "read_screen",
+      "find_text_on_screen",
+      "inspect_ui_elements",
+      "learn_skill",
+      "save_last_actions_as_skill",
+      "list_skills",
+      "list_quarantined_skills",
+      "reject_quarantined_skill",
+      "update_skill",
+      "forget_skill",
+      "start_recording",
+      "stop_recording",
+      "mcp_list_servers",
+      "mcp_list_tools",
+      "cache_status",
+      "clear_cache"
+    ],
+    "tier2_approval_tools": [
+      "write_file",
+      "edit_file",
+      "edit_document",
+      "create_document",
+      "convert_document",
+      "libreoffice_edit",
+      "move_file",
+      "trash_file",
+      "close_application",
+      "compose_message",
+      "run_shell_command",
+      "run_python_sandbox",
+      "code_sandbox",
+      "transcribe_system_audio",
+      "manage_default_apps",
+      "click_on_text",
+      "click_position",
+      "scroll_screen",
+      "drag_and_drop",
+      "type_text",
+      "press_hotkey",
+      "run_skill",
+      "autonomous_gui_task",
+      "mcp_call_tool",
+      "install_community_skill",
+      "approve_quarantined_skill",
+      "trigger_iot_webhook",
+      "launch_android_mirror",
+      "control_airplay_mirror",
+      "mount_ios_device",
+      "start_ios_continuity_camera",
+      "start_ipad_sidecar_weylus",
+      "respond_ios_notification",
+      "create_calendar_event",
+      "submit_goal",
+      "computer_click",
+      "computer_type",
+      "vision_ocr",
+      "vision_analyze",
+      "ghostdesk_click",
+      "ponytail_evaluate",
+      "skilspector_scan"
+    ],
+    "protected_paths": [
+      ".ssh",
+      ".gnupg",
+      ".aws",
+      ".kube",
+      ".netrc",
+      ".git-credentials"
+    ]
+  },
+  "tool_domains": {
+    "os_hardware": {
+      "always_active": true,
+      "core_fast_tools": [
+        "get_system_stats",
+        "set_volume",
+        "set_brightness",
+        "control_media",
+        "control_connectivity",
+        "open_application",
+        "toggle_app_nap",
+        "set_timer",
+        "get_highlighted_text",
+        "get_clipboard"
+      ],
+      "tools": [
+        "get_system_stats",
+        "set_volume",
+        "set_brightness",
+        "control_media",
+        "control_connectivity",
+        "open_application",
+        "toggle_app_nap",
+        "close_application",
+        "list_running_apps",
+        "set_timer",
+        "get_clipboard",
+        "get_highlighted_text",
+        "set_clipboard",
+        "diagnose_systemd_service",
+        "manage_default_apps"
+      ]
+    },
+    "files_office": {
+      "triggers": [
+        "file", "folder", "dir", "directory", "path", "doc", "docx", "odt", "pdf",
+        "xlsx", "xls", "ods", "pptx", "csv", "sheet", "spreadsheet", "slide",
+        "libreoffice", "writer", "calc", "impress", "read", "write", "edit",
+        "create", "trash", "delete", "move", "rename", "backup", "resume",
+        "report", "notes", "convert", "export", "find", "search", "grep", "code"
+      ],
+      "window_hints": ["libreoffice", "writer", "calc", "impress", "nautilus", "files", "code", "vim", "gedit", "evince"],
+      "tools": [
+        "search_files",
+        "search_in_files",
+        "read_file",
+        "write_file",
+        "edit_file",
+        "move_file",
+        "trash_file",
+        "open_document",
+        "read_document",
+        "create_document",
+        "edit_document",
+        "convert_document",
+        "libreoffice_edit"
+      ]
+    },
+    "web_comms": {
+      "triggers": [
+        "web", "google", "search", "news", "headlines", "latest", "price", "weather", "forecast",
+        "time zone", "timezone", "http", "url", "website", "page", "article", "fetch",
+        "summarize url", "lookup", "whatsapp", "telegram", "email", "mail", "message", "send", "text", "reply"
+      ],
+      "window_hints": ["firefox", "chrome", "chromium", "brave", "thunderbird", "telegram", "whatsapp"],
+      "tools": [
+        "web_search",
+        "fetch_webpage",
+        "fetch_url_text",
+        "get_weather",
+        "get_news_headlines",
+        "get_current_time_zone",
+        "compose_message"
+      ]
+    },
+    "wayland_gui": {
+      "triggers": [
+        "screen", "click", "double click", "right click", "type", "scroll",
+        "drag", "drop", "hotkey", "shortcut", "press", "button", "window",
+        "ocr", "astra", "fill", "form", "ui", "element", "cursor", "mouse",
+        "automate", "on screen", "youtube", "spotify", "play", "song", "songs",
+        "music", "video", "watch", "login", "sign in", "website", "webpage",
+        "tab", "netflix", "amazon", "flipkart", "browser"
+      ],
+      "tools": [
+        "read_screen",
+        "find_text_on_screen",
+        "inspect_ui_elements",
+        "click_on_text",
+        "click_position",
+        "scroll_screen",
+        "drag_and_drop",
+        "type_text",
+        "press_hotkey",
+        "autonomous_gui_task"
+      ]
+    },
+    "apple_pim_writing": {
+      "triggers": [
+        "calendar", "meeting", "meetings", "brief", "prepare", "prep", "schedule", "appointment", "event", "events",
+        "upcoming", "tomorrow", "contact", "contacts", "phone number", "email address",
+        "bookmark", "bookmarks", "proofread", "rewrite", "rephrase", "tone", "grammar",
+        "polish", "key points", "bullet points", "writing tool", "live text", "snip",
+        "extract text", "spotlight", "convert units", "menu", "menus", "command palette",
+        "క్యాలెండర్", "మీటింగ్", "కాంటాక్ట్", "कैलेंडर", "मीटिंग", "कॉन्टैक्ट"
+      ],
+      "window_hints": ["calendar", "contacts", "thunderbird", "firefox", "libreoffice", "gedit"],
+      "tools": [
+        "writing_tool_transform",
+        "live_text_ocr",
+        "get_upcoming_events",
+        "create_calendar_event",
+        "search_contacts",
+        "search_browser_bookmarks",
+        "prepare_meeting_context",
+        "spotlight_query",
+        "search_active_app_menus"
+      ]
+    },
+    "continuity_audio_privacy": {
+      "triggers": [
+        "continuity", "iphone", "ipad", "airpods", "airplay", "uxplay", "shairport",
+        "ifuse", "mount iphone", "sidecar", "weylus", "apple pencil", "continuity camera",
+        "ancs", "answer call", "decline call", "dismiss notification",
+        "transcribe", "meeting audio", "loopback", "summarize meeting", "what was just said",
+        "keyring", "keepass", "keepassxc", "vault", "secret service", "unlock vault",
+        "android", "scrcpy", "mirror", "localsend", "airdrop", "deskflow", "syncthing",
+        "focus", "focus mode", "dnd", "do not disturb", "night light", "sleep mode",
+        "coding mode", "work mode", "presentation mode",
+        "route audio", "audio sink", "headphone", "headphones", "speaker", "speakers",
+        "bluetooth", "pipewire", "output device", "mic", "microphone", "camera", "webcam",
+        "permission", "permissions", "privacy", "audit", "flatseal", "tcc",
+        "hardware", "biometric", "biometrics", "fingerprint", "touch id", "face id", "charge limit",
+        "ఫోకస్", "బ్యాటరీ", "హెడ్‌ఫోన్", "फोकस", "बैटरी", "हेडफोन"
+      ],
+      "window_hints": ["scrcpy", "uxplay", "localsend", "flatseal", "helvum", "settings", "keepassxc", "zoom"],
+      "tools": [
+        "get_continuity_status",
+        "set_focus_mode",
+        "route_app_audio",
+        "audit_app_permissions",
+        "get_hardware_capabilities",
+        "get_secret_vault_status",
+        "transcribe_system_audio",
+        "launch_android_mirror",
+        "control_airplay_mirror",
+        "mount_ios_device",
+        "start_ios_continuity_camera",
+        "start_ipad_sidecar_weylus",
+        "respond_ios_notification"
+      ]
+    },
+    "skills_memory": {
+      "triggers": [
+        "remember", "memory", "fact", "forgot", "recall", "history", "skill",
+        "routine", "workflow", "macro", "learn", "record", "recording", "replay",
+        "save last", "heal", "update skill", "forget skill", "install skill",
+        "quarantine", "goal", "goals", "project", "roadmap", "deadline", "milestone", "subtask",
+        "knowledge", "graph", "link", "relationship", "plan",
+        "workspace", "snapshot", "session", "name", "nickname", "rename", "call yourself", "identity",
+        "గుర్తుంచుకో", "యాద్", "याद रखो"
+      ],
+      "tools": [
+        "remember_fact",
+        "search_memory",
+        "link_knowledge",
+        "manage_goal",
+        "save_workspace_snapshot",
+        "set_assistant_identity",
+        "learn_skill",
+        "save_last_actions_as_skill",
+        "start_recording",
+        "stop_recording",
+        "list_skills",
+        "list_quarantined_skills",
+        "approve_quarantined_skill",
+        "reject_quarantined_skill",
+        "run_skill",
+        "update_skill",
+        "forget_skill",
+        "install_community_skill"
+      ]
+    },
+    "mcp_system": {
+      "triggers": [
+        "mcp", "connector", "github", "linear", "notion", "git", "repo", "commit",
+        "branch", "sqlite", "database", "playwright", "context7", "shell", "bash",
+        "terminal", "command", "python", "sandbox", "execute", "run code", "verify code",
+        "systemctl", "journalctl", "service", "default app", "mime", "apt", "cache", "offload", "ram",
+        "iot", "smart home", "home assistant", "webhook", "mqtt", "lights", "switch"
+      ],
+      "window_hints": ["terminal", "ptyxis", "console", "kitty", "alacritty", "code"],
+      "tools": [
+        "mcp_list_servers",
+        "mcp_list_tools",
+        "mcp_call_tool",
+        "run_shell_command",
+        "run_python_sandbox",
+        "trigger_iot_webhook",
+        "cache_status",
+        "clear_cache",
+        "submit_goal"
+      ]
+    },
+    "mcp_perception_actuation": {
+      "tier": 2,
+      "servers": ["computer-use-linux", "shadow-vision", "ghostdesk"],
+      "triggers": [
+        "computer-use", "shadow-vision", "ghostdesk", "eye2byte", "uacc", "deskwright",
+        "semantic click", "vision ocr", "vision analyze", "virtual desktop", "isolated desktop",
+        "ui map", "mcp click", "mcp type"
+      ],
+      "tools": [
+        "computer_click",
+        "computer_type",
+        "vision_ocr",
+        "vision_analyze",
+        "ghostdesk_click"
+      ]
+    },
+    "code_exec": {
+      "triggers": [
+        "code", "script", "python", "bash", "shell script", "run code",
+        "execute python", "run bash", "calculate", "compute", "sandbox",
+        "verify code", "debug", "compile", "interpreter", "spreadsheet calc",
+        "data analysis", "automate task", "python sandbox", "bash sandbox"
+      ],
+      "window_hints": ["terminal", "ptyxis", "console", "code", "vim", "gedit", "code"],
+      "tools": [
+        "code_sandbox",
+        "run_python_sandbox",
+        "run_shell_command"
+      ]
+    },
+    "skill_security": {
+      "triggers": [
+        "skill", "scan", "security", "vulnerability", "mcp", "install skill",
+        "skilspector", "ponytail", "risk", "audit", "supply chain",
+        "prompt injection", "data exfiltration", "skill inspector"
+      ],
+      "window_hints": ["terminal", "code", "console", "editor"],
+      "tools": [
+        "ponytail_evaluate",
+        "skilspector_scan"
+      ]
+    }
+  },
+  "world_model": {
+    "track_active_window": true,
+    "proactive_triggers": {
+      "ram_pressure_pct": 88,
+      "battery_low_pct": 18
+    }
+  },
+  "confidence_policy": {
+    "act_immediately_min_confidence": 0.75,
+    "enable_action_gate": true,
+    "clarify_if_ambiguous_destructive": true,
+    "clarification_instruction": "If a destructive or irreversible request (delete, overwrite, send external message) is ambiguous about the target file or recipient, ask ONE brief clarifying question before invoking tools."
+  },
+  "reflection_policy": {
+    "enable_preflight_micro_plan": true,
+    "enable_error_self_correction": true,
+    "max_identical_tool_failures": 2,
+    "verify_astra_done_state": true,
+    "enable_implicit_correction_learning": true,
+    "enable_habit_mining": true,
+    "habit_suggestion_threshold": 3
+  },
+  "embeddings": {
+    "engine": "auto",
+    "model": "embeddinggemma",
+    "model2vec_model": "minishlab/potion-multilingual-128M",
+    "dim": 256,
+    "keep_alive": "30s",
+    "rrf_k": 60,
+    "semantic_cache_enabled": true,
+    "semantic_cache_threshold": 0.92,
+    "tool_router_min_sim": 0.38
+  },
+  "web_comms": {
+    "enabled": false,
+    "allowed_hosts": []
+  },
+  "libreoffice": {
+    "uno_port": 2002
+  },
+  "autonomy": {
+    "observe_only": true
+  }
+}

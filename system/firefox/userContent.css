@@ -1,0 +1,30 @@
+/* ============================================================================
+ * MACUBUNTU-SAFARI-THEME (userContent.css)
+ * Clean macOS Safari Start Page polish for Firefox about:home & about:newtab
+ * ============================================================================ */
+
+@-moz-document url("about:home"), url("about:newtab") {
+  body {
+    --newtab-background-color: #f3f5fa !important;
+    --newtab-background-color-secondary: rgba(255, 255, 255, 0.78) !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Cantarell", sans-serif !important;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body {
+      --newtab-background-color: #16181e !important;
+      --newtab-background-color-secondary: rgba(42, 45, 56, 0.78) !important;
+    }
+  }
+
+  .search-wrapper .search-handoff-button,
+  .search-wrapper input {
+    border-radius: 14px !important;
+    backdrop-filter: blur(18px) !important;
+  }
+
+  .top-site-outer .tile {
+    border-radius: 16px !important;
+    backdrop-filter: blur(16px) !important;
+  }
+}

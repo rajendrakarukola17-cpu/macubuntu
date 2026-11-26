@@ -1,0 +1,1121 @@
+{
+  "env": {
+    "python": "3.13.18",
+    "platform": "Linux-6.1.189+-x86_64-with-glibc2.41",
+    "processor": "",
+    "session_type": "unknown",
+    "container": false,
+    "cpu_count": 2,
+    "celina_root": "/home/user/macubuntu/features/celina",
+    "khal_installed": false,
+    "calcurse_installed": false,
+    "pactl_installed": false,
+    "psutil_installed": true,
+    "pulsectl_installed": false,
+    "icalendar_installed": false,
+    "recurring_ical_events_installed": false
+  },
+  "fixtures": {
+    "ics_events": 500,
+    "habit_rows": 10000,
+    "csv_rows": 100000,
+    "self_heal_forced_failure": true
+  },
+  "cases": {
+    "dispatch_hit::gear0_utils": {
+      "query": "what is 2 + 2",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.0949,
+        "p95_ms": 0.1491,
+        "p99_ms": 0.265,
+        "max_ms": 6.576,
+        "mean_ms": 0.1217,
+        "stdev_ms": 0.2958,
+        "min_ms": 0.0696
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.0907,
+        "p95_ms": 0.158,
+        "p99_ms": 0.2705,
+        "max_ms": 3.967,
+        "mean_ms": 0.1127,
+        "stdev_ms": 0.2229,
+        "min_ms": 0.0696
+      }
+    },
+    "dispatch_hit::gear0_intent": {
+      "query": "set a timer for 5 minutes",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.062,
+        "p95_ms": 0.3654,
+        "p99_ms": 0.6895,
+        "max_ms": 3.9485,
+        "mean_ms": 0.1055,
+        "stdev_ms": 0.2353,
+        "min_ms": 0.0447
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.0588,
+        "p95_ms": 0.3804,
+        "p99_ms": 0.5592,
+        "max_ms": 3.505,
+        "mean_ms": 0.0977,
+        "stdev_ms": 0.2103,
+        "min_ms": 0.0444
+      }
+    },
+    "dispatch_hit::gear0_graph": {
+      "query": "save alias mom as contact",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.4566,
+        "p95_ms": 0.5846,
+        "p99_ms": 0.6919,
+        "max_ms": 7.0507,
+        "mean_ms": 0.4578,
+        "stdev_ms": 0.1659,
+        "min_ms": 0.314
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4726,
+        "p95_ms": 0.5912,
+        "p99_ms": 0.6957,
+        "max_ms": 1.0883,
+        "mean_ms": 0.4786,
+        "stdev_ms": 0.0633,
+        "min_ms": 0.3796
+      }
+    },
+    "dispatch_hit::gear0_contacts": {
+      "query": "look up contact mom",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.4527,
+        "p95_ms": 0.609,
+        "p99_ms": 0.8852,
+        "max_ms": 1.4924,
+        "mean_ms": 0.4718,
+        "stdev_ms": 0.0997,
+        "min_ms": 0.3285
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4023,
+        "p95_ms": 0.8873,
+        "p99_ms": 1.0149,
+        "max_ms": 1.7114,
+        "mean_ms": 0.4586,
+        "stdev_ms": 0.1572,
+        "min_ms": 0.3147
+      }
+    },
+    "dispatch_hit::gear0_calendar": {
+      "query": "what is my next meeting",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.1626,
+        "p95_ms": 0.2211,
+        "p99_ms": 0.2612,
+        "max_ms": 0.4993,
+        "mean_ms": 0.1729,
+        "stdev_ms": 0.0231,
+        "min_ms": 0.1557
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1686,
+        "p95_ms": 0.2567,
+        "p99_ms": 0.3474,
+        "max_ms": 0.5595,
+        "mean_ms": 0.1826,
+        "stdev_ms": 0.0392,
+        "min_ms": 0.156
+      }
+    },
+    "dispatch_hit::gear0_network": {
+      "query": "is my internet up",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.3778,
+        "p95_ms": 0.5627,
+        "p99_ms": 0.6798,
+        "max_ms": 1.5458,
+        "mean_ms": 0.3962,
+        "stdev_ms": 0.0902,
+        "min_ms": 0.2391
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.3456,
+        "p95_ms": 0.5979,
+        "p99_ms": 1.1166,
+        "max_ms": 2.4404,
+        "mean_ms": 0.3814,
+        "stdev_ms": 0.1548,
+        "min_ms": 0.2077
+      }
+    },
+    "dispatch_hit::gear0_hardware": {
+      "query": "what is my cpu temp",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.1424,
+        "p95_ms": 0.2241,
+        "p99_ms": 0.5077,
+        "max_ms": 1.7434,
+        "mean_ms": 0.161,
+        "stdev_ms": 0.0883,
+        "min_ms": 0.1251
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1648,
+        "p95_ms": 0.4106,
+        "p99_ms": 0.6045,
+        "max_ms": 1.755,
+        "mean_ms": 0.2012,
+        "stdev_ms": 0.1099,
+        "min_ms": 0.1004
+      }
+    },
+    "dispatch_hit::gear0_ledger": {
+      "query": "spent $12 on lunch",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.4804,
+        "p95_ms": 1.1747,
+        "p99_ms": 1.5349,
+        "max_ms": 2.6989,
+        "mean_ms": 0.6013,
+        "stdev_ms": 0.3046,
+        "min_ms": 0.273
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.3472,
+        "p95_ms": 0.6554,
+        "p99_ms": 1.1625,
+        "max_ms": 2.9,
+        "mean_ms": 0.3916,
+        "stdev_ms": 0.1661,
+        "min_ms": 0.235
+      }
+    },
+    "dispatch_hit::gear0_macro": {
+      "query": "expand addr",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.1162,
+        "p95_ms": 0.1582,
+        "p99_ms": 0.1857,
+        "max_ms": 0.3737,
+        "mean_ms": 0.1231,
+        "stdev_ms": 0.0178,
+        "min_ms": 0.1095
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1177,
+        "p95_ms": 0.16,
+        "p99_ms": 0.1873,
+        "max_ms": 0.4382,
+        "mean_ms": 0.1238,
+        "stdev_ms": 0.0181,
+        "min_ms": 0.1097
+      }
+    },
+    "dispatch_hit::gear0_lists": {
+      "query": "add milk to shopping list",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.5298,
+        "p95_ms": 1.1317,
+        "p99_ms": 1.3953,
+        "max_ms": 2.8086,
+        "mean_ms": 0.5897,
+        "stdev_ms": 0.2641,
+        "min_ms": 0.29
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4774,
+        "p95_ms": 0.7538,
+        "p99_ms": 0.994,
+        "max_ms": 2.4448,
+        "mean_ms": 0.4982,
+        "stdev_ms": 0.1608,
+        "min_ms": 0.2489
+      }
+    },
+    "dispatch_hit::gear0_routines": {
+      "query": "good morning",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 11.4583,
+        "p95_ms": 14.0655,
+        "p99_ms": 16.2685,
+        "max_ms": 20.6643,
+        "mean_ms": 11.6313,
+        "stdev_ms": 1.4176,
+        "min_ms": 8.5739
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 11.6535,
+        "p95_ms": 14.7091,
+        "p99_ms": 17.6256,
+        "max_ms": 24.6966,
+        "mean_ms": 11.8948,
+        "stdev_ms": 1.6254,
+        "min_ms": 8.8008
+      }
+    },
+    "dispatch_hit::gear0_media": {
+      "query": "play music",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.127,
+        "p95_ms": 0.7369,
+        "p99_ms": 1.0151,
+        "max_ms": 4.7307,
+        "mean_ms": 0.1949,
+        "stdev_ms": 0.3381,
+        "min_ms": 0.0937
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1251,
+        "p95_ms": 0.7433,
+        "p99_ms": 1.0108,
+        "max_ms": 3.6714,
+        "mean_ms": 0.1845,
+        "stdev_ms": 0.251,
+        "min_ms": 0.0948
+      }
+    },
+    "dispatch_hit::gear0_focus": {
+      "query": "start focus mode",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.1271,
+        "p95_ms": 0.1819,
+        "p99_ms": 0.2324,
+        "max_ms": 0.6271,
+        "mean_ms": 0.1365,
+        "stdev_ms": 0.0253,
+        "min_ms": 0.1224
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1291,
+        "p95_ms": 0.1637,
+        "p99_ms": 0.1853,
+        "max_ms": 0.407,
+        "mean_ms": 0.1348,
+        "stdev_ms": 0.0148,
+        "min_ms": 0.1228
+      }
+    },
+    "dispatch_hit::gear0_clipboard": {
+      "query": "show clipboard history",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.1017,
+        "p95_ms": 0.1272,
+        "p99_ms": 0.151,
+        "max_ms": 0.408,
+        "mean_ms": 0.1063,
+        "stdev_ms": 0.013,
+        "min_ms": 0.0962
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1026,
+        "p95_ms": 0.1274,
+        "p99_ms": 0.1518,
+        "max_ms": 0.3319,
+        "mean_ms": 0.1072,
+        "stdev_ms": 0.0125,
+        "min_ms": 0.0973
+      }
+    },
+    "dispatch_hit::gear0_audit": {
+      "query": "show audit log",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.1229,
+        "p95_ms": 0.1568,
+        "p99_ms": 0.1922,
+        "max_ms": 1.8145,
+        "mean_ms": 0.1251,
+        "stdev_ms": 0.0454,
+        "min_ms": 0.0959
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1205,
+        "p95_ms": 0.1579,
+        "p99_ms": 0.1924,
+        "max_ms": 0.7188,
+        "mean_ms": 0.1276,
+        "stdev_ms": 0.0216,
+        "min_ms": 0.1138
+      }
+    },
+    "dispatch_hit::gear0_dual": {
+      "query": "which backend",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.1739,
+        "p95_ms": 0.241,
+        "p99_ms": 0.2725,
+        "max_ms": 0.5946,
+        "mean_ms": 0.1834,
+        "stdev_ms": 0.0279,
+        "min_ms": 0.1579
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1771,
+        "p95_ms": 0.2476,
+        "p99_ms": 0.2886,
+        "max_ms": 0.5768,
+        "mean_ms": 0.1816,
+        "stdev_ms": 0.0362,
+        "min_ms": 0.1358
+      }
+    },
+    "dispatch_hit::gear0_status": {
+      "query": "gear 0 status",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.271,
+        "p95_ms": 0.3642,
+        "p99_ms": 0.4417,
+        "max_ms": 0.881,
+        "mean_ms": 0.2741,
+        "stdev_ms": 0.0533,
+        "min_ms": 0.2128
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.2914,
+        "p95_ms": 0.3825,
+        "p99_ms": 0.4832,
+        "max_ms": 0.8729,
+        "mean_ms": 0.3066,
+        "stdev_ms": 0.0448,
+        "min_ms": 0.2563
+      }
+    },
+    "dispatch_hit::gear0_iot": {
+      "query": "turn on living room lights",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.522,
+        "p95_ms": 0.6692,
+        "p99_ms": 0.8691,
+        "max_ms": 1.529,
+        "mean_ms": 0.5326,
+        "stdev_ms": 0.0897,
+        "min_ms": 0.3526
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.5295,
+        "p95_ms": 0.6678,
+        "p99_ms": 0.8114,
+        "max_ms": 1.0885,
+        "mean_ms": 0.5464,
+        "stdev_ms": 0.0684,
+        "min_ms": 0.4203
+      }
+    },
+    "dispatch_hit::gear0_context": {
+      "query": "mute notifications when im in a meeting",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.118,
+        "p95_ms": 0.3929,
+        "p99_ms": 0.9723,
+        "max_ms": 20.1763,
+        "mean_ms": 0.2145,
+        "stdev_ms": 0.7087,
+        "min_ms": 0.1098
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.1173,
+        "p95_ms": 0.2516,
+        "p99_ms": 0.324,
+        "max_ms": 0.6238,
+        "mean_ms": 0.1463,
+        "stdev_ms": 0.0504,
+        "min_ms": 0.1095
+      }
+    },
+    "dispatch_hit::gear0_5_micro": {
+      "query": "set timer for 10 minutes",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.0603,
+        "p95_ms": 0.4096,
+        "p99_ms": 0.6384,
+        "max_ms": 4.4504,
+        "mean_ms": 0.1099,
+        "stdev_ms": 0.2907,
+        "min_ms": 0.0453
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.0611,
+        "p95_ms": 0.4108,
+        "p99_ms": 0.6921,
+        "max_ms": 3.2734,
+        "mean_ms": 0.1069,
+        "stdev_ms": 0.2133,
+        "min_ms": 0.0512
+      }
+    },
+    "dispatch_hit::gear0_voice": {
+      "query": "wake word",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.4178,
+        "p95_ms": 0.5572,
+        "p99_ms": 0.6359,
+        "max_ms": 0.954,
+        "mean_ms": 0.4257,
+        "stdev_ms": 0.0765,
+        "min_ms": 0.2965
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.3611,
+        "p95_ms": 0.4791,
+        "p99_ms": 0.5325,
+        "max_ms": 0.7067,
+        "mean_ms": 0.3702,
+        "stdev_ms": 0.0544,
+        "min_ms": 0.2941
+      }
+    },
+    "dispatch_hit::gear0_memory": {
+      "query": "store memory test fact",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.3779,
+        "p95_ms": 0.4875,
+        "p99_ms": 0.5382,
+        "max_ms": 0.7288,
+        "mean_ms": 0.3882,
+        "stdev_ms": 0.0485,
+        "min_ms": 0.3089
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.381,
+        "p95_ms": 0.5073,
+        "p99_ms": 0.6328,
+        "max_ms": 0.8017,
+        "mean_ms": 0.3928,
+        "stdev_ms": 0.0601,
+        "min_ms": 0.305
+      }
+    },
+    "dispatch_hit::gear0_ml_nlu": {
+      "query": "classify intent",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.3698,
+        "p95_ms": 0.4856,
+        "p99_ms": 0.6008,
+        "max_ms": 0.9147,
+        "mean_ms": 0.3814,
+        "stdev_ms": 0.0553,
+        "min_ms": 0.2996
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4251,
+        "p95_ms": 0.5741,
+        "p99_ms": 0.6506,
+        "max_ms": 1.0292,
+        "mean_ms": 0.4339,
+        "stdev_ms": 0.0811,
+        "min_ms": 0.2989
+      }
+    },
+    "dispatch_hit::gear0_brain": {
+      "query": "log habit exercise",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.3899,
+        "p95_ms": 0.6797,
+        "p99_ms": 0.8819,
+        "max_ms": 1.5838,
+        "mean_ms": 0.4233,
+        "stdev_ms": 0.1341,
+        "min_ms": 0.2487
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.3561,
+        "p95_ms": 0.6694,
+        "p99_ms": 0.8015,
+        "max_ms": 1.5408,
+        "mean_ms": 0.3933,
+        "stdev_ms": 0.1374,
+        "min_ms": 0.2166
+      }
+    },
+    "dispatch_hit::gear0_slots": {
+      "query": "fill timer slots",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.3843,
+        "p95_ms": 0.5287,
+        "p99_ms": 0.6568,
+        "max_ms": 1.1199,
+        "mean_ms": 0.4009,
+        "stdev_ms": 0.0751,
+        "min_ms": 0.3063
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.3837,
+        "p95_ms": 0.5628,
+        "p99_ms": 0.6866,
+        "max_ms": 1.717,
+        "mean_ms": 0.4086,
+        "stdev_ms": 0.0819,
+        "min_ms": 0.315
+      }
+    },
+    "dispatch_hit::plugin1_sniffer": {
+      "query": "what is my active window",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.584,
+        "p95_ms": 0.8097,
+        "p99_ms": 1.0049,
+        "max_ms": 1.4345,
+        "mean_ms": 0.6087,
+        "stdev_ms": 0.1124,
+        "min_ms": 0.4372
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.6321,
+        "p95_ms": 0.7402,
+        "p99_ms": 0.7923,
+        "max_ms": 1.0541,
+        "mean_ms": 0.6311,
+        "stdev_ms": 0.0658,
+        "min_ms": 0.4683
+      }
+    },
+    "dispatch_hit::plugin2_habit": {
+      "query": "habit pattern",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.4662,
+        "p95_ms": 0.5837,
+        "p99_ms": 0.6328,
+        "max_ms": 1.1591,
+        "mean_ms": 0.4739,
+        "stdev_ms": 0.0586,
+        "min_ms": 0.3725
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4587,
+        "p95_ms": 0.5806,
+        "p99_ms": 0.6546,
+        "max_ms": 1.2422,
+        "mean_ms": 0.4672,
+        "stdev_ms": 0.0674,
+        "min_ms": 0.328
+      }
+    },
+    "dispatch_hit::plugin3_data_oracle": {
+      "query": "sum of amount where category food",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.5279,
+        "p95_ms": 0.6547,
+        "p99_ms": 0.7209,
+        "max_ms": 0.9664,
+        "mean_ms": 0.5318,
+        "stdev_ms": 0.0667,
+        "min_ms": 0.4157
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4816,
+        "p95_ms": 0.6372,
+        "p99_ms": 0.794,
+        "max_ms": 1.0573,
+        "mean_ms": 0.484,
+        "stdev_ms": 0.0897,
+        "min_ms": 0.349
+      }
+    },
+    "dispatch_hit::plugin4_os_shim": {
+      "query": "system info",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.4383,
+        "p95_ms": 0.5495,
+        "p99_ms": 0.6177,
+        "max_ms": 2.4231,
+        "mean_ms": 0.4476,
+        "stdev_ms": 0.0703,
+        "min_ms": 0.358
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4247,
+        "p95_ms": 0.572,
+        "p99_ms": 0.6642,
+        "max_ms": 1.5576,
+        "mean_ms": 0.4439,
+        "stdev_ms": 0.0763,
+        "min_ms": 0.3499
+      }
+    },
+    "dispatch_hit::plugin5_self_heal": {
+      "query": "reliability",
+      "is_dispatch_miss": false,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.3867,
+        "p95_ms": 0.4873,
+        "p99_ms": 0.5155,
+        "max_ms": 1.3859,
+        "mean_ms": 0.3958,
+        "stdev_ms": 0.0462,
+        "min_ms": 0.3377
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.3986,
+        "p95_ms": 0.5042,
+        "p99_ms": 0.5672,
+        "max_ms": 0.9901,
+        "mean_ms": 0.4099,
+        "stdev_ms": 0.0483,
+        "min_ms": 0.3365
+      }
+    },
+    "dispatch_miss": {
+      "query": "xyzzy plugh nothing matches this forty two nonsense",
+      "is_dispatch_miss": true,
+      "cold_ms": {
+        "n": 2000,
+        "warmup": 0,
+        "p50_ms": 0.4114,
+        "p95_ms": 0.504,
+        "p99_ms": 0.5478,
+        "max_ms": 0.7694,
+        "mean_ms": 0.4184,
+        "stdev_ms": 0.0401,
+        "min_ms": 0.3574
+      },
+      "warm_ms": {
+        "n": 2000,
+        "warmup": 200,
+        "p50_ms": 0.4124,
+        "p95_ms": 0.5171,
+        "p99_ms": 0.5615,
+        "max_ms": 0.7624,
+        "mean_ms": 0.4204,
+        "stdev_ms": 0.0433,
+        "min_ms": 0.3541
+      }
+    }
+  },
+  "probe_cost_ms": {
+    "gear0_utils": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0028,
+      "p95_ms": 0.003,
+      "p99_ms": 0.0067,
+      "max_ms": 0.0558,
+      "mean_ms": 0.0028,
+      "stdev_ms": 0.0016,
+      "min_ms": 0.0022
+    },
+    "gear0_intent": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0008,
+      "p95_ms": 0.0009,
+      "p99_ms": 0.0012,
+      "max_ms": 0.022,
+      "mean_ms": 0.0009,
+      "stdev_ms": 0.0007,
+      "min_ms": 0.0008
+    },
+    "gear0_graph": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0017,
+      "p95_ms": 0.0018,
+      "p99_ms": 0.0022,
+      "max_ms": 0.0289,
+      "mean_ms": 0.0018,
+      "stdev_ms": 0.001,
+      "min_ms": 0.0013
+    },
+    "gear0_contacts": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0007,
+      "p95_ms": 0.0008,
+      "p99_ms": 0.0011,
+      "max_ms": 0.0201,
+      "mean_ms": 0.0008,
+      "stdev_ms": 0.0005,
+      "min_ms": 0.0007
+    },
+    "gear0_calendar": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0005,
+      "p95_ms": 0.0006,
+      "p99_ms": 0.0008,
+      "max_ms": 0.0096,
+      "mean_ms": 0.0006,
+      "stdev_ms": 0.0003,
+      "min_ms": 0.0005
+    },
+    "gear0_network": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0005,
+      "p95_ms": 0.0005,
+      "p99_ms": 0.0008,
+      "max_ms": 0.023,
+      "mean_ms": 0.0005,
+      "stdev_ms": 0.0006,
+      "min_ms": 0.0004
+    },
+    "gear0_hardware": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0007,
+      "p95_ms": 0.0007,
+      "p99_ms": 0.001,
+      "max_ms": 0.0221,
+      "mean_ms": 0.0007,
+      "stdev_ms": 0.0006,
+      "min_ms": 0.0006
+    },
+    "gear0_ledger": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0006,
+      "p95_ms": 0.0007,
+      "p99_ms": 0.0008,
+      "max_ms": 0.0214,
+      "mean_ms": 0.0006,
+      "stdev_ms": 0.0007,
+      "min_ms": 0.0005
+    },
+    "gear0_macro": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0004,
+      "p95_ms": 0.0004,
+      "p99_ms": 0.0006,
+      "max_ms": 0.0216,
+      "mean_ms": 0.0004,
+      "stdev_ms": 0.0005,
+      "min_ms": 0.0003
+    },
+    "gear0_lists": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0006,
+      "p95_ms": 0.0007,
+      "p99_ms": 0.0008,
+      "max_ms": 0.0197,
+      "mean_ms": 0.0006,
+      "stdev_ms": 0.0005,
+      "min_ms": 0.0006
+    },
+    "gear0_routines": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.1675,
+      "p95_ms": 0.2523,
+      "p99_ms": 0.3486,
+      "max_ms": 0.8231,
+      "mean_ms": 0.1818,
+      "stdev_ms": 0.0475,
+      "min_ms": 0.1287
+    },
+    "gear0_media": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0004,
+      "p95_ms": 0.0005,
+      "p99_ms": 0.0006,
+      "max_ms": 0.0103,
+      "mean_ms": 0.0004,
+      "stdev_ms": 0.0003,
+      "min_ms": 0.0004
+    },
+    "gear0_focus": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0006,
+      "p95_ms": 0.0006,
+      "p99_ms": 0.0008,
+      "max_ms": 0.0218,
+      "mean_ms": 0.0006,
+      "stdev_ms": 0.0006,
+      "min_ms": 0.0005
+    },
+    "gear0_clipboard": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0005,
+      "p95_ms": 0.0005,
+      "p99_ms": 0.0007,
+      "max_ms": 0.0196,
+      "mean_ms": 0.0005,
+      "stdev_ms": 0.0005,
+      "min_ms": 0.0004
+    },
+    "gear0_audit": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0004,
+      "p95_ms": 0.0005,
+      "p99_ms": 0.0007,
+      "max_ms": 0.0146,
+      "mean_ms": 0.0005,
+      "stdev_ms": 0.0004,
+      "min_ms": 0.0004
+    },
+    "gear0_dual": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0005,
+      "p95_ms": 0.0005,
+      "p99_ms": 0.0007,
+      "max_ms": 0.0198,
+      "mean_ms": 0.0005,
+      "stdev_ms": 0.0005,
+      "min_ms": 0.0004
+    },
+    "gear0_status": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0004,
+      "p95_ms": 0.0005,
+      "p99_ms": 0.0006,
+      "max_ms": 0.0624,
+      "mean_ms": 0.0005,
+      "stdev_ms": 0.0015,
+      "min_ms": 0.0004
+    },
+    "gear0_iot": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0009,
+      "p95_ms": 0.0054,
+      "p99_ms": 0.0095,
+      "max_ms": 0.1353,
+      "mean_ms": 0.0016,
+      "stdev_ms": 0.0036,
+      "min_ms": 0.0008
+    },
+    "gear0_context": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0007,
+      "p95_ms": 0.0008,
+      "p99_ms": 0.0013,
+      "max_ms": 0.023,
+      "mean_ms": 0.0007,
+      "stdev_ms": 0.0006,
+      "min_ms": 0.0006
+    },
+    "gear0_5_micro": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0001,
+      "p95_ms": 0.0002,
+      "p99_ms": 0.0002,
+      "max_ms": 0.0031,
+      "mean_ms": 0.0002,
+      "stdev_ms": 0.0001,
+      "min_ms": 0.0001
+    },
+    "gear0_ml_nlu": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.009,
+      "p95_ms": 0.0102,
+      "p99_ms": 0.0251,
+      "max_ms": 0.0491,
+      "mean_ms": 0.0094,
+      "stdev_ms": 0.0027,
+      "min_ms": 0.0085
+    },
+    "plugin1_sniffer": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0005,
+      "p95_ms": 0.0006,
+      "p99_ms": 0.0008,
+      "max_ms": 0.0266,
+      "mean_ms": 0.0006,
+      "stdev_ms": 0.0007,
+      "min_ms": 0.0005
+    },
+    "plugin2_habit": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0005,
+      "p95_ms": 0.0006,
+      "p99_ms": 0.0007,
+      "max_ms": 0.0159,
+      "mean_ms": 0.0006,
+      "stdev_ms": 0.0004,
+      "min_ms": 0.0005
+    },
+    "plugin3_data_oracle": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0009,
+      "p95_ms": 0.001,
+      "p99_ms": 0.0013,
+      "max_ms": 0.02,
+      "mean_ms": 0.001,
+      "stdev_ms": 0.0007,
+      "min_ms": 0.0009
+    },
+    "plugin4_os_shim": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0015,
+      "p95_ms": 0.0017,
+      "p99_ms": 0.0024,
+      "max_ms": 0.0332,
+      "mean_ms": 0.0016,
+      "stdev_ms": 0.0012,
+      "min_ms": 0.0013
+    },
+    "plugin5_self_heal": {
+      "n": 2000,
+      "warmup": 200,
+      "p50_ms": 0.0005,
+      "p95_ms": 0.0005,
+      "p99_ms": 0.0007,
+      "max_ms": 0.0162,
+      "mean_ms": 0.0005,
+      "stdev_ms": 0.0004,
+      "min_ms": 0.0004
+    }
+  },
+  "rss_mb": 187.7
+}

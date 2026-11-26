@@ -1,0 +1,1130 @@
+{
+  "manifest_version": "1.0",
+  "celina_version": "4.4",
+  "enforcement_model": "OS-level capability manifest enforced via Linux namespaces (bwrap), systemd user sandboxing, Wayland XDG Portals, and Stage 00 7-way parity gate.",
+  "never_exposed_paths": [
+    "~/.ssh",
+    "~/.gnupg",
+    "~/.aws",
+    "~/.kube",
+    "~/.config/celina/env",
+    "~/.local/share/celina/evidence"
+  ],
+  "tools": {
+    "approve_quarantined_skill": {
+      "domain": "skills_memory",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "audit_app_permissions": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "autonomous_gui_task": {
+      "domain": "wayland_gui",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "loopback_ollama",
+      "dbus_buses": [
+        "session:atspi",
+        "session:portal_rdp"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "cache_status": {
+      "domain": "mcp_system",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "clear_cache": {
+      "domain": "mcp_system",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "click_on_text": {
+      "domain": "wayland_gui",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:atspi",
+        "session:portal_rdp"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "click_position": {
+      "domain": "wayland_gui",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_rdp"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "close_application": {
+      "domain": "os_hardware",
+      "tier": "tier2",
+      "fs_scope": "proc_sys_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "compose_message": {
+      "domain": "web_comms",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "https_public_only",
+      "dbus_buses": [
+        "session:gsconnect"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "control_airplay_mirror": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "lan_mdns",
+      "dbus_buses": [
+        "system:systemd"
+      ],
+      "pipewire": true,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "control_connectivity": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "system:nm",
+        "system:bluez"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "control_media": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:mpris"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "convert_document": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "create_calendar_event": {
+      "domain": "apple_pim_writing",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "create_document": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "diagnose_systemd_service": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "system:systemd"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "drag_and_drop": {
+      "domain": "wayland_gui",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_rdp"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "edit_document": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "edit_file": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "fetch_url_text": {
+      "domain": "web_comms",
+      "tier": "tier1",
+      "opt_in": true,
+      "fs_scope": "celina_state_only",
+      "network_egress": "https_public_only",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_net_allowlist",
+      "credential_access": "none"
+    },
+    "fetch_webpage": {
+      "domain": "web_comms",
+      "tier": "tier1",
+      "opt_in": true,
+      "fs_scope": "none",
+      "network_egress": "https_public_only",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "get_current_time_zone": {
+      "domain": "web_comms",
+      "tier": "tier1",
+      "opt_in": true,
+      "fs_scope": "none",
+      "network_egress": "https_public_only",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_net_allowlist",
+      "credential_access": "none"
+    },
+    "get_news_headlines": {
+      "domain": "web_comms",
+      "tier": "tier1",
+      "opt_in": true,
+      "fs_scope": "none",
+      "network_egress": "https_public_only",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_net_allowlist",
+      "credential_access": "none"
+    },
+    "get_weather": {
+      "domain": "web_comms",
+      "tier": "tier1",
+      "opt_in": true,
+      "fs_scope": "none",
+      "network_egress": "https_public_only",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_net_allowlist",
+      "credential_access": "none"
+    },
+    "libreoffice_edit": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:atspi"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "find_text_on_screen": {
+      "domain": "wayland_gui",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:atspi",
+        "session:gnome_shell"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "forget_skill": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "get_clipboard": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_clipboard"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "get_continuity_status": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier1",
+      "fs_scope": "proc_sys_ro",
+      "network_egress": "lan_mdns",
+      "dbus_buses": [
+        "system:systemd",
+        "session:gsconnect"
+      ],
+      "pipewire": true,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "get_hardware_capabilities": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier1",
+      "fs_scope": "proc_sys_ro",
+      "network_egress": "none",
+      "dbus_buses": [
+        "system:udisks2"
+      ],
+      "pipewire": true,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "get_highlighted_text": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_clipboard"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "get_secret_vault_status": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:secrets"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "get_system_stats": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "proc_sys_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "get_upcoming_events": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "inspect_ui_elements": {
+      "domain": "wayland_gui",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:atspi"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "install_community_skill": {
+      "domain": "skills_memory",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "https_public_only",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "launch_android_mirror": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "lan_mdns",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "learn_skill": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "link_knowledge": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "list_quarantined_skills": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "list_running_apps": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "proc_sys_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "list_skills": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "live_text_ocr": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:gnome_shell",
+        "session:portal_clipboard"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "manage_default_apps": {
+      "domain": "os_hardware",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "manage_goal": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "mcp_call_tool": {
+      "domain": "mcp_system",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "mcp_declared",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "mcp_list_servers": {
+      "domain": "mcp_system",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "mcp_list_tools": {
+      "domain": "mcp_system",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "mcp_declared",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "mount_ios_device": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier2",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [
+        "system:udisks2"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "move_file": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "open_application": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:gnome_shell"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "open_document": {
+      "domain": "files_office",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:gnome_shell"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "prepare_meeting_context": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "press_hotkey": {
+      "domain": "wayland_gui",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_rdp"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "read_document": {
+      "domain": "files_office",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "read_file": {
+      "domain": "files_office",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "read_screen": {
+      "domain": "wayland_gui",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:gnome_shell"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "reject_quarantined_skill": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "remember_fact": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "respond_ios_notification": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "system:bluez"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "route_app_audio": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": true,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "run_python_sandbox": {
+      "domain": "mcp_system",
+      "tier": "tier2",
+      "fs_scope": "bwrap_workdir",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_unshare_all",
+      "credential_access": "none"
+    },
+    "code_sandbox": {
+      "domain": "code_exec",
+      "tier": "tier2",
+      "fs_scope": "bwrap_workdir",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_unshare_all",
+      "credential_access": "none"
+    },
+    "ponytail_evaluate": {
+      "domain": "skill_security",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "skilspector_scan": {
+      "domain": "skill_security",
+      "tier": "tier2",
+      "fs_scope": "bwrap_workdir",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_unshare_all",
+      "credential_access": "none"
+    },
+    "run_shell_command": {
+      "domain": "mcp_system",
+      "tier": "tier2",
+      "fs_scope": "bwrap_workdir",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_unshare_all",
+      "credential_access": "none"
+    },
+    "run_skill": {
+      "domain": "skills_memory",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "save_last_actions_as_skill": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "save_workspace_snapshot": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "scroll_screen": {
+      "domain": "wayland_gui",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_rdp"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "search_active_app_menus": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:atspi"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "search_browser_bookmarks": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "search_contacts": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "search_files": {
+      "domain": "files_office",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "search_in_files": {
+      "domain": "files_office",
+      "tier": "tier1",
+      "fs_scope": "home_ro",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "search_memory": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "set_assistant_identity": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "set_brightness": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "proc_sys_ro",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:gnome_shell"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "set_clipboard": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_clipboard"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "set_focus_mode": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:gnome_shell"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "set_timer": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "set_volume": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": true,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "spotlight_query": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "start_ios_continuity_camera": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "lan_mdns",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "start_ipad_sidecar_weylus": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "lan_mdns",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "start_recording": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "stop_recording": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "submit_goal": {
+      "domain": "mcp_system",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:celina_autonomy"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "toggle_app_nap": {
+      "domain": "os_hardware",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [
+        "system:systemd"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "transcribe_system_audio": {
+      "domain": "continuity_audio_privacy",
+      "tier": "tier2",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": true,
+      "kernel_boundary": "systemd_user_scope",
+      "credential_access": "none"
+    },
+    "trash_file": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "trigger_iot_webhook": {
+      "domain": "mcp_system",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "iot_allowlist",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "type_text": {
+      "domain": "wayland_gui",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_rdp"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "update_skill": {
+      "domain": "skills_memory",
+      "tier": "tier1",
+      "fs_scope": "celina_state_only",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "web_search": {
+      "domain": "web_comms",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "https_public_only",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "in_process_ro",
+      "credential_access": "none"
+    },
+    "write_file": {
+      "domain": "files_office",
+      "tier": "tier2",
+      "fs_scope": "home_rw_approval_undo",
+      "network_egress": "none",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "approval_plus_undo",
+      "credential_access": "none"
+    },
+    "writing_tool_transform": {
+      "domain": "apple_pim_writing",
+      "tier": "tier1",
+      "fs_scope": "none",
+      "network_egress": "loopback_ollama",
+      "dbus_buses": [
+        "session:portal_clipboard"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "dbus_portal_or_atspi",
+      "credential_access": "none"
+    },
+    "computer_click": {
+      "domain": "mcp_perception_actuation",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_remote_desktop"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_unshare_all",
+      "credential_access": "none",
+      "mcp_server": "computer-use-linux",
+      "mcp_transport": "stdio"
+    },
+    "computer_type": {
+      "domain": "mcp_perception_actuation",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "none",
+      "dbus_buses": [
+        "session:portal_remote_desktop"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_unshare_all",
+      "credential_access": "none",
+      "mcp_server": "computer-use-linux",
+      "mcp_transport": "stdio"
+    },
+    "vision_ocr": {
+      "domain": "mcp_perception_actuation",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "loopback_ollama",
+      "dbus_buses": [
+        "session:portal_screenshot"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_net_allowlist",
+      "credential_access": "none",
+      "mcp_server": "shadow-vision",
+      "mcp_transport": "stdio"
+    },
+    "vision_analyze": {
+      "domain": "mcp_perception_actuation",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "loopback_ollama",
+      "dbus_buses": [
+        "session:portal_screenshot"
+      ],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_net_allowlist",
+      "credential_access": "none",
+      "mcp_server": "shadow-vision",
+      "mcp_transport": "stdio"
+    },
+    "ghostdesk_click": {
+      "domain": "mcp_perception_actuation",
+      "tier": "tier2",
+      "fs_scope": "none",
+      "network_egress": "mcp_declared",
+      "dbus_buses": [],
+      "pipewire": false,
+      "kernel_boundary": "bwrap_net_allowlist",
+      "credential_access": "none",
+      "mcp_server": "ghostdesk",
+      "mcp_transport": "http"
+    }
+  }
+}

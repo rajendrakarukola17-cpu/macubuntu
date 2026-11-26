@@ -1,0 +1,11 @@
+// /etc/polkit-1/rules.d/99-scx-loader.rules
+// Passwordless sched_ext switching (scxctl switch) for Celina's non-interactive voice service.
+// Grants org.scx.* actions to administrators in either "sudo" (Ubuntu/Debian) or "wheel".
+polkit.addRule(function (action, subject) {
+    if (
+        action.id.indexOf("org.scx.") === 0 &&
+        (subject.isInGroup("sudo") || subject.isInGroup("wheel"))
+    ) {
+        return polkit.Result.YES;
+    }
+});

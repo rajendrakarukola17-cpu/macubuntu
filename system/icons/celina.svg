@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="celinaBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1020"/>
+      <stop offset="50%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="celinaGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#f472b6"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#celinaBg)" stroke="url(#celinaGlow)" stroke-width="3"/>
+  <path d="M64 26 C67 48, 80 61, 102 64 C80 67, 67 80, 64 102 C61 80, 48 67, 26 64 C48 61, 61 48, 64 26 Z" fill="url(#celinaGlow)"/>
+  <circle cx="64" cy="64" r="9" fill="#ffffff" fill-opacity="0.92"/>
+</svg>

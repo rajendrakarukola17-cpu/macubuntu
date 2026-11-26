@@ -1,0 +1,9 @@
+# macubuntu Tier B — Pinned Experimental Apple Protocol Research Dependencies
+# Generate an ABI-specific hash lock anytime with:
+#   pip-compile --generate-hashes tools/requirements-tier-b.txt -o tools/requirements-tier-b.lock
+cryptography==44.0.2
+pycryptodomex==3.21.0
+requests==2.32.3
+protobuf==5.29.3
+srp==1.0.22
+aiohttp==3.11.13

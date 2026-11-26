@@ -1,0 +1,1340 @@
+"""
+Celina AI (Celly) - Configuration & Neural Schema Loader (v4.2)
+Precedence: process environment > ~/.config/celina/env > ~/.config/celina/neural-schema.json > defaults.
+Assistant display name & nickname default to Celina / Celly and can be updated anytime via
+/name, set_assistant_identity, ~/.config/celina/env, or neural-schema.json.
+"""
+
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+from typing import Any, Optional
+
+try:
+    os.umask(0o077)
+except OSError:
+    pass
+
+
+class PersistenceError(OSError):
+    """Raised when atomic persistence of configuration/identity fails on disk."""
+
+
+def ensure_private_dir(path: Path) -> Path:
+    """Creates directory with mode 0700 and hardens existing directory permissions."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    try:
+        os.chmod(path, 0o700)
+    except OSError:
+        pass
+    return path
+
+
+def ensure_private_file(path: Path) -> Path:
+    """Ensures a private file exists (if created) and has mode 0600."""
+    ensure_private_dir(path.parent)
+    if not path.exists():
+        fd = os.open(str(path), os.O_CREAT | os.O_WRONLY, 0o600)
+        os.close(fd)
+    os.chmod(path, 0o600)
+    return path
+
+
+def atomic_write_private_text(target: Path, content: str) -> None:
+    """
+    Atomically writes text to target with fsync + mode 0600.
+    Raises OSError on any failure without corrupting the existing target file.
+    """
+    ensure_private_dir(target.parent)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(target.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp_path, 0o600)
+        os.replace(tmp_path, target)
+        os.chmod(target, 0o600)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+# --- Core Paths ---
+HOME = Path.home()
+BASE_DIR = HOME / ".local" / "share" / "celina"
+SHARED_STORAGE_DIR = HOME / ".celina" / "storage" / "shared"
+CONFIG_DIR = HOME / ".config" / "celina"
+VOICES_DIR = BASE_DIR / "voices"
+WAKEWORD_DIR = BASE_DIR / "wakeword"
+BACKUPS_DIR = BASE_DIR / "backups"
+UNDO_DIR = BASE_DIR / "undo"
+CHECKPOINTS_DIR = BASE_DIR / "checkpoints"
+SKILLS_DIR = BASE_DIR / "skills"
+SKILLS_TRUSTED_DIR = SKILLS_DIR / "trusted"
+SKILLS_QUARANTINE_DIR = SKILLS_DIR / "quarantine"
+LOGS_DIR = BASE_DIR / "logs"
+ENV_FILE = CONFIG_DIR / "env"
+SCHEMA_FILE = CONFIG_DIR / "neural-schema.json"
+MCP_CONFIG_FILE = CONFIG_DIR / "mcp-servers.json"
+IOT_ALLOWLIST_FILE = CONFIG_DIR / "iot-allowlist.json"
+DB_PATH = SHARED_STORAGE_DIR / "memory.db"
+CACHE_DB_PATH = SHARED_STORAGE_DIR / "cache.db"
+NAPPED_PIDS_FILE = BASE_DIR / "napped_pids.json"
+LEGACY_GRAPH_FILE = BASE_DIR / "semantic_memory.json"
+STOP_AUTOMATION_FILE = BASE_DIR / "STOP_AUTOMATION"
+
+# User-scoped IPC & Wayland ydotool socket paths
+_RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+SOCKET_PATH = str(_RUNTIME_DIR / f"celina_island_{os.getuid()}.sock")
+DEFAULT_YDOTOOL_SOCKET = str(_RUNTIME_DIR / ".ydotool_socket")
+
+# Ensure private runtime directories exist with 0700 permissions
+for _d in (
+    BASE_DIR,
+    CONFIG_DIR,
+    VOICES_DIR,
+    WAKEWORD_DIR,
+    BACKUPS_DIR,
+    UNDO_DIR,
+    CHECKPOINTS_DIR,
+    SKILLS_DIR,
+    SKILLS_TRUSTED_DIR,
+    SKILLS_QUARANTINE_DIR,
+    LOGS_DIR,
+):
+    ensure_private_dir(_d)
+
+# Harden existing config files to 0600 when present
+for _f in (ENV_FILE, SCHEMA_FILE, MCP_CONFIG_FILE, IOT_ALLOWLIST_FILE):
+    if _f.exists():
+        try:
+            os.chmod(_f, 0o600)
+        except OSError:
+            pass
+
+DEFAULT_NEURAL_SCHEMA: dict[str, Any] = {
+    "schema_version": "4.4",
+    "persona": {
+        "name": "Celina",
+        "nickname": "Celly",
+        "auto_match_user_language": True,
+        "default_language": "auto",
+        "supported_languages": ["en", "te", "hi"],
+        "system_instructions": (
+            "You are {name} (also affectionately called {nickname} by the user), an ultra-intelligent, decisive personal OS assistant running on Ubuntu 26.04 Wayland (8GB RAM). "
+            "Lead with your clearest verdict or action, avoid filler, and offer at most ONE high-leverage proactive suggestion. "
+            "Match the language of the user's latest message strictly (reply in English when the user writes in English; reply in Telugu or Hindi only when the user writes in Telugu/Tenglish or Hindi/Hinglish). "
+            "When the user asks to rename you or change your nickname, call set_assistant_identity immediately. "
+            "You can read the screen via offline OCR, click/type/press hotkeys on Wayland, manage knowledge graphs & goals, and learn/record/replay multi-step skills."
+        ),
+    },
+    "swarm_roles": {
+        "architect": {
+            "name": "The Architect",
+            "triggers": ["plan", "architect", "architecture", "design", "roadmap", "break down", "project", "migrate", "goal", "milestone"],
+            "directive": "SWARM ROLE — THE ARCHITECT: Decompose the objective into a numbered DAG of concrete sub-tasks, identify dependencies and failure modes, and log or update multi-step objectives via manage_goal when appropriate.",
+        },
+        "engineer": {
+            "name": "The Coder / Engineer",
+            "triggers": ["code", "debug", "traceback", "script", "python", "bash", "fix", "refactor", "compile", "git", "sql", "bug", "test"],
+            "directive": "SWARM ROLE — THE ENGINEER: Inspect actual files/logs first, isolate the single root cause, write clean modular code, and prefer sandboxed verification before declaring success.",
+        },
+        "researcher": {
+            "name": "The Researcher",
+            "triggers": ["research", "search", "latest", "compare", "news", "paper", "specs", "fact check", "summarize", "benchmark"],
+            "directive": "SWARM ROLE — THE RESEARCHER: Cross-verify live sources via web_search/fetch_webpage or local documents, synthesize a verdict-first brief, and cite concrete dates or numbers.",
+        },
+        "critic": {
+            "name": "The Critic / Verifier",
+            "directive": "SWARM ROLE — THE CRITIC: Audit proposed Tier-2 actions and outputs for security risks, data loss, privacy leaks, or hallucinated paths before final execution.",
+        },
+    },
+    "cognition": {
+        "adaptive_thinking": True,
+        "tree_of_thought_on_deep": True,
+        "critic_audit_on_tier2": True,
+        "gears": {
+            "gear0_5": {
+                "reasoning_effort": "none",
+                "max_tokens": 128,
+                "temperature": 0.3,
+                "max_steps": 1,
+                "instruction": "GEAR 0.5 (smolLM QUANTIZED): Answer briefly in 1-2 sentences using local smolLM. Be concise and direct.",
+            },
+            "fast": {
+                "reasoning_effort": "none",
+                "max_tokens": 220,
+                "temperature": 0.35,
+                "max_steps": 2,
+                "instruction": "GEAR 1 (FAST INSTINCT): Do NOT overthink. Answer immediately in 1–2 crisp sentences.",
+            },
+            "tactical": {
+                "reasoning_effort": "low",
+                "max_tokens": 600,
+                "temperature": 0.45,
+                "max_steps": 5,
+                "instruction": "GEAR 2 (TACTICAL ADVISOR): Lead with ONE clear decision/action, brief core reason, and at most ONE practical next step.",
+            },
+            "deep": {
+                "reasoning_effort": "high",
+                "max_tokens": 1500,
+                "temperature": 0.3,
+                "max_steps": 6,
+                "instruction": "GEAR 3 (DEEP STRATEGIST): Think rigorously—verify facts/files/screen via tools, surface risks/trade-offs, then commit to a clear plan.",
+            },
+        },
+        "fast_overrides": ["quick:", "fast:", "brief:", "short:", "tldr"],
+        "deep_overrides": ["deep:", "think deeply", "think hard", "analyze carefully", "step by step"],
+        "deep_triggers": [
+            "architect", "architecture", "debug", "compare", "tradeoff", "trade-off",
+            "strategy", "financial", "invest", "career", "legal", "medical",
+            "optimize", "refactor", "migrate", "prove", "why does", "root cause",
+            "plan my", "pros and cons", "security audit", "automate complex",
+        ],
+        "tactical_triggers": [
+            "slow", "lag", "fix", "error", "recommend", "suggest", "which should i",
+            "best way", "how to", "summarize", "edit", "update", "create",
+            "document", "libreoffice", "search", "find", "send", "organize",
+            "automate", "script", "install", "battery", "ram", "click", "screen",
+            "ocr", "learn", "skill", "record", "workflow", "macro", "type", "press",
+        ],
+    },
+    "edge_lighting": {
+        "enabled": True,
+        "fullscreen_on_task": True,
+        "island_on_response": True,
+    },
+    "cache": {
+        "enabled": True,
+        "ram_hot_max_items": 32,
+        "ram_idle_offload_sec": 300,
+        "disk_offload_interval_sec": 600,
+        "max_entries": 300,
+        "max_size_mb": 10,
+        "ttl_seconds": {
+            "llm_fast": 21600,
+            "llm_tactical": 7200,
+            "llm_deep": 3600,
+            "web_search": 900,
+            "fetch_webpage": 1800,
+            "document": 43200,
+        },
+    },
+    "automation": {
+        "enabled": True,
+        "ocr_languages": "eng+tel+hin",
+        "default_step_delay_sec": 0.4,
+        "max_workflow_steps": 25,
+        "require_approval_for_gui_actions": True,
+        "require_approval_for_skill_replay": True,
+    },
+    "privacy": {
+        "strict_mode": True,
+        "auto_redact_pii": True,
+        "require_consent_for_cloud_local_data": True,
+        "require_consent_for_cloud_pii": True,
+        "prefer_local_for_private_files": True,
+        "hard_blocked_paths": [
+            ".ssh", ".gnupg", ".aws", ".kube", ".netrc", ".git-credentials",
+            "keyrings", "Login Data", "cookies.sqlite",
+        ],
+        "local_sensitive_tools": [
+            "read_file", "read_document", "search_in_files", "get_clipboard",
+            "get_highlighted_text", "run_shell_command", "read_screen",
+            "find_text_on_screen", "inspect_ui_elements", "mcp_call_tool",
+            "get_upcoming_events", "search_contacts", "search_browser_bookmarks",
+            "prepare_meeting_context", "transcribe_system_audio",
+            "get_secret_vault_status", "mount_ios_device", "respond_ios_notification",
+            "writing_tool_transform", "live_text_ocr", "audit_app_permissions",
+        ],
+    },
+    "routing": {
+        "default_mode": "auto",
+        "max_agent_steps": 5,
+        "cloud_model": "openrouter/free",
+        "local_model": "qwen3:1.7b",
+        "ollama_num_ctx": 4096,
+        "request_timeout_sec": 20,
+        "local_timeout_sec": 180,
+    },
+    "languages": {
+        "en": {
+            "name": "English",
+            "native_name": "English",
+            "badge": "EN",
+            "piper_voice": "en_US-amy-medium",
+            "espeak_voice": "en-us+f3",
+        },
+        "te": {
+            "name": "Telugu",
+            "native_name": "తెలుగు",
+            "badge": "తె",
+            "unicode_range": ["0C00", "0C7F"],
+            "piper_voice": "te_IN-maya-medium",
+            "espeak_voice": "te+f3",
+        },
+        "hi": {
+            "name": "Hindi",
+            "native_name": "हिन्दी",
+            "badge": "हिं",
+            "unicode_range": ["0900", "097F"],
+            "piper_voice": "hi_IN-priyamvada-medium",
+            "espeak_voice": "hi+f3",
+        },
+    },
+    "stt": {
+        "whisper_model": "base",
+        "whisper_idle_offload_seconds": 180,
+        "auto_detect_language": True,
+        "silence_stop_seconds": 1.2,
+        "start_timeout_seconds": 5.0,
+        "max_duration_seconds": 15.0,
+    },
+    "security_policy": {
+        "max_file_backups": 20,
+        "tier1_auto_tools": [
+            "get_system_stats", "set_volume", "set_brightness", "control_media",
+            "control_connectivity", "open_application", "toggle_app_nap", "open_document",
+            "list_running_apps", "search_files", "search_in_files", "read_file",
+            "read_document", "get_clipboard", "get_highlighted_text", "set_clipboard", "set_timer",
+            "web_search", "fetch_webpage", "fetch_url_text",
+            "get_weather", "get_news_headlines", "get_current_time_zone",
+            "remember_fact", "search_memory",
+            "link_knowledge", "manage_goal", "save_workspace_snapshot",
+            "set_assistant_identity", "get_hardware_capabilities",
+            "set_focus_mode", "diagnose_systemd_service", "get_secret_vault_status",
+            "spotlight_query", "route_app_audio",
+            "get_continuity_status", "audit_app_permissions", "search_active_app_menus",
+            "writing_tool_transform", "live_text_ocr", "get_upcoming_events",
+            "search_contacts", "search_browser_bookmarks", "prepare_meeting_context",
+            "read_screen", "find_text_on_screen", "inspect_ui_elements", "learn_skill",
+            "save_last_actions_as_skill", "list_skills", "list_quarantined_skills",
+            "reject_quarantined_skill", "update_skill",
+            "forget_skill", "start_recording", "stop_recording",
+            "mcp_list_servers", "mcp_list_tools", "cache_status", "clear_cache",
+        ],
+        "tier2_approval_tools": [
+            "write_file", "edit_file", "edit_document", "create_document",
+            "convert_document", "libreoffice_edit", "move_file", "trash_file", "close_application",
+            "compose_message", "run_shell_command", "run_python_sandbox",
+            "code_sandbox",
+            "transcribe_system_audio", "manage_default_apps",
+            "click_on_text", "click_position", "scroll_screen", "drag_and_drop",
+            "type_text", "press_hotkey", "run_skill", "autonomous_gui_task",
+            "mcp_call_tool", "install_community_skill", "approve_quarantined_skill",
+            "trigger_iot_webhook", "launch_android_mirror", "control_airplay_mirror",
+            "mount_ios_device", "start_ios_continuity_camera", "start_ipad_sidecar_weylus",
+            "respond_ios_notification", "create_calendar_event", "submit_goal",
+            "computer_click", "computer_type", "vision_ocr", "vision_analyze", "ghostdesk_click",
+            "ponytail_evaluate", "skilspector_scan",
+        ],
+        "protected_paths": [".ssh", ".gnupg", ".aws", ".kube", ".netrc", ".git-credentials"],
+    },
+    "tool_domains": {
+        "os_hardware": {
+            "always_active": True,
+            "core_fast_tools": [
+                "get_system_stats", "set_volume", "set_brightness", "control_media",
+                "control_connectivity", "open_application", "toggle_app_nap",
+                "set_timer", "get_highlighted_text", "get_clipboard",
+            ],
+            "tools": [
+                "get_system_stats", "set_volume", "set_brightness", "control_media",
+                "control_connectivity", "open_application", "toggle_app_nap",
+                "close_application", "list_running_apps", "set_timer",
+                "get_clipboard", "get_highlighted_text", "set_clipboard",
+                "diagnose_systemd_service", "manage_default_apps",
+            ],
+        },
+        "files_office": {
+            "triggers": ["file", "folder", "doc", "docx", "odt", "pdf", "xlsx", "pptx", "sheet", "slide", "libreoffice", "read", "write", "edit", "trash", "move", "resume", "report", "convert", "export"],
+            "window_hints": ["libreoffice", "writer", "calc", "impress", "nautilus", "files", "code"],
+            "tools": [
+                "search_files", "search_in_files", "read_file", "write_file",
+                "edit_file", "move_file", "trash_file", "open_document",
+                "read_document", "create_document", "edit_document", "convert_document",
+                "libreoffice_edit",
+            ],
+        },
+        "web_comms": {
+            "triggers": ["web", "search", "news", "headlines", "latest", "weather", "forecast", "time zone", "timezone", "url", "http", "website", "whatsapp", "telegram", "email", "message", "send"],
+            "window_hints": ["firefox", "chrome", "chromium", "brave", "thunderbird"],
+            "tools": [
+                "web_search", "fetch_webpage", "fetch_url_text",
+                "get_weather", "get_news_headlines", "get_current_time_zone",
+                "compose_message",
+            ],
+        },
+        "wayland_gui": {
+            "triggers": ["screen", "click", "type", "scroll", "drag", "hotkey", "button", "window", "ocr", "astra", "fill", "form"],
+            "tools": [
+                "read_screen", "find_text_on_screen", "inspect_ui_elements",
+                "click_on_text", "click_position", "scroll_screen", "drag_and_drop",
+                "type_text", "press_hotkey", "autonomous_gui_task",
+            ],
+        },
+        "apple_pim_writing": {
+            "triggers": [
+                "calendar", "meeting", "meetings", "brief", "prepare", "prep", "schedule", "appointment", "event", "events",
+                "upcoming", "tomorrow", "contact", "contacts", "phone number", "email address",
+                "bookmark", "bookmarks", "proofread", "rewrite", "rephrase", "tone", "grammar",
+                "polish", "key points", "bullet points", "writing tool", "live text", "snip",
+                "extract text", "spotlight", "convert units", "menu", "menus", "command palette",
+                "క్యాలెండర్", "మీటింగ్", "కాంటాక్ట్", "कैलेंडर", "मीटिंग", "कॉन्टैक्ट",
+            ],
+            "window_hints": ["calendar", "contacts", "thunderbird", "firefox", "libreoffice", "gedit"],
+            "tools": [
+                "writing_tool_transform", "live_text_ocr", "get_upcoming_events",
+                "create_calendar_event", "search_contacts", "search_browser_bookmarks",
+                "prepare_meeting_context", "spotlight_query", "search_active_app_menus",
+            ],
+        },
+        "continuity_audio_privacy": {
+            "triggers": [
+                "continuity", "iphone", "ipad", "airpods", "airplay", "uxplay", "shairport",
+                "ifuse", "mount iphone", "sidecar", "weylus", "apple pencil", "continuity camera",
+                "ancs", "answer call", "decline call", "dismiss notification",
+                "transcribe", "meeting audio", "loopback", "summarize meeting", "what was just said",
+                "keyring", "keepass", "keepassxc", "vault", "secret service", "unlock vault",
+                "android", "scrcpy", "mirror", "localsend", "airdrop", "deskflow", "syncthing",
+                "focus", "focus mode", "dnd", "do not disturb", "night light", "sleep mode",
+                "coding mode", "work mode", "presentation mode",
+                "route audio", "audio sink", "headphone", "headphones", "speaker", "speakers",
+                "bluetooth", "pipewire", "output device", "mic", "microphone", "camera", "webcam",
+                "permission", "permissions", "privacy", "audit", "flatseal", "tcc",
+                "hardware", "biometric", "biometrics", "fingerprint", "touch id", "face id", "charge limit",
+                "ఫోకస్", "బ్యాటరీ", "హెడ్‌ఫోన్", "फोकस", "बैटरी", "हेडफोन",
+            ],
+            "window_hints": ["scrcpy", "uxplay", "localsend", "flatseal", "helvum", "settings", "keepassxc", "zoom"],
+            "tools": [
+                "get_continuity_status", "set_focus_mode", "route_app_audio",
+                "audit_app_permissions", "get_hardware_capabilities",
+                "get_secret_vault_status", "transcribe_system_audio",
+                "launch_android_mirror", "control_airplay_mirror",
+                "mount_ios_device", "start_ios_continuity_camera",
+                "start_ipad_sidecar_weylus", "respond_ios_notification",
+            ],
+        },
+        "skills_memory": {
+            "triggers": [
+                "remember", "memory", "fact", "forgot", "recall", "history", "skill",
+                "routine", "workflow", "macro", "learn", "record", "recording", "replay",
+                "save last", "heal", "update skill", "forget skill", "install skill",
+                "quarantine", "goal", "goals", "project", "roadmap", "deadline", "milestone", "subtask",
+                "knowledge", "graph", "link", "relationship", "plan",
+                "workspace", "snapshot", "session", "name", "nickname", "rename", "call yourself", "identity",
+                "గుర్తుంచుకో", "యాద్", "याद रखो",
+            ],
+            "tools": [
+                "remember_fact", "search_memory", "link_knowledge", "manage_goal",
+                "save_workspace_snapshot", "set_assistant_identity",
+                "learn_skill", "save_last_actions_as_skill",
+                "start_recording", "stop_recording", "list_skills", "list_quarantined_skills",
+                "approve_quarantined_skill", "reject_quarantined_skill", "run_skill",
+                "update_skill", "forget_skill", "install_community_skill",
+            ],
+        },
+        "mcp_system": {
+            "triggers": [
+                "mcp", "github", "linear", "notion", "git", "sqlite", "playwright",
+                "context7", "shell", "bash", "terminal", "command", "python", "sandbox",
+                "execute", "run code", "verify code", "systemd", "journalctl", "service",
+                "default app", "mime", "cache",
+                "iot", "smart home", "home assistant", "webhook", "mqtt", "lights", "switch",
+            ],
+            "window_hints": ["terminal", "ptyxis", "console", "code"],
+            "tools": [
+                "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
+                "run_shell_command", "run_python_sandbox",
+                "trigger_iot_webhook", "cache_status", "clear_cache", "submit_goal",
+            ],
+        },
+        "mcp_perception_actuation": {
+            "tier": 2,
+            "servers": ["computer-use-linux", "shadow-vision", "ghostdesk"],
+            "triggers": [
+                "computer-use", "shadow-vision", "ghostdesk", "eye2byte", "uacc", "deskwright",
+                "semantic click", "vision ocr", "vision analyze", "virtual desktop", "isolated desktop",
+                "ui map", "mcp click", "mcp type",
+            ],
+            "tools": [
+                "computer_click", "computer_type", "vision_ocr", "vision_analyze", "ghostdesk_click",
+            ],
+        },
+        "code_exec": {
+            "triggers": [
+                "code", "script", "python", "bash", "shell script", "run code",
+                "execute python", "run bash", "calculate", "compute", "sandbox",
+                "verify code", "debug", "compile", "interpreter", "spreadsheet calc",
+                "data analysis", "automate task", "python sandbox", "bash sandbox"
+            ],
+            "window_hints": ["terminal", "ptyxis", "console", "code", "vim", "gedit", "code"],
+            "tools": [
+                "code_sandbox", "run_python_sandbox", "run_shell_command"
+            ],
+        },
+        "skill_security": {
+            "triggers": [
+                "skill", "scan", "security", "vulnerability", "mcp", "install skill",
+                "skilspector", "ponytail", "risk", "audit", "supply chain",
+                "prompt injection", "data exfiltration", "skill inspector"
+            ],
+            "window_hints": ["terminal", "code", "console", "editor"],
+            "tools": [
+                "ponytail_evaluate",
+                "skilspector_scan",
+            ],
+        },
+    },
+    "world_model": {
+        "track_active_window": True,
+        "proactive_triggers": {
+            "ram_pressure_pct": 88,
+            "battery_low_pct": 18,
+        },
+    },
+    "confidence_policy": {
+        "act_immediately_min_confidence": 0.75,
+        "clarify_if_ambiguous_destructive": True,
+        "clarification_instruction": "If a destructive or irreversible request is ambiguous about the target file or recipient, ask ONE brief clarifying question first.",
+    },
+    "reflection_policy": {
+        "enable_preflight_micro_plan": True,
+        "enable_error_self_correction": True,
+        "max_identical_tool_failures": 2,
+        "verify_astra_done_state": True,
+        "enable_implicit_correction_learning": True,
+        "enable_habit_mining": True,
+        "habit_suggestion_threshold": 3,
+    },
+    "embeddings": {
+        "engine": "auto",
+        "model": "embeddinggemma",
+        "model2vec_model": "minishlab/potion-multilingual-128M",
+        "dim": 256,
+        "keep_alive": "30s",
+        "rrf_k": 60,
+        "semantic_cache_enabled": True,
+        "semantic_cache_threshold": 0.92,
+        "tool_router_min_sim": 0.38,
+    },
+    "web_comms": {
+        "enabled": False,
+        "allowed_hosts": [],
+    },
+    "libreoffice": {
+        "uno_port": 2002,
+    },
+    "autonomy": {
+        "observe_only": True,
+    },
+}
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = _deep_merge(merged[k], v)
+        else:
+            merged[k] = v
+    return merged
+
+
+def _parse_schema_ver(ver: Any) -> tuple[int, int]:
+    m = re.match(r"^\s*(\d+)(?:\.(\d+))?", str(ver or "0.0"))
+    if not m:
+        return (0, 0)
+    return (int(m.group(1)), int(m.group(2) or 0))
+
+
+def _union_list(base_list: Any, user_list: Any) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for src in (base_list, user_list):
+        if isinstance(src, list):
+            for item in src:
+                s = str(item)
+                if s not in seen:
+                    seen.add(s)
+                    out.append(s)
+    return out
+
+
+def load_neural_schema(schema_path: Path = SCHEMA_FILE) -> dict[str, Any]:
+    if schema_path.exists():
+        try:
+            loaded = json.loads(schema_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                merged = _deep_merge(DEFAULT_NEURAL_SCHEMA, loaded)
+                cur_ver = _parse_schema_ver(DEFAULT_NEURAL_SCHEMA.get("schema_version", "4.3"))
+                disk_ver = _parse_schema_ver(loaded.get("schema_version", "0.0"))
+                if disk_ver < cur_ver:
+                    # Seamless upgrade migration: preserve user persona/routing/settings while
+                    # ensuring newly added tools, privacy guards & 8-domain routing stay active!
+                    base_sec = DEFAULT_NEURAL_SCHEMA.get("security_policy", {})
+                    merged_sec = dict(merged.get("security_policy") or {})
+                    for key in ("tier1_auto_tools", "tier2_approval_tools", "protected_paths"):
+                        merged_sec[key] = _union_list(base_sec.get(key), merged_sec.get(key))
+                    # Fail-closed precedence: tools promoted to Tier 2 MUST be removed from Tier 1
+                    t2_set = set(merged_sec.get("tier2_approval_tools") or [])
+                    merged_sec["tier1_auto_tools"] = [
+                        t for t in (merged_sec.get("tier1_auto_tools") or []) if t not in t2_set
+                    ]
+                    merged["security_policy"] = merged_sec
+
+                    base_priv = DEFAULT_NEURAL_SCHEMA.get("privacy", {})
+                    merged_priv = dict(merged.get("privacy") or {})
+                    for key in ("local_sensitive_tools", "hard_blocked_paths"):
+                        merged_priv[key] = _union_list(base_priv.get(key), merged_priv.get(key))
+                    merged["privacy"] = merged_priv
+
+                    # Refresh tool_domains to clean v4.3 8-domain partition (keeping any user custom domains)
+                    base_doms = DEFAULT_NEURAL_SCHEMA.get("tool_domains", {})
+                    upgraded_doms = {k: dict(v) for k, v in base_doms.items()}
+                    for k, v in (loaded.get("tool_domains") or {}).items():
+                        if k not in upgraded_doms and isinstance(v, dict):
+                            upgraded_doms[k] = v
+                    merged["tool_domains"] = upgraded_doms
+                    merged["schema_version"] = str(DEFAULT_NEURAL_SCHEMA["schema_version"])
+                return merged
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            import sys
+            print(f"[celina.config] schema load fallback ({schema_path}): {exc}", file=sys.stderr)
+    return dict(DEFAULT_NEURAL_SCHEMA)
+
+
+def load_env(env_path: Path = ENV_FILE) -> dict[str, str]:
+    env_vars: dict[str, str] = {}
+    if env_path.exists():
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            if "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip()
+            if (val.startswith('"') and val.endswith('"')) or (
+                val.startswith("'") and val.endswith("'")
+            ):
+                val = val[1:-1]
+            if key:
+                env_vars[key] = val
+    return env_vars
+
+
+def _get_setting(key: str, default: str = "") -> str:
+    val = os.environ.get(key)
+    if val is not None and val != "":
+        return val.strip()
+    return ENV.get(key, default).strip()
+
+
+# --- Load Schema & Environment ---
+NEURAL_SCHEMA = load_neural_schema()
+ENV = load_env()
+
+_ROUTING = NEURAL_SCHEMA.get("routing", {})
+_STT = NEURAL_SCHEMA.get("stt", {})
+_PERSONA = NEURAL_SCHEMA.get("persona", {})
+_SECURITY = NEURAL_SCHEMA.get("security_policy", {})
+COGNITION_CFG: dict[str, Any] = NEURAL_SCHEMA.get("cognition", {})
+SWARM_ROLES: dict[str, dict[str, Any]] = NEURAL_SCHEMA.get("swarm_roles", {})
+WORLD_MODEL_CFG: dict[str, Any] = NEURAL_SCHEMA.get("world_model", {})
+TOOL_DOMAINS: dict[str, dict[str, Any]] = NEURAL_SCHEMA.get("tool_domains", {})
+CONFIDENCE_POLICY: dict[str, Any] = NEURAL_SCHEMA.get("confidence_policy", {})
+REFLECTION_POLICY: dict[str, Any] = NEURAL_SCHEMA.get("reflection_policy", {})
+EDGE_LIGHTING_CFG: dict[str, Any] = NEURAL_SCHEMA.get("edge_lighting", {})
+CACHE_CFG: dict[str, Any] = NEURAL_SCHEMA.get("cache", {})
+AUTOMATION_CFG: dict[str, Any] = NEURAL_SCHEMA.get("automation", {})
+PRIVACY_CFG: dict[str, Any] = NEURAL_SCHEMA.get("privacy", {})
+LANGUAGES: dict[str, dict[str, Any]] = NEURAL_SCHEMA.get("languages", {})
+WEB_COMMS_CFG: dict[str, Any] = NEURAL_SCHEMA.get("web_comms", {"enabled": False, "allowed_hosts": []})
+LIBREOFFICE_CFG: dict[str, Any] = NEURAL_SCHEMA.get("libreoffice", {"uno_port": 2002})
+AUTONOMY_CFG: dict[str, Any] = NEURAL_SCHEMA.get("autonomy", {"observe_only": True})
+
+
+def is_web_comms_enabled() -> bool:
+    env_override = os.environ.get("CELINA_WEB_COMMS_ENABLED")
+    if env_override is not None and env_override.strip() != "":
+        return env_override.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(WEB_COMMS_CFG.get("enabled", False))
+
+
+def get_web_comms_allowed_hosts() -> list[str]:
+    hosts = WEB_COMMS_CFG.get("allowed_hosts") or []
+    return [str(h).strip().lower().rstrip(".") for h in hosts if str(h).strip()]
+
+
+def get_libreoffice_uno_port() -> int:
+    env_port = os.environ.get("CELINA_LIBREOFFICE_UNO_PORT")
+    if env_port and env_port.strip().isdigit():
+        return int(env_port.strip())
+    try:
+        return int(LIBREOFFICE_CFG.get("uno_port", 2002))
+    except (TypeError, ValueError):
+        return 2002
+
+
+def is_autonomy_observe_only() -> bool:
+    env_override = os.environ.get("CELINA_AUTONOMY_OBSERVE_ONLY")
+    if env_override is not None and env_override.strip() != "":
+        return env_override.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(AUTONOMY_CFG.get("observe_only", True))
+
+# Assistant Identity (default: Celina / nickname: Celly; updatable live anytime!)
+ASSISTANT_NAME = _get_setting(
+    "CELINA_NAME",
+    _get_setting("ASSISTANT_NAME", str(_PERSONA.get("name", "Celina"))),
+) or "Celina"
+ASSISTANT_NICKNAME = _get_setting(
+    "CELINA_NICKNAME",
+    _get_setting("ASSISTANT_NICKNAME", str(_PERSONA.get("nickname", "Celly"))),
+)
+
+# AI Endpoints & Models (all cloud keys are optional; never print their values)
+OPENROUTER_API_KEY = _get_setting("OPENROUTER_API_KEY", "")
+GROQ_API_KEY = _get_setting("GROQ_API_KEY", "")
+GEMINI_API_KEY = _get_setting("GEMINI_API_KEY", "")
+NVIDIA_API_KEY = _get_setting("NVIDIA_API_KEY", "")
+MISTRAL_API_KEY = _get_setting("MISTRAL_API_KEY", "")
+CEREBRAS_API_KEY = _get_setting("CEREBRAS_API_KEY", "")
+XAI_API_KEY = _get_setting("XAI_API_KEY", "")
+ZHIPUAI_API_KEY = _get_setting("ZHIPUAI_API_KEY", "")
+DEEPSEEK_API_KEY = _get_setting("DEEPSEEK_API_KEY", "")
+TOGETHER_API_KEY = _get_setting("TOGETHER_API_KEY", "")
+PERPLEXITY_API_KEY = _get_setting("PERPLEXITY_API_KEY", "")
+OLLAMA_API_BASE = _get_setting("OLLAMA_API_BASE", "http://localhost:11434").rstrip("/")
+NPU_API_BASE = _get_setting("CELINA_NPU_ENDPOINT", "http://127.0.0.1:11435").rstrip("/")
+LOCAL_MODEL = _get_setting("CELINA_LOCAL_MODEL", str(_ROUTING.get("local_model", "qwen3:1.7b")))
+
+# ---------------------------------------------------------------------------
+# Gear 0.5: smolLM Quantized (Update 26)
+# Local sub-second LLM tier between Gear 0 (0 tokens) and Gear 1 (Ollama)
+# ---------------------------------------------------------------------------
+SMOLLM_MODEL = _get_setting(
+    "CELINA_SMOLLM_MODEL",
+    str(_ROUTING.get("smolllm_model", "smollm-117m")),
+)
+SMOLLM_BIN = _get_setting(
+    "CELINA_SMOLLM_BIN",
+    str(Path.home() / ".celina" / "models" / "smolLM" / "llama.cpp" / "llama-cli"),
+)
+SMOLLM_MODEL_PATH = _get_setting(
+    "CELINA_SMOLLM_MODEL_PATH",
+    str(Path.home() / ".celina" / "models" / "smolLM" / f"{SMOLLM_MODEL}.gguf"),
+)
+SMOLLM_NUM_THREADS = int(
+    _get_setting("CELINA_SMOLLM_NUM_THREADS", str(_ROUTING.get("smolllm_num_threads", 2)))
+)
+SMOLLM_NUM_CTX = int(
+    _get_setting("CELINA_SMOLLM_NUM_CTX", str(_ROUTING.get("smolllm_num_ctx", 512)))
+)
+SMOLLM_MAX_TOKENS = int(
+    _get_setting("CELINA_SMOLLM_MAX_TOKENS", str(_ROUTING.get("smolllm_max_tokens", 128)))
+)
+SMOLLM_TEMPERATURE = float(
+    _get_setting("CELINA_SMOLLM_TEMPERATURE", str(_ROUTING.get("smolllm_temperature", 0.3)))
+)
+
+
+def get_smolLM_status() -> dict[str, Any]:
+    """Return smolLM tier status (Update 26)."""
+    try:
+        from celina_pkg.gear0_5_smolLM import gear0_5_smolLM_status
+
+        return gear0_5_smolLM_status()
+    except Exception as exc:  # pragma: no cover - import guard
+        return {"available": False, "error": str(exc)}
+
+
+def get_active_local_inference_route(prefer_npu: bool = True) -> dict:
+    """Resolve active local inference backend (decoupled NPU 11435 -> Ollama 11434 fallback)."""
+    try:
+        from celina_hardware.compute import detect_compute_topology, resolve_inference_endpoint
+
+        topo = detect_compute_topology(npu_endpoint=NPU_API_BASE, ollama_endpoint=OLLAMA_API_BASE)
+        return resolve_inference_endpoint(prefer_npu=prefer_npu, topology=topo)
+    except Exception:
+        return {
+            "endpoint": OLLAMA_API_BASE,
+            "backend": "ollama",
+            "fallback_used": False,
+            "service": "ollama.service",
+        }
+OLLAMA_NUM_CTX = int(_get_setting("CELINA_OLLAMA_NUM_CTX", str(_ROUTING.get("ollama_num_ctx", 4096))))
+OLLAMA_KEEP_ALIVE = _get_setting("CELINA_OLLAMA_KEEP_ALIVE", str(_ROUTING.get("ollama_keep_alive", "45s")))
+LITE_MODE = _get_setting("CELINA_LITE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def is_lite_mode() -> bool:
+    """Returns True when Zero-Lag 8 GB Turbo/Lite Mode is enabled (env or persisted config)."""
+    env_val = os.environ.get("CELINA_LITE_MODE")
+    if env_val is not None:
+        return env_val.strip().lower() in {"1", "true", "yes", "on"}
+    if "CELINA_LITE_MODE" in ENV:
+        return str(ENV["CELINA_LITE_MODE"]).strip().lower() in {"1", "true", "yes", "on"}
+    return bool(LITE_MODE)
+OLLAMA_NUM_THREADS = int(_get_setting("CELINA_OLLAMA_NUM_THREADS", str(_ROUTING.get("ollama_num_threads", 0))))
+CLOUD_MODEL = _get_setting("CELINA_CLOUD_MODEL", str(_ROUTING.get("cloud_model", "openrouter/free")))
+VISION_MODEL = _get_setting("CELINA_VISION_MODEL", str(_ROUTING.get("vision_model", CLOUD_MODEL)))
+
+# Apple Intelligence Edge Lighting
+EDGE_LIGHTING_ENABLED = _get_setting(
+    "CELINA_EDGE_LIGHTING", "1" if EDGE_LIGHTING_CFG.get("enabled", True) else "0"
+).lower() in {"1", "true", "yes", "on"}
+FULLSCREEN_GLOW_ON_TASK = EDGE_LIGHTING_ENABLED and bool(EDGE_LIGHTING_CFG.get("fullscreen_on_task", True))
+ISLAND_GLOW_ON_RESPONSE = EDGE_LIGHTING_ENABLED and bool(EDGE_LIGHTING_CFG.get("island_on_response", True))
+
+# Smart Cache Settings
+CACHE_ENABLED = _get_setting(
+    "CELINA_CACHE_ENABLED", "1" if CACHE_CFG.get("enabled", True) else "0"
+).lower() in {"1", "true", "yes", "on"}
+CACHE_OFFLOAD_INTERVAL_SEC = int(CACHE_CFG.get("disk_offload_interval_sec", 600))
+
+# Automation & OCR Settings
+OCR_LANGUAGES = _get_setting("CELINA_OCR_LANGUAGES", str(AUTOMATION_CFG.get("ocr_languages", "eng+tel+hin")))
+YDOTOOL_SOCKET = _get_setting("YDOTOOL_SOCKET", DEFAULT_YDOTOOL_SOCKET)
+MAX_WORKFLOW_STEPS = int(AUTOMATION_CFG.get("max_workflow_steps", 25))
+DEFAULT_STEP_DELAY = float(AUTOMATION_CFG.get("default_step_delay_sec", 0.4))
+
+# Privacy Firewall Settings
+STRICT_PRIVACY = _get_setting(
+    "CELINA_STRICT_PRIVACY", "1" if PRIVACY_CFG.get("strict_mode", True) else "0"
+).lower() in {"1", "true", "yes", "on"}
+HARD_BLOCKED_PATHS: set[str] = set(PRIVACY_CFG.get("hard_blocked_paths", []))
+LOCAL_SENSITIVE_TOOLS: set[str] = set(PRIVACY_CFG.get("local_sensitive_tools", []))
+
+
+def is_hard_blocked_path(path: Path | str) -> bool:
+    """Returns True if `path` touches any secret/credential path in HARD_BLOCKED_PATHS."""
+    try:
+        p = Path(path).expanduser()
+        parts = set(p.parts) | set(p.resolve().parts)
+    except OSError:
+        p = Path(str(path))
+        parts = set(p.parts)
+    p_str = str(p)
+    for blocked in HARD_BLOCKED_PATHS:
+        b = str(blocked).strip()
+        if not b:
+            continue
+        if b in parts or p.name == b:
+            return True
+        if "/" in b:
+            try:
+                bp = str(Path(b).expanduser().resolve())
+                if p_str == bp or p_str.startswith(bp + os.sep):
+                    return True
+            except OSError:
+                pass
+    return False
+
+# Multilingual & Voice Settings
+DEFAULT_LANGUAGE = _get_setting(
+    "CELINA_LANGUAGE", str(_PERSONA.get("default_language", "auto"))
+).lower()
+SUPPORTED_LANGUAGES: list[str] = list(_PERSONA.get("supported_languages", ["en", "te", "hi"]))
+
+SPEAK_ENABLED = _get_setting("CELINA_SPEAK", "1").lower() in {"1", "true", "yes", "on"}
+VOICE_MODEL = _get_setting(
+    "CELINA_VOICE_EN",
+    _get_setting(
+        "CELINA_VOICE_MODEL",
+        str(LANGUAGES.get("en", {}).get("piper_voice", "en_US-amy-medium")),
+    ),
+)
+WHISPER_MODEL = _get_setting("CELINA_WHISPER_MODEL", str(_STT.get("whisper_model", "base")))
+WHISPER_IDLE_OFFLOAD_SEC = float(
+    _get_setting("CELINA_WHISPER_IDLE_OFFLOAD", str(_STT.get("whisper_idle_offload_seconds", 180)))
+)
+WAKE_WORD_ENABLED = _get_setting("CELINA_WAKE_WORD", "0").lower() in {"1", "true", "yes", "on"}
+WAKE_WORD_MODEL = _get_setting("CELINA_WAKE_MODEL", "")
+
+# STT Timing & Voice Pipeline (Silero VAD v5 ONNX, PipeWire Audio Ducking, Optional Kokoro-82M)
+STT_SILENCE_SECONDS = float(_STT.get("silence_stop_seconds", 1.2))
+STT_START_TIMEOUT = float(_STT.get("start_timeout_seconds", 5.0))
+STT_MAX_DURATION = float(_STT.get("max_duration_seconds", 15.0))
+VAD_ENGINE = _get_setting("CELINA_VAD_ENGINE", str(_STT.get("vad_engine", "auto"))).lower()
+SILERO_VAD_MODEL = _get_setting("CELINA_SILERO_VAD_MODEL", str(VOICES_DIR / "silero_vad.onnx"))
+SILERO_VAD_THRESHOLD = float(_get_setting("CELINA_SILERO_VAD_THRESHOLD", str(_STT.get("silero_vad_threshold", 0.50))))
+AUDIO_DUCKING_ENABLED = _get_setting(
+    "CELINA_AUDIO_DUCKING", "1" if _STT.get("audio_ducking", True) else "0"
+).lower() in {"1", "true", "yes", "on"}
+AUDIO_DUCK_PCT = max(5, min(90, int(_get_setting("CELINA_AUDIO_DUCK_PCT", str(_STT.get("duck_volume_pct", 25))))))
+TTS_ENGINE = _get_setting("CELINA_TTS_ENGINE", str(_STT.get("tts_engine", "auto"))).lower()
+KOKORO_VOICE_EN = _get_setting("CELINA_KOKORO_VOICE_EN", str(_STT.get("kokoro_voice_en", "af_bella")))
+KOKORO_VOICE_HI = _get_setting("CELINA_KOKORO_VOICE_HI", str(_STT.get("kokoro_voice_hi", "hf_alpha")))
+ACTION_GATE_ENABLED = _get_setting(
+    "CELINA_ACTION_GATE", "1" if CONFIDENCE_POLICY.get("enable_action_gate", True) else "0"
+).lower() in {"1", "true", "yes", "on"}
+
+# Hybrid Semantic & Embedding Engine (zero-idle-RAM: Ollama embeddinggemma / Model2Vec + SQLite RRF)
+EMBEDDINGS_CFG: dict[str, Any] = NEURAL_SCHEMA.get("embeddings", {})
+EMBED_ENGINE = _get_setting("CELINA_EMBED_ENGINE", str(EMBEDDINGS_CFG.get("engine", "auto"))).lower()
+EMBED_MODEL = _get_setting("CELINA_EMBED_MODEL", str(EMBEDDINGS_CFG.get("model", "embeddinggemma")))
+EMBED_MODEL2VEC_MODEL = _get_setting(
+    "CELINA_EMBED_MODEL2VEC", str(EMBEDDINGS_CFG.get("model2vec_model", "minishlab/potion-multilingual-128M"))
+)
+EMBED_DIM = max(32, int(_get_setting("CELINA_EMBED_DIM", str(EMBEDDINGS_CFG.get("dim", 256)))))
+EMBED_KEEP_ALIVE = _get_setting("CELINA_EMBED_KEEP_ALIVE", str(EMBEDDINGS_CFG.get("keep_alive", "30s")))
+EMBED_RRF_K = max(1, int(_get_setting("CELINA_EMBED_RRF_K", str(EMBEDDINGS_CFG.get("rrf_k", 60)))))
+SEMANTIC_CACHE_ENABLED = _get_setting(
+    "CELINA_SEMANTIC_CACHE", "1" if EMBEDDINGS_CFG.get("semantic_cache_enabled", True) else "0"
+).lower() in {"1", "true", "yes", "on"}
+SEMANTIC_CACHE_THRESHOLD = float(
+    _get_setting("CELINA_SEMANTIC_CACHE_THRESHOLD", str(EMBEDDINGS_CFG.get("semantic_cache_threshold", 0.92)))
+)
+TOOL_ROUTER_SEMANTIC_MIN_SIM = float(
+    _get_setting("CELINA_TOOL_SEMANTIC_MIN_SIM", str(EMBEDDINGS_CFG.get("tool_router_min_sim", 0.38)))
+)
+
+# Security Policy from Neural Schema
+MAX_FILE_BACKUPS = int(_SECURITY.get("max_file_backups", 20))
+TIER1_AUTO_TOOLS: set[str] = set(_SECURITY.get("tier1_auto_tools", []))
+TIER2_APPROVAL_TOOLS: set[str] = set(_SECURITY.get("tier2_approval_tools", []))
+PROTECTED_PATHS: set[str] = set(_SECURITY.get("protected_paths", [])) | HARD_BLOCKED_PATHS
+
+# Performance & Agent Limits
+MEMORY_HISTORY_LIMIT = 10
+MAX_AGENT_STEPS = int(_ROUTING.get("max_agent_steps", 5))
+REQUEST_TIMEOUT = int(_get_setting("CELINA_REQUEST_TIMEOUT", str(_ROUTING.get("request_timeout_sec", 20))))
+LOCAL_TIMEOUT = int(_get_setting("CELINA_LOCAL_TIMEOUT", str(_ROUTING.get("local_timeout_sec", 180))))
+LOCAL_THINK_ENABLED = _get_setting("CELINA_LOCAL_THINK", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def get_assistant_name() -> str:
+    """Returns the live configured assistant primary name (default: 'Celina')."""
+    return (ASSISTANT_NAME or "Celina").strip()
+
+
+def get_assistant_nickname() -> str:
+    """Returns the live configured assistant nickname (default: 'Celly')."""
+    return (ASSISTANT_NICKNAME or "").strip()
+
+
+def get_assistant_display_label() -> str:
+    """Returns 'Celina (Celly)' when nickname differs from name, else just the primary name."""
+    name = get_assistant_name()
+    nick = get_assistant_nickname()
+    if nick and nick.lower() != name.lower():
+        return f"{name} ({nick})"
+    return name
+
+
+def format_persona_instructions() -> str:
+    """Renders persona.system_instructions with live {name} and {nickname} placeholders."""
+    name = get_assistant_name()
+    nick = get_assistant_nickname() or name
+    raw = str(
+        NEURAL_SCHEMA.get("persona", {}).get(
+            "system_instructions",
+            DEFAULT_NEURAL_SCHEMA["persona"]["system_instructions"],
+        )
+    )
+    return raw.replace("{name}", name).replace("{nickname}", nick)
+
+
+def _sanitize_identity_token(val: str, max_len: int = 32) -> str:
+    cleaned = re.sub(r"[\r\n\t\"'`;$\\]+", "", (val or "").strip())
+    return cleaned[:max_len].strip()
+
+
+def set_assistant_identity(
+    name: str,
+    nickname: Optional[str] = None,
+    schema_path: Optional[Path] = None,
+    env_path: Optional[Path] = None,
+) -> tuple[str, str]:
+    """
+    Atomically updates assistant primary name & nickname with fsync + 0600 permissions.
+    On any OSError during persistence, restores previous in-memory values and raises
+    PersistenceError so callers NEVER falsely claim 'Saved persistently'.
+    """
+    global ASSISTANT_NAME, ASSISTANT_NICKNAME
+
+    clean_name = _sanitize_identity_token(name)
+    if not clean_name:
+        raise ValueError("Assistant name cannot be empty.")
+
+    if nickname is None:
+        clean_nick = get_assistant_nickname()
+    else:
+        clean_nick = _sanitize_identity_token(nickname)
+
+    # Snapshot prior in-memory state for strict rollback on persistence failure
+    prev_name = ASSISTANT_NAME
+    prev_nick = ASSISTANT_NICKNAME
+    prev_schema_name = NEURAL_SCHEMA.get("persona", {}).get("name")
+    prev_schema_nick = NEURAL_SCHEMA.get("persona", {}).get("nickname")
+    prev_env_name = ENV.get("CELINA_NAME")
+    prev_env_nick = ENV.get("CELINA_NICKNAME")
+    prev_os_env = {k: os.environ.get(k) for k in ("CELINA_NAME", "ASSISTANT_NAME", "CELINA_NICKNAME", "ASSISTANT_NICKNAME")}
+
+    def _restore_memory() -> None:
+        global ASSISTANT_NAME, ASSISTANT_NICKNAME
+        ASSISTANT_NAME = prev_name
+        ASSISTANT_NICKNAME = prev_nick
+        NEURAL_SCHEMA.setdefault("persona", {})["name"] = prev_schema_name
+        NEURAL_SCHEMA["persona"]["nickname"] = prev_schema_nick
+        if prev_env_name is None:
+            ENV.pop("CELINA_NAME", None)
+        else:
+            ENV["CELINA_NAME"] = prev_env_name
+        if prev_env_nick is None:
+            ENV.pop("CELINA_NICKNAME", None)
+        else:
+            ENV["CELINA_NICKNAME"] = prev_env_nick
+        for k, v in prev_os_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    # 1. Atomically persist to neural-schema.json (fsync + 0600)
+    s_path = schema_path or SCHEMA_FILE
+    try:
+        existing: dict[str, Any] = {}
+        if s_path.exists():
+            parsed = json.loads(s_path.read_text(encoding="utf-8"))
+            if isinstance(parsed, dict):
+                existing = parsed
+        existing.setdefault("persona", {})
+        existing["persona"]["name"] = clean_name
+        existing["persona"]["nickname"] = clean_nick
+        atomic_write_private_text(s_path, json.dumps(existing, indent=2, ensure_ascii=False) + "\n")
+    except (OSError, ValueError) as exc:
+        _restore_memory()
+        raise PersistenceError(f"Failed to persist identity to {s_path}: {exc}") from exc
+
+    # 2. Keep ~/.config/celina/env synchronized atomically when present
+    e_path = env_path or ENV_FILE
+    if e_path.exists():
+        try:
+            lines = e_path.read_text(encoding="utf-8").splitlines()
+            new_lines: list[str] = []
+            saw_name = False
+            saw_nick = False
+            for ln in lines:
+                stripped = ln.strip()
+                if stripped.startswith("CELINA_NAME="):
+                    new_lines.append(f'CELINA_NAME="{clean_name}"')
+                    saw_name = True
+                elif stripped.startswith("CELINA_NICKNAME="):
+                    new_lines.append(f'CELINA_NICKNAME="{clean_nick}"')
+                    saw_nick = True
+                else:
+                    new_lines.append(ln)
+            if not saw_name:
+                new_lines.append(f'CELINA_NAME="{clean_name}"')
+            if not saw_nick:
+                new_lines.append(f'CELINA_NICKNAME="{clean_nick}"')
+            atomic_write_private_text(e_path, "\n".join(new_lines) + "\n")
+        except OSError as exc:
+            _restore_memory()
+            raise PersistenceError(f"Failed to persist identity to {e_path}: {exc}") from exc
+
+    # 3. Commit in-memory state ONLY after durable disk writes succeeded
+    ASSISTANT_NAME = clean_name
+    ASSISTANT_NICKNAME = clean_nick
+    NEURAL_SCHEMA.setdefault("persona", {})["name"] = clean_name
+    NEURAL_SCHEMA["persona"]["nickname"] = clean_nick
+    ENV["CELINA_NAME"] = clean_name
+    ENV["CELINA_NICKNAME"] = clean_nick
+    if "CELINA_NAME" in os.environ:
+        os.environ["CELINA_NAME"] = clean_name
+    if "ASSISTANT_NAME" in os.environ:
+        os.environ["ASSISTANT_NAME"] = clean_name
+    if "CELINA_NICKNAME" in os.environ:
+        os.environ["CELINA_NICKNAME"] = clean_nick
+    if "ASSISTANT_NICKNAME" in os.environ:
+        os.environ["ASSISTANT_NICKNAME"] = clean_nick
+
+    return clean_name, clean_nick
+
+
+def get_voice_for_lang(lang_code: str) -> str:
+    code = (lang_code or "en").lower()
+    env_key = f"CELINA_VOICE_{code.upper()}"
+    override = _get_setting(env_key, "")
+    if override:
+        return override
+    lang_cfg = LANGUAGES.get(code) or LANGUAGES.get("en") or {}
+    return str(lang_cfg.get("piper_voice", VOICE_MODEL))
+
+
+def get_espeak_for_lang(lang_code: str) -> str:
+    code = (lang_code or "en").lower()
+    lang_cfg = LANGUAGES.get(code) or LANGUAGES.get("en") or {}
+    return str(lang_cfg.get("espeak_voice", "en-us+f3"))
+
+
+# --- Hardware-Aware Dense & Sparse MoE Local Model Catalog (Ollama / llama.cpp C engine) ---
+LOCAL_MODEL_CATALOG: tuple[dict[str, Any], ...] = (
+    {
+        "tag": "qwen3:1.7b",
+        "arch": "Dense",
+        "total_params": "1.7B",
+        "active_params": "1.7B",
+        "size_gb": 1.4,
+        "min_ram_gb": 6,
+        "note": "Best 8GB RAM zero-lag default (~1.8GB live RAM; leaves 3+ GB for browser/apps)",
+    },
+    {
+        "tag": "qwen2.5:3b",
+        "arch": "Dense",
+        "total_params": "3B",
+        "active_params": "3B",
+        "size_gb": 1.9,
+        "min_ram_gb": 8,
+        "note": "Smarter 8GB RAM everyday tool-calling brain (~2.2GB live RAM; fast & reliable offline)",
+    },
+    {
+        "tag": "granite3.1-moe:1b",
+        "arch": "Sparse MoE",
+        "total_params": "1B",
+        "active_params": "0.4B",
+        "size_gb": 1.4,
+        "min_ram_gb": 6,
+        "note": "Featherweight Sparse MoE (only 400M params fire/token — lowest CPU & RAM)",
+    },
+    {
+        "tag": "granite3.1-moe:3b",
+        "arch": "Sparse MoE",
+        "total_params": "3B",
+        "active_params": "0.8B",
+        "size_gb": 2.0,
+        "min_ram_gb": 8,
+        "note": "Fast 8GB Sparse MoE (only 800M params fire/token; ~2.4GB live RAM)",
+    },
+    {
+        "tag": "qwen3:4b",
+        "arch": "Dense",
+        "total_params": "4B",
+        "active_params": "4B",
+        "size_gb": 2.5,
+        "min_ram_gb": 11,
+        "note": "Stronger 4B (~3.4GB live RAM; best on 12GB+ RAM or 8GB with browser closed)",
+    },
+    {
+        "tag": "qwen3.5:4b",
+        "arch": "Dense Vision",
+        "total_params": "4B",
+        "active_params": "4B",
+        "size_gb": 3.5,
+        "min_ram_gb": 8,
+        "note": "Multimodal text + image vision on 8GB RAM",
+    },
+    {
+        "tag": "qwen3.5:9b",
+        "arch": "Dense Vision",
+        "total_params": "9B",
+        "active_params": "9B",
+        "size_gb": 6.6,
+        "min_ram_gb": 14,
+        "note": "Strong 16GB RAM daily driver (text + vision)",
+    },
+    {
+        "tag": "gpt-oss:20b",
+        "arch": "Sparse MoE",
+        "total_params": "21B",
+        "active_params": "3.6B",
+        "size_gb": 14.0,
+        "min_ram_gb": 18,
+        "note": "OpenAI open-weight MoE (21B total, ~3.6B fire/token; tight on 16GB+ZRAM)",
+    },
+    {
+        "tag": "gemma4:26b",
+        "arch": "Sparse MoE Vision",
+        "total_params": "25.2B",
+        "active_params": "3.8B",
+        "size_gb": 17.0,
+        "min_ram_gb": 22,
+        "note": "8 of 128 experts fire/token (3.8B speed, 26B brains + vision)",
+    },
+    {
+        "tag": "qwen3:30b-a3b",
+        "arch": "Sparse MoE",
+        "total_params": "30.5B",
+        "active_params": "3.3B",
+        "size_gb": 19.0,
+        "min_ram_gb": 24,
+        "note": "30B MoE at 3.3B CPU speed (fast in 24-32GB RAM; NVMe mmap swap if less)",
+    },
+    {
+        "tag": "qwen3.5:35b-a3b",
+        "arch": "Sparse MoE Vision",
+        "total_params": "34.7B",
+        "active_params": "3B",
+        "size_gb": 22.0,
+        "min_ram_gb": 28,
+        "note": "35B multimodal MoE firing ~3B/token (32GB+ RAM recommended)",
+    },
+)
+
+_MODEL_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,95}$")
+
+
+def detect_system_ram_gb() -> int:
+    """Returns approximate physical RAM in GiB from /proc/meminfo."""
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemTotal:"):
+                    kb = int(line.split()[1])
+                    return max(1, (kb + 524288) // 1048576)
+    except (OSError, ValueError):
+        return 8
+    return 8
+
+
+def detect_available_ram_mb() -> int:
+    """Returns live MemAvailable in MiB from /proc/meminfo for dynamic RAM-pressure guards."""
+    try:
+        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    kb = int(line.split()[1])
+                    return max(0, kb // 1024)
+    except (OSError, ValueError):
+        return 2048
+    return 2048
+
+
+def lookup_catalog_model(tag: str) -> Optional[dict[str, Any]]:
+    low = (tag or "").strip().lower()
+    for item in LOCAL_MODEL_CATALOG:
+        if item["tag"].lower() == low:
+            return item
+    return None
+
+
+def format_model_catalog(ram_gb: Optional[int] = None) -> str:
+    """Formats RAM-matched Dense & Sparse MoE model guidance for `/model`."""
+    ram = ram_gb if ram_gb is not None else detect_system_ram_gb()
+    lines = [
+        f"Active local Ollama model: {LOCAL_MODEL} (detected RAM: ~{ram} GB)",
+        "Curated Dense & Sparse MoE models (Ollama runs llama.cpp C/C++ with NVMe mmap):",
+    ]
+    for m in LOCAL_MODEL_CATALOG:
+        fit = "IN-RAM FAST" if ram >= int(m["min_ram_gb"]) else "NVMe mmap (slower swap)"
+        lines.append(
+            f"  • {m['tag']:<19} | {m['arch']:<17} | {m['total_params']} ({m['active_params']} active) "
+            f"| ~{m['size_gb']:.1f}GB | [{fit}] — {m['note']}"
+        )
+    lines.append("Switch anytime: /model <tag>   (then download once: ollama pull <tag>)")
+    return "\n".join(lines)
+
+
+def set_local_model(
+    model_tag: str,
+    env_path: Optional[Path] = None,
+    ram_gb: Optional[int] = None,
+) -> tuple[str, Optional[str]]:
+    """
+    Validates and atomically persists CELINA_LOCAL_MODEL (0600) while updating live config.LOCAL_MODEL.
+    Returns (clean_tag, optional_ram_warning).
+    """
+    global LOCAL_MODEL
+
+    clean = (model_tag or "").strip()
+    if not _MODEL_TAG_RE.fullmatch(clean):
+        raise ValueError(f"Invalid Ollama model tag: '{model_tag}'")
+
+    e_path = env_path or ENV_FILE
+    if e_path.exists():
+        lines = e_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        out: list[str] = []
+        found = False
+        for ln in lines:
+            if ln.strip().startswith("CELINA_LOCAL_MODEL="):
+                out.append(f'CELINA_LOCAL_MODEL="{clean}"')
+                found = True
+            else:
+                out.append(ln)
+        if not found:
+            out.append(f'CELINA_LOCAL_MODEL="{clean}"')
+        atomic_write_private_text(e_path, "\n".join(out) + "\n")
+    elif env_path is not None:
+        atomic_write_private_text(e_path, f'CELINA_LOCAL_MODEL="{clean}"\n')
+
+    LOCAL_MODEL = clean
+    ENV["CELINA_LOCAL_MODEL"] = clean
+    if "CELINA_LOCAL_MODEL" in os.environ:
+        os.environ["CELINA_LOCAL_MODEL"] = clean
+
+    warn: Optional[str] = None
+    ram = ram_gb if ram_gb is not None else detect_system_ram_gb()
+    meta = lookup_catalog_model(clean)
+    if meta is not None and ram < int(meta["min_ram_gb"]):
+        warn = (
+            f"Note: {clean} needs ~{meta['size_gb']:.1f} GB (~{meta['min_ram_gb']} GB RAM recommended) "
+            f"and this PC has ~{ram} GB RAM. Ollama/llama.cpp will stream experts via NVMe mmap "
+            "(expect slower ~1-4 tok/s instead of in-RAM speed)."
+        )
+    return clean, warn
+
+
+def set_env_pairs(
+    pairs: dict[str, str],
+    env_path: Optional[Path] = None,
+) -> None:
+    """
+    Atomically persists key=value pairs into ~/.config/celina/env (mode 0600)
+    and synchronizes live in-memory config flags (LITE_MODE, OLLAMA_KEEP_ALIVE).
+    """
+    global LITE_MODE, OLLAMA_KEEP_ALIVE
+
+    clean_pairs: dict[str, str] = {}
+    for k, v in pairs.items():
+        ck = re.sub(r"[^A-Za-z0-9_]", "", str(k or "").strip())
+        if not ck:
+            continue
+        cv = re.sub(r"[\r\n\"'`;$]", "", str(v if v is not None else "").strip())
+        clean_pairs[ck] = cv
+
+    if not clean_pairs:
+        return
+
+    e_path = env_path or ENV_FILE
+    lines = e_path.read_text(encoding="utf-8", errors="replace").splitlines() if e_path.exists() else []
+    seen: set[str] = set()
+    out: list[str] = []
+    for ln in lines:
+        stripped = ln.strip()
+        replaced = False
+        for ck, cv in clean_pairs.items():
+            if stripped.startswith(f"{ck}="):
+                out.append(f'{ck}="{cv}"')
+                seen.add(ck)
+                replaced = True
+                break
+        if not replaced:
+            out.append(ln)
+    for ck, cv in clean_pairs.items():
+        if ck not in seen:
+            out.append(f'{ck}="{cv}"')
+
+    e_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_private_text(e_path, "\n".join(out) + "\n")
+
+    for ck, cv in clean_pairs.items():
+        ENV[ck] = cv
+        if ck in os.environ:
+            os.environ[ck] = cv
+    if "CELINA_LITE_MODE" in clean_pairs:
+        LITE_MODE = clean_pairs["CELINA_LITE_MODE"].lower() in {"1", "true", "yes", "on"}
+    if "CELINA_OLLAMA_KEEP_ALIVE" in clean_pairs:
+        OLLAMA_KEEP_ALIVE = clean_pairs["CELINA_OLLAMA_KEEP_ALIVE"]
+

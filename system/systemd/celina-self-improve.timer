@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Celina v5 Guarded Self-Improvement Timer
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=1800
+
+[Install]
+WantedBy=timers.target

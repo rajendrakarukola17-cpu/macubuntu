@@ -1,0 +1,191 @@
+{
+  "idle_offload_seconds": 180,
+  "mcpServers": {
+    "computer-use-linux": {
+      "enabled": false,
+      "order": 1,
+      "priority": "required",
+      "role": "actuation",
+      "sandbox": "bwrap_unshare_net",
+      "command": "computer-use-linux",
+      "args": ["mcp"],
+      "description": "Primary actuation — Wayland-native click/type/scroll with semantic selectors (@agent-sh/computer-use-linux)."
+    },
+    "shadow-vision": {
+      "enabled": false,
+      "order": 2,
+      "priority": "required",
+      "role": "perception",
+      "sandbox": "bwrap_loopback_only",
+      "command": "uvx",
+      "args": ["shadow-vision"],
+      "env": {
+        "VISION_BACKEND": "ollama",
+        "VISION_MODEL": "qwen3-vl:2b-instruct",
+        "OLLAMA_URL": "http://127.0.0.1:11434/api/chat"
+      },
+      "description": "Primary perception — local OCR + VLM UI analysis via Ollama (no screenshot leaves host)."
+    },
+    "ghostdesk": {
+      "enabled": false,
+      "order": 3,
+      "priority": "strongly_recommended",
+      "role": "isolated_execution",
+      "sandbox": "docker_loopback_http",
+      "url": "http://localhost:3000/mcp",
+      "description": "Isolated execution — full Linux desktop in Docker for risky GUI automation (Streamable HTTP loopback only)."
+    },
+    "eye2byte": {
+      "enabled": false,
+      "order": 4,
+      "priority": "recommended",
+      "role": "verification",
+      "sandbox": "bwrap_unshare_net",
+      "command": "eye2byte",
+      "args": ["mcp"],
+      "description": "Verification layer — post-action screenshot diff + confidence scoring."
+    },
+    "uacc": {
+      "enabled": false,
+      "order": 5,
+      "priority": "optional",
+      "role": "fallback_actuation",
+      "sandbox": "bwrap_unshare_net",
+      "command": "uacc",
+      "args": ["mcp"],
+      "description": "Fallback actuator — 68 tools, vision-optional, self-healing retries."
+    },
+    "deskwright": {
+      "enabled": false,
+      "order": 6,
+      "priority": "optional",
+      "role": "headless_desktop",
+      "sandbox": "bwrap_unshare_net",
+      "command": "deskwright",
+      "args": ["mcp"],
+      "description": "Headless desktop — dedicated virtual monitor for isolated background sessions."
+    },
+    "n8n": {
+      "enabled": false,
+      "opt_in_only": true,
+      "requires_web_comms": true,
+      "order": 7,
+      "priority": "opt_in_only",
+      "role": "cloud_workflow",
+      "sandbox": "opt_in_net_allowlist",
+      "url": "http://localhost:5678/mcp",
+      "env": {
+        "N8N_API_KEY": "${N8N_API_KEY}"
+      },
+      "allowed_saas_hosts": [],
+      "description": "Opt-in cloud workflow bridge — external SaaS orchestration (NEVER enabled by default; gated behind web_comms.enabled=true)."
+    },
+    "kwin-mcp": {
+      "enabled": false,
+      "order": 8,
+      "priority": "optional",
+      "role": "isolated_kde_desktop",
+      "sandbox": "bwrap_unshare_net",
+      "command": "uvx",
+      "args": ["kwin-mcp"],
+      "description": "Isolated KDE Plasma 6 Wayland virtual KWin session (kwin_wayland --virtual + private EIS + AT-SPI2)."
+    },
+    "linux-system-mcp": {
+      "enabled": false,
+      "order": 9,
+      "priority": "recommended",
+      "role": "system_bridge",
+      "sandbox": "bwrap_unshare_net",
+      "command": "npx",
+      "args": ["-y", "linux-system-mcp"],
+      "description": "Linux system bridge — GUI dialogs, notifications, timeout shell, GUI sudo, and mid-execution ask_user confirmation."
+    },
+    "vadgr-computer-use": {
+      "enabled": false,
+      "order": 10,
+      "priority": "recommended",
+      "role": "accessibility_fallback",
+      "sandbox": "bwrap_unshare_net",
+      "command": "vadgr-computer-use",
+      "args": ["mcp"],
+      "description": "Accessibility-first CPU-friendly Linux fallback (UIA/AT-SPI/AX across GNOME, KDE, wlroots, X11, Wayland)."
+    },
+    "swadb-memory": {
+      "enabled": false,
+      "order": 11,
+      "priority": "recommended",
+      "role": "memory_graph",
+      "sandbox": "bwrap_unshare_net",
+      "command": "celina-memory-mcp",
+      "args": [],
+      "description": "Built-in sovereign SQLite demand-constructed memory MCP server (swadb/Engrama: 10 typed edges, 9-stage retrieval, 9 memory tools)."
+    }
+  },
+  "servers": {
+    "git": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": ["uvx", "mcp-server-git", "--repository", "${HOME}"],
+      "description": "Official open-source MCP Git server (local repo status, diffs, commits, zero cloud API).",
+      "auto_approve_read_only": true
+    },
+    "sqlite": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": ["uvx", "mcp-server-sqlite", "--db-path", "${HOME}/.local/share/celina/memory.db"],
+      "description": "Open-source local SQLite MCP server for querying and analyzing local .db files.",
+      "auto_approve_read_only": true
+    },
+    "playwright": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": ["npx", "-y", "@playwright/mcp@latest", "--headless"],
+      "description": "Official open-source Playwright MCP server for reliable browser automation & web form workflows.",
+      "auto_approve_read_only": false
+    },
+    "context7": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "description": "Open-source Context7 MCP server for live, up-to-date programming library & framework docs.",
+      "auto_approve_read_only": true
+    },
+    "time": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": ["uvx", "mcp-server-time"],
+      "description": "Official open-source MCP Time & Timezone conversion server.",
+      "auto_approve_read_only": true
+    },
+    "github": {
+      "enabled": false,
+      "transport": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_TOKEN}"
+      },
+      "description": "Official GitHub MCP connector (issues, pull requests, repositories — set GITHUB_TOKEN in ~/.config/celina/env).",
+      "auto_approve_read_only": true
+    },
+    "linear": {
+      "enabled": false,
+      "transport": "http",
+      "url": "https://mcp.linear.app/mcp",
+      "headers": {
+        "Authorization": "Bearer ${LINEAR_API_KEY}"
+      },
+      "description": "Linear MCP connector for issue & project tracking (set LINEAR_API_KEY in ~/.config/celina/env).",
+      "auto_approve_read_only": true
+    },
+    "notion": {
+      "enabled": false,
+      "transport": "http",
+      "url": "https://mcp.notion.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${NOTION_TOKEN}"
+      },
+      "description": "Notion MCP connector for notes & workspace pages (set NOTION_TOKEN in ~/.config/celina/env).",
+      "auto_approve_read_only": true
+    }
+  }
+}

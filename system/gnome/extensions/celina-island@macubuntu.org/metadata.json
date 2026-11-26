@@ -1,0 +1,9 @@
+{
+  "uuid": "celina-island@macubuntu.org",
+  "name": "Celina Dynamic Island",
+  "description": "Native GNOME Shell compositor indicator & Control Center for Celina AI over D-Bus (org.macubuntu.Celina), with live PipeWire privacy dots, Focus Mode controls, and workspace context awareness.",
+  "shell-version": ["48", "49", "50", "51"],
+  "version": 1,
+  "settings-schema": "org.gnome.shell.extensions.celina-island",
+  "url": "https://github.com/macubuntu/macubuntu"
+}

@@ -1,0 +1,6 @@
+{
+  "allowed_hosts": [],
+  "allowed_ports": [8123, 1880],
+  "allowed_methods": ["POST"],
+  "note": "Add explicit trusted smart-home hosts (e.g. 'homeassistant.local' or '192.168.1.50') before enabling IoT webhooks. All other hosts, ports, methods, redirects, and metadata endpoints are denied."
+}

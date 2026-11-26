@@ -1,0 +1,26 @@
+# macubuntu / Celina v4.4 — Version-Pinned Core Python Dependencies (Ubuntu 26.04, Python 3.12+)
+# For strict SHA-256 hash-verified installs on a specific target ABI, generate:
+#   pip-compile --generate-hashes features/celina/requirements.txt -o features/celina/requirements.lock
+# When features/celina/requirements.lock is present, features/celina/install.sh automatically
+# enforces `pip install --require-hashes -r requirements.lock`.
+
+# Core HTTP & Local/Cloud API transport
+requests==2.32.3
+urllib3==2.3.0
+certifi==2025.1.31
+charset-normalizer==3.4.1
+idna==3.10
+
+# Document & Office Suite (DOCX / XLSX / PPTX / ODT / PDF)
+python-docx==1.1.2
+openpyxl==3.1.5
+python-pptx==1.0.2
+odfpy==1.4.1
+pypdf==5.3.0
+
+# Offline Neural Voice (Piper TTS + Faster-Whisper STT + Audio Capture)
+piper-tts==1.2.0
+faster-whisper==1.1.1
+sounddevice==0.5.1
+numpy==2.2.3
+onnxruntime==1.20.1

@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+
+# Local secrets, state & logs
+.env
+env
+*.log
+.config/
+semantic_memory.json
+memory.db
+tasks.db
+cache.db
+spotlight_index.db
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/

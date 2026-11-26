@@ -1,0 +1,716 @@
+{
+  "approve_quarantined_skill": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "audit_app_permissions": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "autonomous_gui_task": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "cache_status": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "clear_cache": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "click_on_text": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "click_position": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "close_application": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "code_sandbox": {
+    "tier": 2,
+    "domain": "code_exec",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": true
+  },
+  "compose_message": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "computer_click": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "computer_type": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "control_airplay_mirror": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "control_connectivity": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "control_media": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "convert_document": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "create_calendar_event": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "create_document": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "diagnose_systemd_service": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "drag_and_drop": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "edit_document": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "edit_file": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "fetch_url_text": {
+    "tier": 1,
+    "domain": "web_comms",
+    "opt_in": true,
+    "local_sensitive": false,
+    "registered": true
+  },
+  "fetch_webpage": {
+    "tier": 1,
+    "domain": "web_comms",
+    "opt_in": true,
+    "local_sensitive": false,
+    "registered": true
+  },
+  "find_text_on_screen": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "forget_skill": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "get_clipboard": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "get_continuity_status": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "get_current_time_zone": {
+    "tier": 1,
+    "domain": "web_comms",
+    "opt_in": true,
+    "local_sensitive": false,
+    "registered": true
+  },
+  "get_hardware_capabilities": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "get_highlighted_text": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "get_news_headlines": {
+    "tier": 1,
+    "domain": "web_comms",
+    "opt_in": true,
+    "local_sensitive": false,
+    "registered": true
+  },
+  "get_secret_vault_status": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "get_system_stats": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "get_upcoming_events": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "get_weather": {
+    "tier": 1,
+    "domain": "web_comms",
+    "opt_in": true,
+    "local_sensitive": false,
+    "registered": true
+  },
+  "ghostdesk_click": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "inspect_ui_elements": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "install_community_skill": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "launch_android_mirror": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "learn_skill": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "libreoffice_edit": {
+    "tier": 2,
+    "domain": "files_office",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": true
+  },
+  "link_knowledge": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "list_quarantined_skills": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "list_running_apps": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "list_skills": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "live_text_ocr": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "manage_default_apps": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "manage_goal": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "mcp_call_tool": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "mcp_list_servers": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "mcp_list_tools": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "mount_ios_device": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "move_file": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "open_application": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "open_document": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "ponytail_evaluate": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "prepare_meeting_context": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "press_hotkey": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "read_document": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "read_file": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "read_screen": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "reject_quarantined_skill": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "remember_fact": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "respond_ios_notification": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "route_app_audio": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "run_python_sandbox": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "run_shell_command": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "run_skill": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "save_last_actions_as_skill": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "save_workspace_snapshot": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "scroll_screen": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "search_active_app_menus": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "search_browser_bookmarks": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "search_contacts": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "search_files": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "search_in_files": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "search_memory": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "set_assistant_identity": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "set_brightness": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "set_clipboard": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "set_focus_mode": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "set_timer": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "set_volume": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "skilspector_scan": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "spotlight_query": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "start_ios_continuity_camera": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "start_ipad_sidecar_weylus": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "start_recording": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "stop_recording": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "submit_goal": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "toggle_app_nap": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "transcribe_system_audio": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  },
+  "trash_file": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "trigger_iot_webhook": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "type_text": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "update_skill": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "vision_analyze": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "vision_ocr": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "web_search": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "write_file": {
+    "tier": 2,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": false,
+    "registered": false
+  },
+  "writing_tool_transform": {
+    "tier": 1,
+    "domain": "unknown",
+    "opt_in": false,
+    "local_sensitive": true,
+    "registered": false
+  }
+}

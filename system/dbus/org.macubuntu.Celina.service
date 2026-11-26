@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.macubuntu.Celina
+Exec=/usr/bin/systemctl --user start celina.service
+SystemdService=celina.service

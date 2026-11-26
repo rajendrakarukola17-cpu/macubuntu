@@ -1,0 +1,26 @@
+[Unit]
+Description=Celina Dedicated NPU Local Inference Backend (Intel Core Ultra VPU / AMD Ryzen AI XDNA)
+Documentation=file:///usr/share/macubuntu/COMPATIBILITY.md
+After=default.target
+# Starts ONLY when a hardware NPU accelerator device node exists (/dev/accel/accel0)
+ConditionPathExists=/dev/accel/accel0
+
+[Service]
+Type=simple
+UMask=0077
+# Isolated from ollama.service so NPU vendor env vars NEVER trigger Ollama status=2 failures.
+# Listens strictly on loopback 127.0.0.1:11435; Celina router auto-falls back to Ollama (11434) if absent.
+Environment=CELINA_NPU_HOST=127.0.0.1
+Environment=CELINA_NPU_PORT=11435
+ExecStartPre=/usr/bin/test -e /dev/accel/accel0
+ExecStart=/usr/bin/env bash %h/.local/bin/celina-npu-runner
+Restart=on-failure
+RestartSec=5
+MemoryHigh=2G
+MemoryMax=4G
+OOMScoreAdjust=300
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET
+
+[Install]
+WantedBy=default.target

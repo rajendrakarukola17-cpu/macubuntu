@@ -1,0 +1,5 @@
+# macubuntu / Celina v4.4 — Optional Pinned Acceleration & Wake-Word Packages
+# Installed best-effort; Celina falls back gracefully to SQLite FTS5/float16 BLOBs
+# and hotkey voice capture if omitted.
+sqlite-vec==0.1.6
+openwakeword==0.6.0

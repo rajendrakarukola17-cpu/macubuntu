@@ -1,0 +1,34 @@
+[Unit]
+Description=Celina AI OS Control Plane Daemon (D-Bus org.macubuntu.Celina + Context Bus)
+Documentation=file:///usr/share/macubuntu/README.md
+After=graphical-session.target pipewire.service dbus.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+UMask=0077
+Environment=PYTHONPATH=%h/.local/share/celina/app:/usr/share/macubuntu/celina
+ExecStart=%h/.local/share/celina/venv/bin/python3 -m celina_pkg.dbus_service --daemon
+Restart=on-failure
+RestartSec=3
+OOMScoreAdjust=-200
+MemoryHigh=128M
+MemoryMax=512M
+CPUQuota=25%
+
+# Kernel-enforced unprivileged hardening verified live on Ubuntu 26.04 --user systemd
+# (avoids CapabilityBoundingSet/AmbientCapabilities [218/CAPABILITIES], RemoveIPC,
+# and mount/userns PrivateTmp/ProtectSystem/ProtectHome/RestrictNamespaces [226/NAMESPACE])
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @module @raw-io @obsolete @debug @cpu-emulation @keyring @clock
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=default.target graphical-session.target

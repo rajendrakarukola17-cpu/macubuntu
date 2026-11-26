@@ -1,0 +1,4 @@
+# Fallback zram-tools configuration (used only if systemd-zram-generator is unavailable)
+ALGO=zstd
+PERCENT=100
+PRIORITY=100

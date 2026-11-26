@@ -1,0 +1,32 @@
+[Unit]
+Description=Celina Opt-In n8n Cloud Workflow MCP Bridge (DISABLED BY DEFAULT)
+Documentation=man:systemd.service(5)
+After=network-online.target
+
+[Service]
+Type=simple
+# Opt-in only: must also set web_comms.enabled=true in ~/.config/celina/neural-schema.json
+# and populate ~/.config/celina/env with N8N_API_KEY.
+EnvironmentFile=-%h/.config/celina/env
+Environment=N8N_HOST=127.0.0.1
+Environment=N8N_PORT=5678
+ExecStart=/usr/bin/env npx -y n8n
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @module @raw-io @obsolete @debug @cpu-emulation @keyring @clock
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=768M
+
+[Install]
+# Intentionally NOT enabled by default; enable explicitly via:
+#   systemctl --user enable --now celina-mcp-n8n.service
+WantedBy=default.target

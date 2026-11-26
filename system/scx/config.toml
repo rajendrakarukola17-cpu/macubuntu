@@ -1,0 +1,16 @@
+# /etc/scx_loader/config.toml — macubuntu Dual-Scheduler sched_ext Configuration
+# Default throughput scheduler (scx_rusty) for background Ollama inference;
+# switches to latency-criticality aware scx_lavd during active Celina voice/UI turns.
+
+default_sched = "scx_rusty"
+default_mode  = "Auto"
+
+[scheds.scx_rusty]
+auto_mode     = []
+gaming_mode   = []
+
+[scheds.scx_lavd]
+auto_mode       = ["--autopilot", "--pinned-slice-us", "500"]
+gaming_mode     = ["--performance", "--pinned-slice-us", "500"]
+lowlatency_mode = ["--performance", "--pinned-slice-us", "500"]
+powersave_mode  = ["--powersave", "--pinned-slice-us", "500"]

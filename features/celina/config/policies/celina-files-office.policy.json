@@ -1,0 +1,14 @@
+{
+  "schema": "celina.sharness.landlock.v1",
+  "tool_name": "files_office",
+  "description": "Kernel-enforced Landlock / SHarness policy for Celina files_office tools",
+  "files": {
+    "read": ["/usr", "/lib", "/lib64", "/usr/lib", "/usr/lib64", "/bin", "/etc", "/proc", "/sys", "/dev/null", "/dev/urandom", "$HOME/Documents"],
+    "write": ["$HOME/Documents"],
+    "exec": ["/usr/bin", "/bin", "/lib", "/lib64", "/usr/lib", "/usr/lib64"]
+  },
+  "network": {
+    "connect_tcp_ports": [443]
+  },
+  "protect_dot_git_readonly": true
+}

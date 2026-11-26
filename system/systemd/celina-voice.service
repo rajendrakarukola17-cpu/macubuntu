@@ -1,0 +1,43 @@
+[Unit]
+Description=Celina AI Voice & PipeWire Audio Micro-Daemon (Whisper/Piper, AF_UNIX Only)
+Documentation=file:///usr/share/macubuntu/ARCHITECTURE.md
+PartOf=graphical-session.target
+After=pipewire.service wireplumber.service celina.service
+Wants=pipewire.service
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=CELINA_DAEMON_ROLE=voice
+# PipeWire / PulseAudio sockets live inside XDG_RUNTIME_DIR (%t/pipewire-0 & %t/pulse/native)
+# Opt-in sched_ext guard (CELINA_ENABLE_SCX_LAVD=1): activates scx_lavd ONLY while voice runs,
+# and ALWAYS reverts to the kernel's native EEVDF scheduler (`scxctl stop`) on exit to eliminate
+# the documented scx_lavd watchdog-ejection Wayland compositor freeze risk!
+ExecStartPre=-/bin/sh -c '[ "${CELINA_ENABLE_SCX_LAVD:-0}" = "1" ] && command -v scxctl >/dev/null 2>&1 && scxctl switch -s lavd --mode lowlatency || true'
+ExecStart=/bin/sh -c 'exec "${HOME}/.local/bin/celina-island" --voice-daemon'
+ExecStopPost=-/bin/sh -c 'command -v scxctl >/dev/null 2>&1 && scxctl stop || true'
+Restart=on-failure
+RestartSec=3s
+
+# Kernel-enforced unprivileged hardening (AF_UNIX only: PipeWire + session D-Bus; zero internet egress;
+# safe for Ubuntu 26.04 --user without root capabilities or mount/user namespaces)
+NoNewPrivileges=yes
+UMask=0077
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @module @raw-io @obsolete @debug @cpu-emulation @keyring @clock
+SystemCallErrorNumber=EPERM
+
+MemoryHigh=192M
+MemoryMax=512M
+CPUQuota=40%
+
+[Install]
+WantedBy=graphical-session.target

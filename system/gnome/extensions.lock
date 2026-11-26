@@ -1,0 +1,37 @@
+# macubuntu — Pinned GNOME Shell Extension Versions (verified live via extensions.gnome.org)
+# Format: uuid|shell_major|version|version_tag|pk|name
+# Prevents unannounced upstream extension regressions ("Tuesday update broke Wednesday UI").
+# install_ext() resolves the host's gnome-shell major version (fallback: 50 -> 48) and installs
+# the exact immutable version_tag archive from extensions.gnome.org.
+
+blur-my-shell@aunetx|48|78|78246|3193|Blur my Shell
+blur-my-shell@aunetx|49|78|78246|3193|Blur my Shell
+blur-my-shell@aunetx|50|78|78246|3193|Blur my Shell
+
+gsconnect@andyholmes.github.io|48|74|76737|1319|GSConnect
+gsconnect@andyholmes.github.io|49|74|76737|1319|GSConnect
+gsconnect@andyholmes.github.io|50|74|76737|1319|GSConnect
+
+tiling-assistant@leleat-on-github|48|56|76100|3733|Tiling Assistant
+tiling-assistant@leleat-on-github|49|56|76100|3733|Tiling Assistant
+tiling-assistant@leleat-on-github|50|56|76100|3733|Tiling Assistant
+
+just-perfection-desktop@just-perfection|48|37|74466|3843|Just Perfection
+just-perfection-desktop@just-perfection|49|37|74466|3843|Just Perfection
+just-perfection-desktop@just-perfection|50|37|74466|3843|Just Perfection
+
+dash-to-dock@micxgx.gmail.com|48|110|76105|307|Dash to Dock
+dash-to-dock@micxgx.gmail.com|49|110|76105|307|Dash to Dock
+dash-to-dock@micxgx.gmail.com|50|110|76105|307|Dash to Dock
+
+clipboard-indicator@tudmotu.com|48|72|77939|779|Clipboard Indicator
+clipboard-indicator@tudmotu.com|49|72|77939|779|Clipboard Indicator
+clipboard-indicator@tudmotu.com|50|72|77939|779|Clipboard Indicator
+
+ding@rastersoft.com|48|85|72024|2087|Desktop Icons NG
+ding@rastersoft.com|49|85|72024|2087|Desktop Icons NG
+ding@rastersoft.com|50|105|78123|2087|Desktop Icons NG
+
+user-theme@gnome-shell-extensions.gcampax.github.com|48|64|63741|19|User Themes
+user-theme@gnome-shell-extensions.gcampax.github.com|49|80|75101|19|User Themes
+user-theme@gnome-shell-extensions.gcampax.github.com|50|79|75092|19|User Themes

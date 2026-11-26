@@ -1,0 +1,46 @@
+# ============================================================================
+# macubuntu Supply-Chain Lockfile (Pinned Commits & Verified SHA-256 Digests)
+# Format (pipe-delimited, 7 fields):
+#   ID | TYPE | URL | VERSION_OR_COMMIT | SHA256 | DATE_VERIFIED | LICENSE_SOURCE
+#
+# Rules:
+#   - TYPE=file : SHA256 MUST be a 64-hex-char SHA-256 verified before install.
+#                 NEVER use floating "latest" URLs.
+#   - TYPE=git  : VERSION_OR_COMMIT MUST be an exact 40-hex-char commit SHA.
+#                 Clones detach to that exact commit and verify signatures when available.
+#   - To add/update an entry, verify upstream signature/checksum and update DATE_VERIFIED.
+# ============================================================================
+
+# --- macOS Themes, Icons, Cursors, Wallpapers & Wayland Remap (Git Pinned) ---
+mactahoe-gtk-theme|git|https://github.com/vinceliuice/MacTahoe-gtk-theme.git|1e45e19f510edb8cde18fa84d6cd5319f60b086b|-|2026-11-14|GPL-3.0 (vinceliuice/MacTahoe-gtk-theme, PGP-verified commit)
+whitesur-gtk-theme|git|https://github.com/vinceliuice/WhiteSur-gtk-theme.git|d5782652d412137e26fb8ff55b55a5572e4c6995|-|2026-11-14|MIT (vinceliuice/WhiteSur-gtk-theme, PGP-verified commit)
+whitesur-icon-theme|git|https://github.com/vinceliuice/WhiteSur-icon-theme.git|73d8040da51a9ed74e47c7366e7e9ff437601a5c|-|2026-11-14|GPL-3.0 (vinceliuice/WhiteSur-icon-theme, PGP-verified commit)
+whitesur-cursors|git|https://github.com/vinceliuice/WhiteSur-cursors.git|e190baf618ed95ee217d2fd45589bd309b37672b|-|2026-11-14|GPL-3.0 (vinceliuice/WhiteSur-cursors, PGP-verified commit)
+whitesur-wallpapers|git|https://github.com/vinceliuice/WhiteSur-wallpapers.git|5c1d7ca20b8de0a7efe443792c19e49277262e02|-|2026-11-14|GPL-3.0 (vinceliuice/WhiteSur-wallpapers, PGP-verified commit)
+gnome-macos-remap-wayland|git|https://github.com/petrstepanov/gnome-macos-remap-wayland.git|4eee3ce5455d191eecd5db25e2388ab660c2454e|-|2026-11-14|MIT (petrstepanov/gnome-macos-remap-wayland, PGP-verified commit)
+
+# --- Optional Community Extras & Cross-Platform Continuity (Pinned Stable Releases) ---
+stage-manager-linux|git|https://github.com/byQuesters/Stage-Manager-for-Linux.git|a7bdb6dc92fb6726ab7bf482444d66ac62a93333|-|2026-11-14|MIT (byQuesters/Stage-Manager-for-Linux, PGP-verified commit)
+hotshot|git|https://github.com/hivecommons/hotshot.git|74f47b8850f696fcbe6efca506f2c5ee5434c64d|-|2026-11-14|Apache-2.0 (hivecommons/hotshot, PGP-verified commit)
+clipp|git|https://github.com/martona/clipp.git|d79b7bf841e1d7564a8c19e167f5ee84838975fa|-|2026-11-14|MIT (martona/clipp)
+uxplay|git|https://github.com/FDH2/UxPlay.git|df67c212a433cf6dda3676dd40c097900d24e645|-|2026-11-14|GPL-3.0 (FDH2/UxPlay v1.73.7 AirPlay 2 screen/audio receiver)
+lan-mouse|git|https://github.com/feschber/lan-mouse.git|0d2190e787db9e482e17d4c16fb7c00ef4841bcb|-|2026-11-14|GPL-3.0 (feschber/lan-mouse v0.11.0 Wayland Universal Control)
+deskflow|git|https://github.com/deskflow/deskflow.git|081f6478e654a112168879e67a41ce7d7e4ae3af|-|2026-11-14|GPL-2.0 (deskflow/deskflow v1.27.0 Wayland libei/TLS Universal Control)
+scrcpy|git|https://github.com/Genymobile/scrcpy.git|a60891aea193d92e7e5c3942700eca63f9d19a5f|-|2026-11-14|Apache-2.0 (Genymobile/scrcpy v5.0.1 Android screen mirroring)
+
+# --- Built-In Celina AI Runtime (Pinned Binary Archive + Verified SHA-256, NO remote install.sh!) ---
+ollama-linux-amd64|file|https://github.com/ollama/ollama/releases/download/v0.40.16/ollama-linux-amd64.tar.zst|v0.40.16|87bfafb2acbc89b2e6a1be0a9043de6aa75fb450696f86bc426e65fc448f788d|2026-11-14|MIT (ollama/ollama release v0.40.16 linux-amd64 binary archive SHA-256)
+
+# --- Built-In Celina Multilingual Piper Voices (Pinned Commit 6b9cfaac + Verified SHA-256) ---
+piper-en_US-amy-medium-onnx|file|https://huggingface.co/rhasspy/piper-voices/resolve/6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3/en/en_US/amy/medium/en_US-amy-medium.onnx|6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3|cf9ccdec59f05adee47173f6fb4d89e8b0c5f30c178748d2572fe4efd1d2724c|2026-11-14|MIT (rhasspy/piper-voices LFS SHA-256)
+piper-en_US-amy-medium-json|file|https://huggingface.co/rhasspy/piper-voices/resolve/6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3/en/en_US/amy/medium/en_US-amy-medium.onnx.json|6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3|8c9b8aa3ee122c6a63678bd68e586a067c6775116d32e13b7ec919520d8948bf|2026-11-14|MIT (rhasspy/piper-voices)
+piper-te_IN-maya-medium-onnx|file|https://huggingface.co/rhasspy/piper-voices/resolve/6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3/te/te_IN/maya/medium/te_IN-maya-medium.onnx|6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3|c3518ad4e3ca8ea6059c1e002f3772068f634960f58b237a96ff629db1c6200e|2026-11-14|MIT (rhasspy/piper-voices LFS SHA-256)
+piper-te_IN-maya-medium-json|file|https://huggingface.co/rhasspy/piper-voices/resolve/6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3/te/te_IN/maya/medium/te_IN-maya-medium.onnx.json|6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3|c07074aadf0a33e230647611af9041e1fb6609b995d017ee95009586a491508f|2026-11-14|MIT (rhasspy/piper-voices)
+piper-hi_IN-priyamvada-medium-onnx|file|https://huggingface.co/rhasspy/piper-voices/resolve/6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3/hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium.onnx|6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3|aa63bcf2cd493b55a450f280e23cf77f03afc9af7015e6e5acd43b652f166c88|2026-11-14|MIT (rhasspy/piper-voices LFS SHA-256)
+piper-hi_IN-priyamvada-medium-json|file|https://huggingface.co/rhasspy/piper-voices/resolve/6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3/hi/hi_IN/priyamvada/medium/hi_IN-priyamvada-medium.onnx.json|6b9cfaacb4fb2e02a9621227e3c1a48bec9710c3|5efc0ccf7529f3528996d46e0fac1f969f681d44a8e55bfa6236ff8841b5d52d|2026-11-14|MIT (rhasspy/piper-voices)
+
+# --- Tier B Experimental Apple Protocol Research Sandbox (Opt-In Only: tools/experimental-deep-stack.sh) ---
+owl|git|https://github.com/seemoo-lab/owl.git|0ee3263f944ea721c355f826aa90d636d012a512|-|2026-11-15|GPL-3.0 (seemoo-lab/owl, PGP-verified commit, archived AWDL research repo)
+opendrop|git|https://github.com/seemoo-lab/opendrop.git|11fe7ba7861093b302bc0637e8cb10adf2d29337|-|2026-11-15|GPL-3.0 (seemoo-lab/opendrop, PGP-verified commit, AirDrop protocol research)
+findmy-py|git|https://github.com/malmeloo/FindMy.py.git|22e4879426f97c9b0a1a33b22dac34ef0cf3d02f|-|2026-11-15|MIT (malmeloo/FindMy.py v0.10.2, SSH-verified commit, Find My BLE research)
+anisette-v3-server|docker|https://hub.docker.com/r/dadoum/anisette-v3-server|latest|d551c75454bcbee68dc262d4247d5f87fa309dfc8f2125644d333c648596e3c7|2026-11-15|MPL-2.0 (dadoum/anisette-v3-server multi-arch OCI manifest index digest)

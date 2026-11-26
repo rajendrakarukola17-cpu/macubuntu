@@ -1,0 +1,26 @@
+[Unit]
+Description=Celina Privilege-Separated eBPF Kernel Sensor (RingBuf -> Local Event Stream)
+Documentation=file:///usr/share/macubuntu/ARCHITECTURE.md
+ConditionPathExists=/sys/kernel/btf/vmlinux
+ConditionPathExists=/usr/lib/macubuntu/ebpf/celina_sensor.bpf.o
+After=local-fs.target
+
+[Service]
+Type=simple
+# Minimal kernel capabilities ONLY for BPF ringbuf loading; Celina Python agent stays unprivileged.
+CapabilityBoundingSet=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE
+AmbientCapabilities=CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=true
+RuntimeDirectory=celina-ebpf
+RuntimeDirectoryMode=0750
+MemoryMax=64M
+CPUQuota=5%
+ExecStart=/usr/sbin/bpftool prog load /usr/lib/macubuntu/ebpf/celina_sensor.bpf.o /sys/fs/bpf/celina_sensor autoattach
+ExecStopPost=/bin/rm -rf /sys/fs/bpf/celina_sensor
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

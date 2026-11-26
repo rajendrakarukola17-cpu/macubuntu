@@ -1,0 +1,35 @@
+[Unit]
+Description=Celina AI Local Router Micro-Daemon (AF_UNIX IPC Only, Zero Raw Network)
+Documentation=file:///usr/share/macubuntu/ARCHITECTURE.md
+PartOf=celina.service
+After=celina.service
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=CELINA_DAEMON_ROLE=router
+ExecStart=/bin/sh -c 'exec "${HOME}/.local/bin/celina-dbus" --role router'
+Restart=on-failure
+RestartSec=3s
+
+# Hardened userns-free unprivileged directives (Ubuntu 26.04 --user safe)
+NoNewPrivileges=yes
+UMask=0077
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+MemoryHigh=128M
+MemoryMax=384M
+CPUQuota=30%
+OOMScoreAdjust=-200
+
+[Install]
+WantedBy=default.target

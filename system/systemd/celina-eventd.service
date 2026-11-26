@@ -1,0 +1,31 @@
+[Unit]
+Description=Celina OS Event Bus, Privacy Indicators, Focus Modes & Safe cgroup v2 Auto-App-Nap
+After=graphical-session.target pipewire.service
+
+[Service]
+Type=simple
+UMask=0077
+Environment=PYTHONPATH=%h/.local/share/celina/app
+ExecStart=%h/.local/share/celina/venv/bin/python3 -m celina_pkg.os_events --daemon
+Restart=on-failure
+RestartSec=5
+OOMScoreAdjust=-300
+MemoryHigh=96M
+MemoryMax=384M
+CPUQuota=15%
+# Kernel-enforced unprivileged hardening verified live on Ubuntu 26.04 --user systemd
+# (avoids CapabilityBoundingSet/AmbientCapabilities [218/CAPABILITIES], RemoveIPC,
+# and mount/userns PrivateTmp/ProtectSystem/ProtectHome/RestrictNamespaces [226/NAMESPACE])
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+KeyringMode=private
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @mount @reboot @swap @module @raw-io @obsolete @debug @cpu-emulation @keyring @clock
+SystemCallErrorNumber=EPERM
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,233 @@
+{
+  "budget_ms": 250,
+  "rss_mb": 10,
+  "per_module_ms": 5,
+  "files_audited": 32,
+  "total_violations": 0,
+  "results": {
+    "gear0_5_micro.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_5_micro.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_5_smolLM.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_5_smolLM.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_audit.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_audit.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_brain.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_brain.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_calendar.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_calendar.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_clipboard.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_clipboard.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_contacts.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_contacts.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_context.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_context.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_dual.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_dual.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_focus.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_focus.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_graph.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_graph.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_hardware.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_hardware.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_intent.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_intent.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_iot.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_iot.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_ledger.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_ledger.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_lists.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_lists.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_macro.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_macro.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_media.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_media.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_memory.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_memory.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_ml_nlu.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_ml_nlu.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_network.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_network.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_routines.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_routines.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_slots.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_slots.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_status.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_status.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_storage.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_storage.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_utils.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_utils.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "gear0_voice.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/gear0_voice.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "data_oracle.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/plugins/data_oracle.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "habit_engine.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/plugins/habit_engine.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "os_shim.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/plugins/os_shim.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "self_heal.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/plugins/self_heal.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    },
+    "sniffer_plugin.py": {
+      "file": "/home/user/macubuntu/features/celina/celina_pkg/plugins/sniffer_plugin.py",
+      "tier_a_violations": [],
+      "heavy_violations": [],
+      "unknown_violations": [],
+      "passed": true
+    }
+  }
+}
