@@ -224,12 +224,13 @@ def _deterministic_intent(goal: str) -> tuple[str, dict[str, str]] | None:
     return None
 
 
-# Initialize storage backend state at import time (P0-03), skipping dry-run and --help probes
+# Initialize storage backend state at import time (P0-03), skipping --help probes
+# and unisolated dry-runs (explicit CELINA_STORAGE_DIR still initializes its isolated dir)
 if (
-    os.environ.get("DRY_RUN") != "1"
-    and os.environ.get("CELINA_DRY_RUN") != "1"
+    os.environ.get("CELINA_DRY_RUN") != "1"
     and "--help" not in sys.argv
     and "-h" not in sys.argv
+    and not (os.environ.get("DRY_RUN") == "1" and not os.environ.get("CELINA_STORAGE_DIR"))
 ):
     initialize_storage()
 

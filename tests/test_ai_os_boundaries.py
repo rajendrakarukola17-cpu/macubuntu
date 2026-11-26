@@ -155,7 +155,7 @@ def test_os_capability_manifest_shadow_ai_invariants_and_bwrap_builder(repo_root
     t2 = set(schema["security_policy"]["tier2_approval_tools"])
 
     mf = capabilities.load_manifest(sys_cap, force_reload=True)
-    assert len(mf["tools"]) == 102
+    assert len(mf["tools"]) == 106
     assert capabilities.validate_manifest_invariants(mf, expected_tier1=t1, expected_tier2=t2) == []
 
     # Shadow-AI attack simulation: Tier-1 tool requesting mutable fs_scope MUST be blocked!

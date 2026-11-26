@@ -182,8 +182,8 @@ resolve_ollama_model() {
 # Secure Boot & UEFI MOK helpers (Ubuntu 26.04 ships Secure Boot enabled by default)
 detect_secure_boot_enabled() {
     local efivars_dir="${1:-${MACUBUNTU_EFIVARS_DIR:-/sys/firmware/efi/efivars}}"
-    # Primary: query via mokutil (single invocation, parse once).
-    if command -v mokutil >/dev/null 2>&1; then
+    # Primary: query via mokutil only when inspecting real host efivars (not an explicit override).
+    if [[ "$efivars_dir" == "/sys/firmware/efi/efivars" ]] && command -v mokutil >/dev/null 2>&1; then
         local sb_state
         sb_state="$(mokutil --sb-state 2>/dev/null || true)"
         if echo "$sb_state" | grep -qi "SecureBoot enabled"; then
