@@ -2,7 +2,7 @@
 Name=macubuntu Center
 GenericName=System Control Center
 Comment=Apple-grade control panel for macubuntu + Celina AI OS
-Exec=python3 /home/user/macubuntu/apps/macubuntu-center/main.py
+Exec=macubuntu-center
 Icon=org.macubuntu.Center
 Terminal=false
 Type=Application

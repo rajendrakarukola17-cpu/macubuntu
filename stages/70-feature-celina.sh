@@ -193,3 +193,34 @@ else
     fi
     PYTHONPATH="$REPO_DIR/features/celina" bash "$REPO_DIR/features/celina/install.sh"
 fi
+
+# Wire macubuntu Center, Celina Shortcuts, and Polkit updater helper (DRY_RUN-safe)
+step "Installing macubuntu Center, Celina Shortcuts, and Polkit updater helper..."
+if [[ -f "$REPO_DIR/apps/macubuntu-center/main.py" ]]; then
+    cat <<CENTEREOF | write_user_file "${HOME}/.local/bin/macubuntu-center" 755
+#!/usr/bin/env bash
+set -euo pipefail
+export PYTHONPATH="${REPO_DIR}/features/celina${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 "${REPO_DIR}/apps/macubuntu-center/main.py" "\$@"
+CENTEREOF
+    if [[ -f "$REPO_DIR/data/org.macubuntu.Center.desktop" ]]; then
+        copy_user_file "$REPO_DIR/data/org.macubuntu.Center.desktop" "${HOME}/.local/share/applications/org.macubuntu.Center.desktop" 644
+    fi
+fi
+if [[ -f "$REPO_DIR/apps/celina-shortcuts/main.py" ]]; then
+    cat <<SHORTCUTSEOF | write_user_file "${HOME}/.local/bin/celina-shortcuts" 755
+#!/usr/bin/env bash
+set -euo pipefail
+export PYTHONPATH="${REPO_DIR}/features/celina${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 "${REPO_DIR}/apps/celina-shortcuts/main.py" "\$@"
+SHORTCUTSEOF
+    if [[ -f "$REPO_DIR/apps/celina-shortcuts/celina-shortcuts.desktop" ]]; then
+        copy_user_file "$REPO_DIR/apps/celina-shortcuts/celina-shortcuts.desktop" "${HOME}/.local/share/applications/celina-shortcuts.desktop" 644
+    fi
+fi
+if [[ -f "$REPO_DIR/libexec/macubuntu-updater-helper" ]]; then
+    copy_root_file "$REPO_DIR/libexec/macubuntu-updater-helper" "/usr/local/libexec/macubuntu-updater-helper" 755
+fi
+if [[ -f "$REPO_DIR/polkit/org.macubuntu.center.policy" ]]; then
+    copy_root_file "$REPO_DIR/polkit/org.macubuntu.center.policy" "/usr/share/polkit-1/actions/org.macubuntu.center.policy" 644
+fi
