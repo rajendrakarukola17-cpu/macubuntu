@@ -20,8 +20,18 @@ umask 022
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="$REPO_DIR/releases"
-VERSION="$(cat "$REPO_DIR/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "4.4.0")"
 DRY_RUN=0
+
+# --- Default version from version.toml (single source of truth) ---------------
+# [celina].version takes priority; falls back to VERSION file; then hardcoded.
+DEB_VERSION_DEFAULT="4.4.0"
+if [[ -f "$REPO_DIR/version.toml" ]]; then
+    toml_ver="$(grep -E '^version\s*=' "$REPO_DIR/version.toml" | head -n1 | sed -E 's/^version\s*=\s*"([^"]+)".*/\1/' || true)"
+    [[ -n "$toml_ver" ]] && DEB_VERSION_DEFAULT="$toml_ver"
+elif [[ -f "$REPO_DIR/VERSION" ]]; then
+    DEB_VERSION_DEFAULT="$(cat "$REPO_DIR/VERSION" | tr -d '[:space:]' || echo "$DEB_VERSION_DEFAULT")"
+fi
+VERSION="$DEB_VERSION_DEFAULT"
 
 usage() {
     cat <<'EOF'
@@ -29,7 +39,7 @@ Usage: ./tools/build-deb.sh [options]
 
 Options:
   --out <dir>       Output directory for macubuntu_<ver>_all.deb (default: releases/)
-  --version <ver>   Override package version (default: contents of VERSION)
+  --version <ver>   Override package version (default: contents of version.toml)
   --dry-run         Validate inputs and print planned package layout without building
   -h, --help        Show this help
 EOF
@@ -37,13 +47,23 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --out)      OUT_DIR="$2"; shift 2 ;;
-        --version)  VERSION="$2"; shift 2 ;;
+        --out)
+            if [[ $# -lt 2 ]]; then echo "❌ --out requires a directory argument" >&2; usage; exit 2; fi
+            OUT_DIR="$2"; shift 2 ;;
+        --version)
+            if [[ $# -lt 2 ]]; then echo "❌ --version requires a version argument" >&2; usage; exit 2; fi
+            VERSION="$2"; shift 2 ;;
         --dry-run)  DRY_RUN=1; shift ;;
         -h|--help)  usage; exit 0 ;;
-        *)          echo "❌ Unknown option: $1" >&2; usage; exit 1 ;;
+        *)          echo "❌ Unknown option: $1" >&2; usage; exit 2 ;;
     esac
 done
+
+# Validate Debian version syntax
+if [[ ! "$VERSION" =~ ^[0-9]+(:[0-9]+)?(\.[0-9]+)*([a-zA-Z0-9.+~.-]*)?$ ]]; then
+    echo "❌ Invalid Debian version string: '$VERSION'" >&2
+    exit 2
+fi
 
 PKG_NAME="macubuntu"
 ARCH="all"
@@ -87,11 +107,25 @@ mkdir -p \
     "$STAGE/usr/share/macubuntu" \
     "$STAGE/usr/share/doc/macubuntu"
 
-# 1. Systemd user & system units (split micro-daemons + v5 autonomy/proactive/nightly + decoupled NPU + isolated eBPF + local-inference.slice + auto-theme/borg timers)
-for unit in celina.service celina-eventd.service celina-router.service celina-voice.service celina-memory.service celina-npu-inference.service celina-autonomy.service celina-proactive.service celina-self-improve.service celina-self-improve.timer celina-mcp-n8n.service local-inference.slice celina-auto-theme.service celina-auto-theme.timer celina-borg-backup.service celina-borg-backup.timer; do
-    install -m 0644 "$REPO_DIR/system/systemd/$unit" \
-        "$STAGE/usr/lib/systemd/user/$unit"
+# 1. Systemd user & system units (split micro-daemons + v5 autonomy/proactive/nightly
+#    + decoupled NPU + isolated eBPF + local-inference.slice + auto-theme/borg timers)
+USER_UNITS=(
+    celina.service celina-eventd.service celina-router.service celina-voice.service celina-memory.service
+    celina-npu-inference.service celina-autonomy.service celina-proactive.service celina-self-improve.service
+    celina-self-improve.timer celina-mcp-n8n.service celina-auto-theme.service celina-auto-theme.timer
+    celina-borg-backup.service celina-borg-backup.timer celina-daemon.service
+)
+for unit in "${USER_UNITS[@]}"; do
+    if [[ -f "$REPO_DIR/system/systemd/$unit" ]]; then
+        install -m 0644 "$REPO_DIR/system/systemd/$unit" \
+            "$STAGE/usr/lib/systemd/user/$unit"
+    fi
 done
+# celina-sandbox.slice (system slice)
+if [[ -f "$REPO_DIR/system/systemd/celina-sandbox.slice" ]]; then
+    install -m 0644 "$REPO_DIR/system/systemd/celina-sandbox.slice" \
+        "$STAGE/usr/lib/systemd/system/celina-sandbox.slice"
+fi
 install -m 0644 "$REPO_DIR/system/systemd/local-inference.slice" \
     "$STAGE/usr/lib/systemd/system/local-inference.slice"
 install -m 0644 "$REPO_DIR/system/systemd/celina-strict-fs.conf" \
@@ -118,7 +152,7 @@ cat > "$STAGE/usr/share/applications/celina-island.desktop" <<'EOF'
 Type=Application
 Name=Celina Dynamic Island
 Comment=AI-Native macOS-style Dynamic Island & OS Control Plane
-Exec=/usr/bin/celina-dbus --status
+Exec=/usr/bin/celina-dbus --toggle
 Icon=celina
 Terminal=false
 Categories=Utility;System;
@@ -135,13 +169,31 @@ find "$EXT_DST" -type d -exec chmod 0755 {} +
 find "$EXT_DST" -type f -exec chmod 0644 {} +
 
 # 4. Canonical repository payload under /usr/share/macubuntu
-for item in VERSION install.sh uninstall.sh core stages system tools features docs README.md ARCHITECTURE.md COMPATIBILITY.md LIMITATIONS.md CHANGELOG.md; do
+for item in VERSION version.toml install.sh uninstall.sh core stages system tools features docs profiles apps README.md ARCHITECTURE.md COMPATIBILITY.md LIMITATIONS.md CHANGELOG.md; do
     if [[ -e "$REPO_DIR/$item" ]]; then
         cp -a "$REPO_DIR/$item" "$STAGE/usr/share/macubuntu/$item"
     fi
 done
-find "$STAGE/usr/share/macubuntu" -type d \( -name "__pycache__" -o -name ".pytest_cache" -o -name ".ruff_cache" \) -prune -exec rm -rf {} +
-find "$STAGE/usr/share/macubuntu" -type f -name "*.pyc" -delete
+
+# --- P0: Explicitly exclude Tier B, fault injectors, secrets, venv, AppleDouble ---
+find "$STAGE/usr/share/macubuntu/tools" -name 'experimental-deep-stack.sh' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu/tools" -name 'inject_parity_break.py' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu/tools" -name 'requirements-tier-b.*' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '._*' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '.DS_Store' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '__MACOSX' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '.env*' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '*.key' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '*.pem' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '*.db*' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '*venv*' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '.venv' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '__pycache__' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '.pytest_cache' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -name '.ruff_cache' -prune -exec rm -rf {} + 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -type f -name '*.pyc' -delete 2>/dev/null || true
+find "$STAGE/usr/share/macubuntu" -type d \( -name '__pycache__' -o -name '.pytest_cache' -o -name '.ruff_cache' \) -prune -exec rm -rf {} + 2>/dev/null || true
+
 chmod 0755 \
     "$STAGE/usr/share/macubuntu/install.sh" \
     "$STAGE/usr/share/macubuntu/uninstall.sh" \
@@ -149,6 +201,12 @@ chmod 0755 \
     "$STAGE/usr/share/macubuntu/stages/"*.sh \
     "$STAGE/usr/share/macubuntu/tools/"*.sh \
     "$STAGE/usr/share/macubuntu/core/"*.sh
+
+# --- P0/P1: Extensionless executables and *.py get 0755 -----------------------
+for ext_bin in celina-vmtouch-ctl macubuntu-reconfigure macubuntu-ram-change-detector celina-visual-intelligence; do
+    [[ -f "$STAGE/usr/share/macubuntu/tools/$ext_bin" ]] && chmod 0755 "$STAGE/usr/share/macubuntu/tools/$ext_bin"
+done
+find "$STAGE/usr/share/macubuntu/tools" -name '*.py' -exec chmod 0755 {} + 2>/dev/null || true
 
 # 5. System CLI wrappers under /usr/bin
 cat > "$STAGE/usr/bin/macubuntu-install" <<'EOF'
@@ -175,13 +233,18 @@ set -euo pipefail
 exec /usr/share/macubuntu/tools/os-hardening-setup.sh "$@"
 EOF
 
+# --- P0: Never fall back $HOME to /tmp in wrappers; use system paths -----------
 cat > "$STAGE/usr/bin/celina-dbus" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-VENV_PY="${HOME:-/tmp}/.local/share/celina/venv/bin/python3"
+if [[ -z "${HOME:-}" || "${HOME:-}" == "/tmp" ]]; then
+    echo "❌ celina-dbus: HOME is unset or /tmp; refusing to run (P0-3)" >&2
+    exit 2
+fi
+VENV_PY="${HOME}/.local/share/celina/venv/bin/python3"
 [[ -x "$VENV_PY" ]] || VENV_PY="python3"
-USER_APP="${HOME:-/tmp}/.local/share/celina/app"
+USER_APP="${HOME}/.local/share/celina/app"
 if [[ -d "$USER_APP/celina_pkg" ]]; then
     export PYTHONPATH="$USER_APP${PYTHONPATH:+:$PYTHONPATH}"
 else
@@ -194,9 +257,13 @@ cat > "$STAGE/usr/bin/celina-autonomy" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-VENV_PY="${HOME:-/tmp}/.local/share/celina/venv/bin/python3"
+if [[ -z "${HOME:-}" || "${HOME:-}" == "/tmp" ]]; then
+    echo "❌ celina-autonomy: HOME is unset or /tmp; refusing to run (P0-3)" >&2
+    exit 2
+fi
+VENV_PY="${HOME}/.local/share/celina/venv/bin/python3"
 [[ -x "$VENV_PY" ]] || VENV_PY="python3"
-USER_APP="${HOME:-/tmp}/.local/share/celina/app"
+USER_APP="${HOME}/.local/share/celina/app"
 if [[ -d "$USER_APP/celina_pkg" ]]; then
     export PYTHONPATH="$USER_APP${PYTHONPATH:+:$PYTHONPATH}"
 else
@@ -209,9 +276,13 @@ cat > "$STAGE/usr/bin/celina-proactive" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-VENV_PY="${HOME:-/tmp}/.local/share/celina/venv/bin/python3"
+if [[ -z "${HOME:-}" || "${HOME:-}" == "/tmp" ]]; then
+    echo "❌ celina-proactive: HOME is unset or /tmp; refusing to run (P0-3)" >&2
+    exit 2
+fi
+VENV_PY="${HOME}/.local/share/celina/venv/bin/python3"
 [[ -x "$VENV_PY" ]] || VENV_PY="python3"
-USER_APP="${HOME:-/tmp}/.local/share/celina/app"
+USER_APP="${HOME}/.local/share/celina/app"
 if [[ -d "$USER_APP/celina_pkg" ]]; then
     export PYTHONPATH="$USER_APP${PYTHONPATH:+:$PYTHONPATH}"
 else
@@ -224,9 +295,13 @@ cat > "$STAGE/usr/bin/celina-mcp-server" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-VENV_PY="${HOME:-/tmp}/.local/share/celina/venv/bin/python3"
+if [[ -z "${HOME:-}" || "${HOME:-}" == "/tmp" ]]; then
+    echo "❌ celina-mcp-server: HOME is unset or /tmp; refusing to run (P0-3)" >&2
+    exit 2
+fi
+VENV_PY="${HOME}/.local/share/celina/venv/bin/python3"
 [[ -x "$VENV_PY" ]] || VENV_PY="python3"
-USER_APP="${HOME:-/tmp}/.local/share/celina/app"
+USER_APP="${HOME}/.local/share/celina/app"
 if [[ -d "$USER_APP/celina_pkg" ]]; then
     export PYTHONPATH="$USER_APP${PYTHONPATH:+:$PYTHONPATH}"
 else
@@ -239,9 +314,13 @@ cat > "$STAGE/usr/bin/celina-memory-mcp" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-VENV_PY="${HOME:-/tmp}/.local/share/celina/venv/bin/python3"
+if [[ -z "${HOME:-}" || "${HOME:-}" == "/tmp" ]]; then
+    echo "❌ celina-memory-mcp: HOME is unset or /tmp; refusing to run (P0-3)" >&2
+    exit 2
+fi
+VENV_PY="${HOME}/.local/share/celina/venv/bin/python3"
 [[ -x "$VENV_PY" ]] || VENV_PY="python3"
-USER_APP="${HOME:-/tmp}/.local/share/celina/app"
+USER_APP="${HOME}/.local/share/celina/app"
 if [[ -d "$USER_APP/celina_pkg" ]]; then
     export PYTHONPATH="$USER_APP${PYTHONPATH:+:$PYTHONPATH}"
 else
@@ -292,7 +371,7 @@ Architecture: ${ARCH}
 Maintainer: macubuntu Maintainers <maintainers@macubuntu.org>
 Installed-Size: ${INSTALLED_KB}
 Depends: bash (>= 5.0), python3 (>= 3.10), systemd, dbus, libglib2.0-bin, bubblewrap, jq, curl
-Recommends: gnome-shell (>= 48), python3-gi, gir1.2-gtk-3.0, tesseract-ocr, wl-clipboard, pipewire
+Recommends: gnome-shell (>= 48), python3-gi, gir1.2-gtk-3.0, gir1.2-gtk-4.0, gir1.2-adw-1, python3-yaml, python3-jsonschema, python3-httpx, tesseract-ocr, wl-clipboard, pipewire
 Suggests: clang, bpftool, libbpf-dev, v4l2loopback-dkms
 Conflicts: macubuntu-old
 Replaces: macubuntu-old
@@ -352,6 +431,7 @@ exit 0
 EOF
 chmod 0755 "$STAGE/DEBIAN/postinst"
 
+# --- P0/P1: prerm disables ALL packaged user units/timers ----------------------
 cat > "$STAGE/DEBIAN/prerm" <<'EOF'
 #!/bin/sh
 set -e
@@ -362,7 +442,15 @@ case "$1" in
             systemctl --global disable \
                 celina.service celina-eventd.service celina-router.service \
                 celina-voice.service celina-memory.service celina-npu-inference.service \
-                celina-autonomy.service celina-proactive.service celina-self-improve.timer >/dev/null 2>&1 || true
+                celina-autonomy.service celina-proactive.service celina-self-improve.timer \
+                celina-auto-theme.timer celina-borg-backup.timer celina-daemon.service \
+                celina-mcp-n8n.service celina-self-improve.service >/dev/null 2>&1 || true
+            systemctl --global stop \
+                celina.service celina-eventd.service celina-router.service \
+                celina-voice.service celina-memory.service celina-npu-inference.service \
+                celina-autonomy.service celina-proactive.service celina-self-improve.timer \
+                celina-auto-theme.timer celina-borg-backup.timer celina-daemon.service \
+                celina-mcp-n8n.service celina-self-improve.service >/dev/null 2>&1 || true
             systemctl stop celina-ebpf-sensor.service >/dev/null 2>&1 || true
             systemctl disable celina-ebpf-sensor.service >/dev/null 2>&1 || true
         fi
@@ -398,17 +486,20 @@ chmod 0755 "$STAGE/DEBIAN/postrm"
 # 8. Build .deb reproducibly without requiring root/fakeroot
 dpkg-deb --root-owner-group --build "$STAGE" "$DEB_PATH" >/dev/null
 
-# 9. Verify package structure & refresh SHA256SUMS
+# 9. Verify package structure & atomically refresh SHA256SUMS
 dpkg-deb --info "$DEB_PATH" >/dev/null
 dpkg-deb --contents "$DEB_PATH" >/dev/null
 
+SUMS_PATH="$OUT_DIR/SHA256SUMS"
+TMP_SUMS="$(mktemp "$OUT_DIR/SHA256SUMS.XXXXXX")"
 (
     cd "$OUT_DIR"
     shopt -s nullglob
     ARTIFACTS=(macubuntu-v*.tar.gz macubuntu_*.deb)
     if [[ ${#ARTIFACTS[@]} -gt 0 ]]; then
-        sha256sum "${ARTIFACTS[@]}" > SHA256SUMS
+        sha256sum "${ARTIFACTS[@]}" > "$TMP_SUMS"
     fi
 )
+mv -f "$TMP_SUMS" "$SUMS_PATH"
 
 echo "✅ Built verified Debian package: $DEB_PATH ($(du -h "$DEB_PATH" | cut -f1))"

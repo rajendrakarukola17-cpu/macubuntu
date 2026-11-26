@@ -11,11 +11,10 @@ Update 18 additions:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-import asyncio
 import os
 import threading
 import time
+from dataclasses import dataclass
 from typing import Any
 
 try:
@@ -217,8 +216,7 @@ def _extract_model_ids(payload: Any, provider_name: str) -> list[str]:
 
 
 def discover_available_models(provider: Provider, force_refresh: bool = False) -> list[str]:
-    """
-    Query a provider's /models endpoint using just the API key.
+    """Query a provider's /models endpoint using just the API key.
     Returns a list of available model IDs, or falls back to the default model.
     Results are cached for DISCOVERY_CACHE_TTL seconds.
     """
@@ -261,8 +259,7 @@ def discover_available_models(provider: Provider, force_refresh: bool = False) -
 
 
 def select_best_model(provider: Provider, task_category: str = "general") -> str:
-    """
-    Pick the best available model for a task category from discovered models.
+    """Pick the best available model for a task category from discovered models.
     Falls back to the provider's default_model if discovery yields nothing
     or no keyword matches.
     """
@@ -293,8 +290,7 @@ def refresh_all_discovered_models() -> None:
 # ---------------------------------------------------------------------------
 
 def should_use_ensemble(goal: str) -> bool:
-    """
-    Automatically decide whether a task warrants ensemble (parallel multi-provider)
+    """Automatically decide whether a task warrants ensemble (parallel multi-provider)
     routing vs single-provider failover.
 
     Heuristics:
@@ -362,8 +358,7 @@ def _provider_by_name(name: str) -> Provider | None:
 
 
 def decompose_task(goal: str, gear: str = "standard") -> list[dict[str, Any]]:
-    """
-    Split one user task into subtasks with provider assignments.
+    """Split one user task into subtasks with provider assignments.
 
     Returns a list of subtask dicts with keys:
       - subtask: the sub-goal text
@@ -444,8 +439,7 @@ def model_for_by_name(name: str) -> str:
 
 
 def ensemble_candidates(prompt: str, gear: str = "standard") -> list[tuple[Provider, str, str, str]]:
-    """
-    Return provider candidates for ensemble (parallel) execution.
+    """Return provider candidates for ensemble (parallel) execution.
 
     Returns list of (Provider, api_key, model, subtask_description) tuples,
     one per subtask. Each subtask goes to its best-matched provider with its
@@ -487,8 +481,7 @@ def ensemble_candidates(prompt: str, gear: str = "standard") -> list[tuple[Provi
 
 
 def merge_ensemble_results(results: list[dict[str, Any]]) -> str:
-    """
-    Merge multiple provider responses into one coherent answer.
+    """Merge multiple provider responses into one coherent answer.
 
     results: list of dicts with keys: provider, model, subtask, response, error
     Returns a merged string with deduplicated content.

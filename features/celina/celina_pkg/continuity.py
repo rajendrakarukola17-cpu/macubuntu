@@ -1,5 +1,4 @@
-"""
-Celina AI — Cross-Platform Continuity, TCC Privacy Auditor & Universal Menu Palette (P1/P3/P5)
+"""Celina AI — Cross-Platform Continuity, TCC Privacy Auditor & Universal Menu Palette (P1/P3/P5)
 Bridges Ubuntu 26.04 cleanly to ALL device ecosystems:
   - Android : GSConnect + scrcpy (60fps USB/Wireless mirroring)
   - iOS/Mac : LocalSend (AirDrop), Shairport-Sync (AirPlay Audio), UxPlay (AirPlay 2 Video)
@@ -11,14 +10,12 @@ Bridges Ubuntu 26.04 cleanly to ALL device ecosystems:
 
 from __future__ import annotations
 
-import json
-import os
 import re
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
 
 from . import approval, automation, command_runner, config, ios_ancs
 
@@ -126,8 +123,7 @@ def get_continuity_status() -> str:
 
 
 def check_airplay_handshake_health() -> str:
-    """
-    Inspects recent user journal logs for uxplay-user.service / shairport-sync-user.service
+    """Inspects recent user journal logs for uxplay-user.service / shairport-sync-user.service
     to warn loudly on AirPlay 2 FairPlay/SRP/TLS handshake failures (e.g., after iOS/macOS updates).
     """
     if not shutil.which("journalctl"):
@@ -154,7 +150,7 @@ def check_airplay_handshake_health() -> str:
         return ""
     sig = re.compile(
         r"(pair[- ]?verify|fairplay|handshake\s+fail|auth(?:entication)?\s+fail|decrypt.*fail|hap.*error)",
-        re.I,
+        re.IGNORECASE,
     )
     for line in reversed(res.stdout.splitlines()):
         if sig.search(line):
@@ -168,7 +164,7 @@ def check_airplay_handshake_health() -> str:
 def launch_android_mirror(
     serial: str = "",
     turn_screen_off: bool = True,
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
     """Launches 60fps Android screen mirroring via Genymobile scrcpy (approval-gated)."""
     if not shutil.which("scrcpy"):
@@ -207,7 +203,7 @@ def launch_android_mirror(
         return f"Error: Could not launch scrcpy: {exc}"
 
 
-def control_airplay_mirror(action: str = "status", approval_cb: Optional[ApprovalCallback] = None) -> str:
+def control_airplay_mirror(action: str = "status", approval_cb: ApprovalCallback | None = None) -> str:
     """Starts, stops, or checks AirPlay 2 Video+Audio mirroring receiver (uxplay-user.service)."""
     act = (action or "status").strip().lower()
     if act not in {"status", "start", "stop"}:
@@ -244,11 +240,10 @@ def audit_app_permissions(
     autostart_dir: Path = config.HOME / ".config" / "autostart",
     flatpak_overrides_dir: Path = config.HOME / ".local" / "share" / "flatpak" / "overrides",
 ) -> str:
-    """
-    macOS Privacy & Security (TCC) Auditor:
-      1. Live active PipeWire mic / camera / screen-share streams
-      2. Flatpak user permission overrides (host filesystem / device grants)
-      3. User desktop autostart entries
+    """MacOS Privacy & Security (TCC) Auditor:
+    1. Live active PipeWire mic / camera / screen-share streams
+    2. Flatpak user permission overrides (host filesystem / device grants)
+    3. User desktop autostart entries
     """
     report: list[str] = ["🛡️ macubuntu Per-App Privacy & Permissions Audit:"]
 
@@ -273,7 +268,7 @@ def audit_app_permissions(
                 except OSError:
                     continue
     report.append(
-        "• Flatpak Overrides: " + (", ".join(ov_items[:10]) if ov_items else "none (clean sandbox defaults)")
+        "• Flatpak Overrides: " + (", ".join(ov_items[:10]) if ov_items else "none (clean sandbox defaults)"),
     )
 
     # 3. Autostart apps
@@ -282,15 +277,14 @@ def audit_app_permissions(
         for f in sorted(autostart_dir.glob("*.desktop")):
             auto_items.append(f.stem)
     report.append(
-        f"• Login Autostart Entries ({len(auto_items)}): " + (", ".join(auto_items[:12]) if auto_items else "none")
+        f"• Login Autostart Entries ({len(auto_items)}): " + (", ".join(auto_items[:12]) if auto_items else "none"),
     )
     report.append("Tip: Open Flatseal (`flatpak run com.github.tchx84.Flatseal`) for visual per-app sandbox controls.")
     return "\n".join(report)
 
 
 def search_active_app_menus(query: str = "", max_results: int = 15) -> str:
-    """
-    macOS Help-Menu-Search equivalent: walks the active application's AT-SPI2 menu bar
+    """MacOS Help-Menu-Search equivalent: walks the active application's AT-SPI2 menu bar
     & menu items (<40ms) so you can discover any app action without hunting through menus.
     """
     q = (query or "").strip().lower()
@@ -338,10 +332,9 @@ def get_ios_usb_status() -> str:
 def mount_ios_device(
     action: str = "mount",
     mount_dir: str = "~/iPhone",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Mounts or unmounts a USB-connected iPhone/iPad into ~/iPhone via `ifuse`
+    """Mounts or unmounts a USB-connected iPhone/iPad into ~/iPhone via `ifuse`
     so photos (DCIM) and files appear natively in Nautilus Finder.
     """
     act = (action or "mount").strip().lower()
@@ -393,10 +386,9 @@ def mount_ios_device(
 def start_ios_continuity_camera(
     video_device: str = "/dev/video10",
     action: str = "start",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    macOS Continuity Camera equivalent: launches (or stops) UxPlay piping iPhone AirPlay video
+    """MacOS Continuity Camera equivalent: launches (or stops) UxPlay piping iPhone AirPlay video
     into a v4l2loopback virtual webcam device so Zoom/Meet/Firefox can use the iPhone camera.
     Automatically pauses conflicting `uxplay-user.service` screen-mirroring before starting.
     """
@@ -430,7 +422,7 @@ def start_ios_continuity_camera(
         return (
             f"Error: Virtual webcam {dev_path} does not exist. "
             "Load v4l2loopback first: `sudo modprobe v4l2loopback video_nr=10 "
-            "card_label=\"iPhone Continuity Camera\" exclusive_caps=1`"
+            'card_label="iPhone Continuity Camera" exclusive_caps=1`'
         )
 
     args = {"action": "start", "video_device": str(dev_path)}
@@ -480,10 +472,9 @@ def start_ios_continuity_camera(
 def start_ipad_sidecar_weylus(
     action: str = "start",
     web_port: int = 1701,
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Open-source iPad Sidecar + Apple Pencil pressure/tilt/multi-touch bridge via Weylus
+    """Open-source iPad Sidecar + Apple Pencil pressure/tilt/multi-touch bridge via Weylus
     (MIT, PipeWire ScreenCast + Wayland libei — opens right inside iPad Safari, zero App Store app).
     """
     act = (action or "start").strip().lower()
@@ -544,12 +535,11 @@ def start_ipad_sidecar_weylus(
 
 def respond_ios_notification(
     action: str = "dismiss",
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Triggers Apple BLE ANCS Control Point action on the latest iPhone notification/call:
-      - action='accept' / 'answer' / 'positive' -> ANCS Positive Action (answer call / accept)
-      - action='dismiss' / 'decline' / 'negative' -> ANCS Negative Action (decline call / dismiss)
+    """Triggers Apple BLE ANCS Control Point action on the latest iPhone notification/call:
+    - action='accept' / 'answer' / 'positive' -> ANCS Positive Action (answer call / accept)
+    - action='dismiss' / 'decline' / 'negative' -> ANCS Negative Action (decline call / dismiss)
     """
     act = (action or "dismiss").strip().lower()
     if act in {"accept", "answer", "positive", "yes"}:

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Utilities (Update 19)
+"""Celina AI (Celly) - Gear 0 Utilities (Update 19)
 
 Zero-token, zero-AI-RAM, sub-20ms deterministic utilities for Gear 0 (Reflex).
 All functions are pure Python stdlib — no LLM, no network, no heavy dependencies.
@@ -18,17 +17,12 @@ import base64
 import datetime
 import hashlib
 import json
-import math
-import os
 import re
 import secrets
 import shutil
 import socket
-import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Optional
-
 
 # ---------------------------------------------------------------------------
 # Rust FFI (optional) — gear0_utils compute-intensive functions
@@ -38,7 +32,7 @@ from typing import Any, Optional
 # Public function signatures are unchanged — 102-tool contract preserved.
 # ---------------------------------------------------------------------------
 
-_GEAR0_FFI_LIB: Optional[ctypes.CDLL] = None
+_GEAR0_FFI_LIB: ctypes.CDLL | None = None
 _GEAR0_FFI_AVAILABLE = False
 
 
@@ -72,11 +66,11 @@ def _load_gear0_ffi() -> bool:
     return _GEAR0_FFI_AVAILABLE
 
 
-def _ffi_call(fn_name: str, input_str: str) -> Optional[str]:
+def _ffi_call(fn_name: str, input_str: str) -> str | None:
     """Call a Rust FFI function with input_str, return decoded result or None."""
     if not _GEAR0_FFI_AVAILABLE or _GEAR0_FFI_LIB is None:
         return None
-    import ctypes  # lazy import — needed for c_void_p/c_char_p (not at module level per lint gate)
+    import ctypes  # lazy import — needed for c_void_p/c_char_p
     try:
         fn = getattr(_GEAR0_FFI_LIB, fn_name)
         fn.restype = ctypes.c_void_p  # Keep raw pointer for free()
@@ -278,7 +272,7 @@ def gear0_md5(text: str) -> str:
     ffi_result = _ffi_call("gear0_md5", text)
     if ffi_result is not None:
         return ffi_result
-    return hashlib.md5(text.encode("utf-8")).hexdigest()
+    return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def gear0_base64_encode(text: str) -> str:
@@ -370,7 +364,7 @@ def gear0_redact_pii(text: str) -> str:
     return text
 
 
-def gear0_detect_api_key(text: str) -> Optional[str]:
+def gear0_detect_api_key(text: str) -> str | None:
     """Return API key pattern if found, else None."""
     if _API_KEY_RE.search(text):
         return "sk- or ghp_ or AIza API key pattern"
@@ -464,11 +458,11 @@ def gear0_damerau_levenshtein(s1: str, s2: str) -> int:
     return previous_row[-1]
 
 
-def gear0_fuzzy_match(query: str, candidates: list[str], threshold: float = 0.85) -> Optional[str]:
+def gear0_fuzzy_match(query: str, candidates: list[str], threshold: float = 0.85) -> str | None:
     """Return best fuzzy match above threshold, else None."""
     if not candidates:
         return None
-    best: Optional[str] = None
+    best: str | None = None
     best_score = 0.0
     q = query.lower().strip()
     for cand in candidates:
@@ -503,9 +497,8 @@ def gear0_log_miss(query: str) -> None:
 # Master dispatch: classify Gear 0 request type
 # ---------------------------------------------------------------------------
 
-def gear0_classify(query: str) -> Optional[str]:
-    """
-    Classify a query into a Gear 0 handler name, or None if not a Gear 0 match.
+def gear0_classify(query: str) -> str | None:
+    """Classify a query into a Gear 0 handler name, or None if not a Gear 0 match.
 
     Returns one of:
       'time_days_from_now', 'time_days_until', 'time_in_tz',
@@ -587,7 +580,7 @@ def gear0_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_execute(handler: str, query: str) -> Optional[str]:
+def gear0_execute(handler: str, query: str) -> str | None:
     """Execute a Gear 0 handler and return the result string, or None on failure."""
     try:
         if handler == "time_days_from_now":
@@ -673,13 +666,13 @@ def gear0_execute(handler: str, query: str) -> Optional[str]:
 
 
 __all__ = [
-    "gear0_classify",
-    "gear0_execute",
-    "gear0_redact_pii",
-    "gear0_detect_api_key",
-    "gear0_fuzzy_match",
-    "gear0_log_miss",
     "gear0_battery",
+    "gear0_classify",
+    "gear0_detect_api_key",
     "gear0_disk_free",
+    "gear0_execute",
+    "gear0_fuzzy_match",
     "gear0_local_ip",
+    "gear0_log_miss",
+    "gear0_redact_pii",
 ]

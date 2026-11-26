@@ -1,5 +1,4 @@
-"""
-Celina AI - Native OS App Intents: GNOME Contacts (vCard/Evolution) & Browser Bookmarks (v4.3)
+"""Celina AI - Native OS App Intents: GNOME Contacts (vCard/Evolution) & Browser Bookmarks (v4.3)
 Gives Siri/Celina structured, read-only access to contacts and browser bookmarks with:
   - Zero fragile GUI clicking
   - Zero live browser SQLite lock contention (copies places.sqlite to a 0600 temp file & unlinks)
@@ -10,13 +9,17 @@ Gives Siri/Celina structured, read-only access to contacts and browser bookmarks
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import sqlite3
 import tempfile
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
+
+log = logging.getLogger(__name__)
 
 from . import config
 
@@ -68,7 +71,7 @@ def parse_vcards(raw_vcf: str) -> list[ContactRecord]:
                         emails=tuple(dict.fromkeys(emails)),
                         phones=tuple(dict.fromkeys(phones)),
                         org=org,
-                    )
+                    ),
                 )
             in_card = False
             continue
@@ -84,15 +87,16 @@ def parse_vcards(raw_vcf: str) -> list[ContactRecord]:
         elif prop == "ORG":
             org = val.replace(";", " ").strip()
         elif prop == "EMAIL":
-            emails.append(val)
+            if len(emails) < 32:
+                emails.append(val)
         elif prop == "TEL":
-            phones.append(val)
+            if len(phones) < 32:
+                phones.append(val)
     return records
 
 
 def _snapshot_sqlite_wal_safe(db_path: Path, prefix: str, suffix: str) -> tuple[Path, Path]:
-    """
-    Creates an atomic, WAL-consistent read-only snapshot of a live SQLite database
+    """Creates an atomic, WAL-consistent read-only snapshot of a live SQLite database
     (e.g. Firefox `places.sqlite` or Evolution `contacts.db`).
     Prefers SQLite's online `backup()` API so active `-wal` frames are folded into
     the snapshot cleanly; falls back to copying main + `-wal` + `-shm` into a private
@@ -129,7 +133,7 @@ def _snapshot_sqlite_wal_safe(db_path: Path, prefix: str, suffix: str) -> tuple[
 def _load_evolution_contacts(db_path: Path) -> list[ContactRecord]:
     if not db_path.exists():
         return []
-    tmp_dir: Optional[Path] = None
+    tmp_dir: Path | None = None
     try:
         tmp_dir, tmp_db = _snapshot_sqlite_wal_safe(db_path, prefix="celina_contacts_", suffix=".db")
         conn = sqlite3.connect(str(tmp_db), timeout=3.0)
@@ -168,7 +172,8 @@ def search_contacts(
     if vcards_dir.exists() and vcards_dir.is_dir():
         for vcf in sorted(vcards_dir.glob("*.vcf"))[:50]:
             try:
-                all_contacts.extend(parse_vcards(vcf.read_text(encoding="utf-8", errors="replace")))
+                raw = vcf.read_text(encoding="utf-8", errors="replace")[:2_000_000]
+                all_contacts.extend(parse_vcards(raw))
             except OSError:
                 continue
 
@@ -197,7 +202,9 @@ def search_contacts(
     return "\n".join(lines)
 
 
-def _walk_chromium_bookmark_node(node: Any, browser: str, out: list[BookmarkRecord]) -> None:
+def _walk_chromium_bookmark_node(node: Any, browser: str, out: list[BookmarkRecord], *, depth: int = 0) -> None:
+    if depth > 64:
+        return
     if not isinstance(node, dict):
         return
     ntype = node.get("type")
@@ -207,7 +214,7 @@ def _walk_chromium_bookmark_node(node: Any, browser: str, out: list[BookmarkReco
         if url.startswith(("http://", "https://")):
             out.append(BookmarkRecord(title=title, url=url, browser=browser))
     for child in node.get("children") or []:
-        _walk_chromium_bookmark_node(child, browser, out)
+        _walk_chromium_bookmark_node(child, browser, out, depth=depth + 1)
 
 
 def _read_chromium_bookmarks(bookmarks_json: Path, browser: str) -> list[BookmarkRecord]:
@@ -228,7 +235,7 @@ def _read_chromium_bookmarks(bookmarks_json: Path, browser: str) -> list[Bookmar
 def _read_firefox_bookmarks(places_sqlite: Path) -> list[BookmarkRecord]:
     if not places_sqlite.exists():
         return []
-    tmp_dir: Optional[Path] = None
+    tmp_dir: Path | None = None
     try:
         tmp_dir, tmp_db = _snapshot_sqlite_wal_safe(places_sqlite, prefix="celina_ff_bm_", suffix=".sqlite")
         conn = sqlite3.connect(str(tmp_db), timeout=3.0)
@@ -240,7 +247,7 @@ def _read_firefox_bookmarks(places_sqlite: Path) -> list[BookmarkRecord]:
                 JOIN moz_places p ON b.fk = p.id
                 WHERE b.type = 1 AND (p.url LIKE 'http://%' OR p.url LIKE 'https://%')
                 LIMIT 2000
-                """
+                """,
             ).fetchall()
             return [BookmarkRecord(title=str(r[0] or r[1]), url=str(r[1]), browser="Firefox") for r in rows]
         finally:
@@ -268,8 +275,8 @@ def _default_bookmark_sources(home: Path = config.HOME) -> tuple[list[tuple[str,
 def search_browser_bookmarks(
     query: str,
     *,
-    chromium_files: Optional[Iterable[tuple[str, Path]]] = None,
-    firefox_dbs: Optional[Iterable[Path]] = None,
+    chromium_files: Iterable[tuple[str, Path]] | None = None,
+    firefox_dbs: Iterable[Path] | None = None,
     limit: int = 12,
 ) -> str:
     """Read-only search across Firefox & Chromium/Chrome/Brave bookmarks (zero passwords/cookies/history)."""
@@ -381,15 +388,14 @@ def prepare_meeting_context(
     query: str = "",
     days: int = 7,
     *,
-    ics_path: Optional[Path] = None,
+    ics_path: Path | None = None,
     evolution_db: Path = EVOLUTION_CONTACTS_DB,
     vcard_dir: Path = CELINA_VCARDS_DIR,
-    search_dirs: Optional[Iterable[Path]] = None,
-    db: Optional[Any] = None,
-    now: Optional[Any] = None,
+    search_dirs: Iterable[Path] | None = None,
+    db: Any | None = None,
+    now: Any | None = None,
 ) -> str:
-    """
-    Zero-LLM-token Compound App Intent Pipeline (<35ms):
+    """Zero-LLM-token Compound App Intent Pipeline (<35ms):
       1. Finds the next upcoming (or query-matching) GNOME Calendar event.
       2. Extracts attendee names/emails/topics from SUMMARY + DESCRIPTION and looks up matching Contacts.
       3. Recalls relevant Ebbinghaus-ranked Memory facts, episodes & Knowledge Graph triples.
@@ -447,15 +453,19 @@ def prepare_meeting_context(
             break
 
     # 2. Memory facts, KG triples & past episodes
-    mem_db = db if db is not None else memory.get_db()
+    mem_db = None
+    try:
+        mem_db = db if db is not None else memory.get_db()
+    except Exception as exc:
+        log.warning("memory DB unavailable: %s", exc)
     mem_query = " ".join(keywords) or query or (target_ev.summary if target_ev else "")
     recalled_facts: list[tuple[str, str]] = []
     recalled_eps: list[str] = []
     kg_hits: list[str] = []
-    if mem_query.strip():
+    if mem_db is not None and mem_query.strip():
         try:
             recalled_facts, recalled_eps = mem_db.recall_relevant(
-                mem_query, max_facts=4, max_episodes=2, cloud_only=False
+                mem_query, max_facts=4, max_episodes=2, cloud_only=False,
             )
             kg_hits = mem_db.recall_knowledge_triples(mem_query, limit=4, cloud_only=False)
         except Exception:

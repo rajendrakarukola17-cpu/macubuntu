@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# macubuntu stage Snapper wrapper — creates pre/post btrfs snapshots around stage execution
+# Usage: macubuntu-stage-wrapper <stage-number> <stage-script> [args...]
+set -Eeuo pipefail
+
+STAGE_NUM="$1"
+STAGE_SCRIPT="$2"
+shift 2
+
+CONFIG="root"
+PRE_DESC="macubuntu-stage-${STAGE_NUM}-pre"
+POST_DESC="macubuntu-stage-${STAGE_NUM}-post"
+
+# Create pre snapshot
+PRE_NUM=$(snapper -c "$CONFIG" create --type pre --description "$PRE_DESC" --cleanup-algorithm number 2>/dev/null | tail -1 | awk '{print $NF}' || true)
+if [[ -z "$PRE_NUM" ]]; then
+    echo "⚠️  Snapper pre-snapshot failed; continuing without snapshot protection"
+    exec bash "$STAGE_SCRIPT" "$@"
+    exit $?
+fi
+
+# Execute the stage
+bash "$STAGE_SCRIPT" "$@"
+STAGE_RC=$?
+
+# Create post snapshot
+snapper -c "$CONFIG" create --type post --description "$POST_DESC" --pre-algorithm-number "$PRE_NUM" --cleanup-algorithm number 2>/dev/null || true
+
+exit "$STAGE_RC"

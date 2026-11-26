@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "generated_by": "celina-mcp-lock-tool",
+  "note": "MCP03 schema-hash pinning lock file. Maps {server}__{tool} -> expected SHA-256 of the tool's JSON schema (name + description + inputSchema). Tools not listed here are quarantined until pinned by human review.",
+  "tools": {}
+}

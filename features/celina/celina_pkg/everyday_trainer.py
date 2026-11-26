@@ -1,5 +1,4 @@
-"""
-Celina AI — Multi-Agent Everyday Trainer & Readiness Grader (`celina-train`)
+"""Celina AI — Multi-Agent Everyday Trainer & Readiness Grader (`celina-train`)
 Runs 6 specialist Teacher/Evaluator agents (60 real everyday scenarios — including
 messy phrasing, typos, multi-clause commands, Telugu, Hindi, restraint & security tests)
 in 100% safe dry-run mode, grades Celina's actual dispatchers, and compiles verified
@@ -18,10 +17,9 @@ import dataclasses
 import datetime
 import json
 import shutil
-import sys
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from . import command_runner, config, everyday_agents, memory, tools
 
@@ -269,7 +267,7 @@ def _evaluate_case(case: TrainingCase) -> tuple[bool, str, str]:
     return True, out[:120], ""
 
 
-def seed_compiled_everyday_brain(db: Optional[memory.MemoryDB] = None) -> dict[str, int]:
+def seed_compiled_everyday_brain(db: memory.MemoryDB | None = None) -> dict[str, int]:
     """Persists real training into ALL 3 SQLite stores: Quiet Brain, Knowledge Graph & Everyday Skills."""
     mdb = db or memory.get_db()
     hmem = mdb.get_hybrid_memory()
@@ -313,9 +311,9 @@ def seed_compiled_everyday_brain(db: Optional[memory.MemoryDB] = None) -> dict[s
 
 def run_multi_agent_training(
     *,
-    db: Optional[memory.MemoryDB] = None,
+    db: memory.MemoryDB | None = None,
     save_report: bool = True,
-    report_path: Optional[Path] = None,
+    report_path: Path | None = None,
 ) -> dict[str, Any]:
     """Runs all 6 Specialist Teacher Agents + Critic Coach and persists training into memory.db."""
     t0 = time.monotonic()
@@ -381,7 +379,7 @@ def format_training_report(report: dict[str, Any]) -> str:
     if report.get("failures"):
         lines.append("\n  Critic Coach — Failures to Patch:")
         for f in report["failures"][:10]:
-            lines.append(f"    ❌ [{f['agent']}] \"{f['prompt']}\" -> {f['reason']} ({f['actual']})")
+            lines.append(f'    ❌ [{f['agent']}] "{f['prompt']}" -> {f['reason']} ({f['actual']})')
     else:
         lines.append("\n  🏆 All 6 Everyday Agents verified at 100% readiness!")
         lines.append("  💡 Inspect saved training anytime with: /skills · /kg · /facts")
@@ -405,7 +403,7 @@ def upgrade_local_brain(model_tag: str = UPGRADE_BRAIN_MODEL, *, dry_run: bool =
     return f"🧠 Local brain upgraded to '{model_tag}'! {msg}"
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Celina 6-Agent Everyday Trainer & Brain Upgrader")
     parser.add_argument("--upgrade-brain", action="store_true", help=f"Pull & activate {UPGRADE_BRAIN_MODEL} in Ollama")
     parser.add_argument("--enable-local-mcp", action="store_true", help="Enable installed zero-login local MCP servers (swadb-memory, playwright, git, sqlite, time)")

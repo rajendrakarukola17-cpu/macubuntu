@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Linear Connector (Update 23)
+"""Celina AI (Celly) - Linear Connector (Update 23)
 
 Adapted from MausBot concepts (Apache-2.0, github.com/milind-soni/OpenMausBot)
 to Python. Connects to Linear via its GraphQL API using a user-provided API key.
@@ -16,16 +15,16 @@ Hard refusals:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from celina_pkg import config
 from celina_pkg.approval import RiskLevel
+
 from .base import (
+    ActionResult,
     BaseConnector,
+    ConnectorAction,
     ConnectorConfig,
     ConnectorStatus,
-    ConnectorAction,
-    ActionResult,
 )
 
 LINEAR_GRAPHQL_URL = "https://api.linear.app/graphql"
@@ -221,8 +220,7 @@ LINEAR_ACTIONS: dict[str, ConnectorAction] = {
 
 
 class LinearConnector(BaseConnector):
-    """
-    Linear connector — GraphQL API client with Allow/Deny gate.
+    """Linear connector — GraphQL API client with Allow/Deny gate.
 
     Credentials: Linear API key stored locally at
     ~/.celina/storage/connectors/linear.json (mode 0600).
@@ -242,7 +240,7 @@ class LinearConnector(BaseConnector):
             read_only_actions=LINEAR_READ_ONLY_ACTIONS,
         )
         super().__init__(cfg, approval_cb)
-        self._api_key: Optional[str] = None
+        self._api_key: str | None = None
 
     # ------------------------------------------------------------------
     # Credential management
@@ -312,35 +310,34 @@ class LinearConnector(BaseConnector):
             try:
                 if action_name == "list_issues":
                     return self._list_issues(params)
-                elif action_name == "get_issue":
+                if action_name == "get_issue":
                     return self._get_issue(params)
-                elif action_name == "create_issue":
+                if action_name == "create_issue":
                     return self._create_issue(params)
-                elif action_name == "update_issue":
+                if action_name == "update_issue":
                     return self._update_issue(params)
-                elif action_name == "delete_issue":
+                if action_name == "delete_issue":
                     return self._delete_issue(params)
-                elif action_name == "list_projects":
+                if action_name == "list_projects":
                     return self._list_projects(params)
-                elif action_name == "get_project":
+                if action_name == "get_project":
                     return self._get_project(params)
-                elif action_name == "list_teams":
+                if action_name == "list_teams":
                     return self._list_teams(params)
-                elif action_name == "get_team":
+                if action_name == "get_team":
                     return self._get_team(params)
-                elif action_name == "list_users":
+                if action_name == "list_users":
                     return self._list_users(params)
-                elif action_name == "get_user":
+                if action_name == "get_user":
                     return self._get_user(params)
-                elif action_name == "list_cycles":
+                if action_name == "list_cycles":
                     return self._list_cycles(params)
-                else:
-                    return ActionResult(
-                        success=False,
-                        error=f"Action not implemented: {action_name}",
-                        action=action_name,
-                        connector=self.name,
-                    )
+                return ActionResult(
+                    success=False,
+                    error=f"Action not implemented: {action_name}",
+                    action=action_name,
+                    connector=self.name,
+                )
             except Exception as exc:
                 return ActionResult(
                     success=False,
@@ -354,7 +351,7 @@ class LinearConnector(BaseConnector):
     # ------------------------------------------------------------------
     # GraphQL helpers
     # ------------------------------------------------------------------
-    def _graphql(self, query: str, variables: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _graphql(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         """Send a GraphQL request to Linear. Returns parsed JSON or raises."""
         headers = {
             "Authorization": f"Bearer {self._api_key}",
@@ -378,34 +375,35 @@ class LinearConnector(BaseConnector):
     # Action implementations
     # ------------------------------------------------------------------
     def _list_issues(self, params: dict[str, Any]) -> ActionResult:
-        team_key = params.get("team_key", "")
-        query_filter = []
-        if team_key:
-            query_filter.append('team: {key: "' + team_key + '"}')
+        variables: dict[str, Any] = {"first": min(int(params.get("limit", 50)), 250)}
+        filter_parts: list[str] = []
+        if params.get("team_key"):
+            variables["teamKey"] = params["team_key"]
+            filter_parts.append("team: {key: {eq: $teamKey}}")
         if params.get("query"):
-            query_filter.append('title_contains: "' + params["query"] + '"')
+            variables["titleQuery"] = params["query"]
+            filter_parts.append("title: {contains: $titleQuery}")
         if params.get("state_name"):
-            query_filter.append('state: {name: "' + params["state_name"] + '"}')
-
-        filter_str = " AND ".join(query_filter) if query_filter else ""
-        limit = min(int(params.get("limit", 50)), 250)
+            variables["stateName"] = params["state_name"]
+            filter_parts.append("state: {name: {eq: $stateName}}")
+        filter_str = ", ".join(filter_parts) if filter_parts else ""
 
         gql = (
-            "{"
-            "issues(filter: {" + filter_str + "}, first: " + str(limit) + ") {"
-            "nodes {"
-            "id identifier title description priority createdAt updatedAt"
-            "state { id name color }"
-            "assignee { id name email }"
-            "team { id key name }"
-            "url"
-            "}"
-            "}"
-            "}"
+            "query listIssues($teamKey: String, $titleQuery: String, $stateName: String, $first: Int!) {\n"
+            "issues(filter: {" + filter_str + "}, first: $first) {\n"
+            "nodes {\n"
+            "id identifier title description priority createdAt updatedAt\n"
+            "state { id name color }\n"
+            "assignee { id name email }\n"
+            "team { id key name }\n"
+            "url\n"
+            "}\n"
+            "}\n"
+            "}\n"
         )
 
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables or None)
             issues = data.get("issues", {}).get("nodes", [])
             return ActionResult(
                 success=True,
@@ -420,41 +418,22 @@ class LinearConnector(BaseConnector):
                 action="list_issues",
                 connector=self.name,
             )
-
     def _get_issue(self, params: dict[str, Any]) -> ActionResult:
         issue_id = params["id"]
-        # Try by identifier first, then by UUID
-        gql = f"""
-        {{
-            issue(id: "{issue_id}") {{
-                id
-                identifier
-                title
-                description
-                priority
-                createdAt
-                updatedAt
-                state {{
-                    id
-                    name
-                    color
-                }}
-                assignee {{
-                    id
-                    name
-                    email
-                }}
-                team {{
-                    id
-                    key
-                    name
-                }}
-                url
-            }}
-        }}
-        """
+        variables = {"issueId": issue_id}
+        gql = (
+            "query getIssue($issueId: String!) {\n"
+            "issue(id: $issueId) {\n"
+            "id identifier title description priority createdAt updatedAt\n"
+            "state { id name color }\n"
+            "assignee { id name email }\n"
+            "team { id key name }\n"
+            "url\n"
+            "}\n"
+            "}\n"
+        )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables)
             issue = data.get("issue")
             if issue is None:
                 return ActionResult(
@@ -476,9 +455,7 @@ class LinearConnector(BaseConnector):
                 action="get_issue",
                 connector=self.name,
             )
-
     def _create_issue(self, params: dict[str, Any]) -> ActionResult:
-        # First resolve team_key to team_id
         team_key = params["team_key"]
         team_id = self._resolve_team_id(team_key)
         if not team_id:
@@ -489,40 +466,39 @@ class LinearConnector(BaseConnector):
                 connector=self.name,
             )
 
-        # Build mutation
-        fields = []
-        fields.append(f"teamId: \"{team_id}\"")
-        fields.append(f"title: \"{self._graphql_escape(params['title'])}\"")
+        variables: dict[str, Any] = {
+            "teamId": team_id,
+            "title": params["title"],
+        }
         if params.get("description"):
-            fields.append(f"description: \"{self._graphql_escape(params['description'])}\"")
+            variables["description"] = params["description"]
         if params.get("priority") is not None:
-            fields.append(f"priority: {int(params['priority'])}")
+            variables["priority"] = int(params["priority"])
         if params.get("assignee_id"):
-            fields.append(f"assigneeId: \"{params['assignee_id']}\"")
+            variables["assigneeId"] = params["assignee_id"]
         if params.get("state_id"):
-            fields.append(f"stateId: \"{params['state_id']}\"")
+            variables["stateId"] = params["state_id"]
         if params.get("project_id"):
-            fields.append(f"projectId: \"{params['project_id']}\"")
+            variables["projectId"] = params["project_id"]
         if params.get("cycle_id"):
-            fields.append(f"cycleId: \"{params['cycle_id']}\"")
+            variables["cycleId"] = params["cycle_id"]
         if params.get("due_date"):
-            fields.append(f"dueDate: \"{params['due_date']}\"")
+            variables["dueDate"] = params["due_date"]
         if params.get("label_ids"):
-            label_ids_str = ", ".join(f"\"{lid}\"" for lid in params["label_ids"])
-            fields.append(f"labelIds: [{label_ids_str}]")
+            variables["labelIds"] = params["label_ids"]
 
-        field_str = ", ".join(fields)
         gql = (
-            "mutation {"
-            "issueCreate(input: {" + field_str + "}) {"
-            "issue {"
-            "id identifier title url"
-            "}"
-            "}"
-            "}"
+            "mutation createIssue($teamId: ID!, $title: String!, $description: String, $priority: Int, "
+            "$assigneeId: ID, $stateId: ID, $projectId: ID, $cycleId: ID, $dueDate: String, $labelIds: [ID!]) {\n"
+            "issueCreate(input: {teamId: $teamId, title: $title, description: $description, priority: $priority, "
+            "assigneeId: $assigneeId, stateId: $stateId, projectId: $projectId, cycleId: $cycleId, "
+            "dueDate: $dueDate, labelIds: $labelIds}) {\n"
+            "issue { id identifier title url }\n"
+            "}\n"
+            "}\n"
         )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables)
             issue = data.get("issueCreate", {}).get("issue", {})
             return ActionResult(
                 success=True,
@@ -537,33 +513,39 @@ class LinearConnector(BaseConnector):
                 action="create_issue",
                 connector=self.name,
             )
-
     def _update_issue(self, params: dict[str, Any]) -> ActionResult:
         issue_id = params["id"]
-        fields = []
+        variables: dict[str, Any] = {"id": issue_id}
+        set_parts: list[str] = []
         if params.get("title"):
-            fields.append(f"title: \"{self._graphql_escape(params['title'])}\"")
+            variables["title"] = params["title"]
+            set_parts.append("title: $title")
         if params.get("description") is not None:
-            fields.append(f"description: \"{self._graphql_escape(params['description'])}\"")
+            variables["description"] = params["description"]
+            set_parts.append("description: $description")
         if params.get("priority") is not None:
-            fields.append(f"priority: {int(params['priority'])}")
+            variables["priority"] = int(params["priority"])
+            set_parts.append("priority: $priority")
         if params.get("assignee_id"):
-            fields.append(f"assigneeId: \"{params['assignee_id']}\"")
+            variables["assigneeId"] = params["assignee_id"]
+            set_parts.append("assigneeId: $assigneeId")
         if params.get("state_id"):
-            fields.append(f"stateId: \"{params['state_id']}\"")
+            variables["stateId"] = params["state_id"]
+            set_parts.append("stateId: $stateId")
         if params.get("project_id"):
-            fields.append(f"projectId: \"{params['project_id']}\"")
+            variables["projectId"] = params["project_id"]
+            set_parts.append("projectId: $projectId")
         if params.get("cycle_id"):
-            fields.append(f"cycleId: \"{params['cycle_id']}\"")
+            variables["cycleId"] = params["cycle_id"]
+            set_parts.append("cycleId: $cycleId")
         if params.get("due_date") is not None:
-            fields.append(f"dueDate: \"{params['due_date']}\"")
-
-        # Handle label changes incrementally
+            variables["dueDate"] = params["due_date"]
+            set_parts.append("dueDate: $dueDate")
         if params.get("added_label_ids"):
-            label_ids_str = ", ".join(f"\"{lid}\"" for lid in params["added_label_ids"])
-            fields.append(f"labelIds: [{label_ids_str}]")
+            variables["addedLabelIds"] = params["added_label_ids"]
+            set_parts.append("addedLabelIds: $addedLabelIds")
 
-        if not fields:
+        if not set_parts:
             return ActionResult(
                 success=False,
                 error="No fields to update",
@@ -571,18 +553,17 @@ class LinearConnector(BaseConnector):
                 connector=self.name,
             )
 
-        field_str = ", ".join(fields)
         gql = (
-            "mutation {"
-            'issueUpdate(id: "' + issue_id + '", input: {' + field_str + '}) {'
-            "issue {"
-            "id identifier title url"
-            "}"
-            "}"
-            "}"
+            "mutation updateIssue($id: ID!, $title: String, $description: String, $priority: Int, "
+            "$assigneeId: ID, $stateId: ID, $projectId: ID, $cycleId: ID, $dueDate: String, "
+            "$addedLabelIds: [ID!]) {\n"
+            "issueUpdate(id: $id, input: {" + ", ".join(set_parts) + "}) {\n"
+            "issue { id identifier title url }\n"
+            "}\n"
+            "}\n"
         )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables)
             issue = data.get("issueUpdate", {}).get("issue", {})
             return ActionResult(
                 success=True,
@@ -597,25 +578,22 @@ class LinearConnector(BaseConnector):
                 action="update_issue",
                 connector=self.name,
             )
-
     def _delete_issue(self, params: dict[str, Any]) -> ActionResult:
         issue_id = params["id"]
-        permanent = bool(params.get("permanently_delete", False))
-
-        permanent_part = 'permanentlyDelete: true' if permanent else ''
+        variables = {"issueId": issue_id, "permanentDelete": bool(params.get("permanently_delete", False))}
         gql = (
-            "mutation {"
-            'issueDelete(id: "' + issue_id + '", ' + permanent_part + ') {'
-            "success deletedIssueId"
-            "}"
-            "}"
+            "mutation deleteIssue($issueId: ID!, $permanentDelete: Boolean!) {\n"
+            "issueDelete(id: $issueId, permanentlyDelete: $permanentDelete) {\n"
+            "success deletedIssueId\n"
+            "}\n"
+            "}\n"
         )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables)
             result = data.get("issueDelete", {})
             return ActionResult(
                 success=bool(result.get("success")),
-                data={"deleted_issue_id": result.get("deletedIssueId"), "permanent": permanent},
+                data={"deleted_issue_id": result.get("deletedIssueId"), "permanent": variables["permanentDelete"]},
                 action="delete_issue",
                 connector=self.name,
             )
@@ -626,29 +604,30 @@ class LinearConnector(BaseConnector):
                 action="delete_issue",
                 connector=self.name,
             )
-
     def _list_projects(self, params: dict[str, Any]) -> ActionResult:
-        filter_parts = []
+        variables: dict[str, Any] = {"first": min(int(params.get("limit", 50)), 250)}
+        filter_parts: list[str] = []
         if params.get("name"):
-            filter_parts.append(f'name_contains: "{params["name"]}"')
+            variables["projectName"] = params["name"]
+            filter_parts.append("name: {contains: $projectName}")
         if params.get("state"):
-            filter_parts.append(f'state: "{params["state"]}"')
+            variables["projectState"] = params["state"]
+            filter_parts.append("state: {eq: $projectState}")
         filter_str = ", ".join(filter_parts) if filter_parts else ""
-        limit = min(int(params.get("limit", 50)), 250)
 
         gql = (
-            "{"
-            "projects(filter: {" + filter_str + "}, first: " + str(limit) + ") {"
-            "nodes {"
-            "id name description priority createdAt updatedAt"
-            "state { id name }"
-            "url"
-            "}"
-            "}"
-            "}"
+            "query listProjects($projectName: String, $projectState: String, $first: Int!) {\n"
+            "projects(filter: {" + filter_str + "}, first: $first) {\n"
+            "nodes {\n"
+            "id name description priority createdAt updatedAt\n"
+            "state { id name }\n"
+            "url\n"
+            "}\n"
+            "}\n"
+            "}\n"
         )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables or None)
             projects = data.get("projects", {}).get("nodes", [])
             return ActionResult(
                 success=True,
@@ -663,28 +642,20 @@ class LinearConnector(BaseConnector):
                 action="list_projects",
                 connector=self.name,
             )
-
     def _get_project(self, params: dict[str, Any]) -> ActionResult:
         project_id = params["id"]
-        gql = f"""
-        {{
-            project(id: "{project_id}") {{
-                id
-                name
-                description
-                priority
-                createdAt
-                updatedAt
-                state {{
-                    id
-                    name
-                }}
-                url
-            }}
-        }}
-        """
+        variables = {"projectId": project_id}
+        gql = (
+            "query getProject($projectId: String!) {\n"
+            "project(id: $projectId) {\n"
+            "id name description priority createdAt updatedAt\n"
+            "state { id name }\n"
+            "url\n"
+            "}\n"
+            "}\n"
+        )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables)
             project = data.get("project")
             if project is None:
                 return ActionResult(
@@ -706,27 +677,28 @@ class LinearConnector(BaseConnector):
                 action="get_project",
                 connector=self.name,
             )
-
     def _list_teams(self, params: dict[str, Any]) -> ActionResult:
-        filter_parts = []
+        variables: dict[str, Any] = {"first": min(int(params.get("limit", 50)), 250)}
+        filter_parts: list[str] = []
         if params.get("name"):
-            filter_parts.append(f'name_contains: "{params["name"]}"')
+            variables["teamName"] = params["name"]
+            filter_parts.append("name: {contains: $teamName}")
         if params.get("key"):
-            filter_parts.append(f'key: "{params["key"]}"')
+            variables["teamKey"] = params["key"]
+            filter_parts.append("key: {eq: $teamKey}")
         filter_str = ", ".join(filter_parts) if filter_parts else ""
-        limit = min(int(params.get("limit", 50)), 250)
 
         gql = (
-            "{"
-            "teams(filter: {" + filter_str + "}, first: " + str(limit) + ") {"
-            "nodes {"
-            "id key name description"
-            "}"
-            "}"
-            "}"
+            "query listTeams($teamName: String, $teamKey: String, $first: Int!) {\n"
+            "teams(filter: {" + filter_str + "}, first: $first) {\n"
+            "nodes {\n"
+            "id key name description\n"
+            "}\n"
+            "}\n"
+            "}\n"
         )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables or None)
             teams = data.get("teams", {}).get("nodes", [])
             return ActionResult(
                 success=True,
@@ -741,23 +713,18 @@ class LinearConnector(BaseConnector):
                 action="list_teams",
                 connector=self.name,
             )
-
     def _get_team(self, params: dict[str, Any]) -> ActionResult:
         team_id = params["id"]
-        gql = f"""
-        {{
-            team(id: "{team_id}") {{
-                id
-                key
-                name
-                description
-                createdAt
-                updatedAt
-            }}
-        }}
-        """
+        variables = {"teamId": team_id}
+        gql = (
+            "query getTeam($teamId: String!) {\n"
+            "team(id: $teamId) {\n"
+            "id key name description createdAt updatedAt\n"
+            "}\n"
+            "}\n"
+        )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables)
             team = data.get("team")
             if team is None:
                 return ActionResult(
@@ -779,29 +746,31 @@ class LinearConnector(BaseConnector):
                 action="get_team",
                 connector=self.name,
             )
-
     def _list_users(self, params: dict[str, Any]) -> ActionResult:
-        filter_parts = []
+        variables: dict[str, Any] = {"first": min(int(params.get("limit", 50)), 250)}
+        filter_parts: list[str] = []
         if params.get("name"):
-            filter_parts.append(f'name_contains: "{params["name"]}"')
+            variables["userName"] = params["name"]
+            filter_parts.append("name: {contains: $userName}")
         if params.get("email"):
-            filter_parts.append(f'email: "{params["email"]}"')
+            variables["userEmail"] = params["email"]
+            filter_parts.append("email: {eq: $userEmail}")
         if params.get("active") is not None:
-            filter_parts.append(f"active: {str(params['active']).lower()}")
+            variables["userActive"] = params["active"]
+            filter_parts.append("active: {eq: $userActive}")
         filter_str = ", ".join(filter_parts) if filter_parts else ""
-        limit = min(int(params.get("limit", 50)), 250)
 
         gql = (
-            "{"
-            "users(filter: {" + filter_str + "}, first: " + str(limit) + ") {"
-            "nodes {"
-            "id name email active createdAt updatedAt"
-            "}"
-            "}"
-            "}"
+            "query listUsers($userName: String, $userEmail: String, $userActive: Boolean, $first: Int!) {\n"
+            "users(filter: {" + filter_str + "}, first: $first) {\n"
+            "nodes {\n"
+            "id name email active createdAt updatedAt\n"
+            "}\n"
+            "}\n"
+            "}\n"
         )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables or None)
             users = data.get("users", {}).get("nodes", [])
             return ActionResult(
                 success=True,
@@ -816,23 +785,18 @@ class LinearConnector(BaseConnector):
                 action="list_users",
                 connector=self.name,
             )
-
     def _get_user(self, params: dict[str, Any]) -> ActionResult:
         user_id = params["id"]
-        gql = f"""
-        {{
-            user(id: "{user_id}") {{
-                id
-                name
-                email
-                active
-                createdAt
-                updatedAt
-            }}
-        }}
-        """
+        variables = {"userId": user_id}
+        gql = (
+            "query getUser($userId: String!) {\n"
+            "user(id: $userId) {\n"
+            "id name email active createdAt updatedAt\n"
+            "}\n"
+            "}\n"
+        )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables)
             user = data.get("user")
             if user is None:
                 return ActionResult(
@@ -854,27 +818,28 @@ class LinearConnector(BaseConnector):
                 action="get_user",
                 connector=self.name,
             )
-
     def _list_cycles(self, params: dict[str, Any]) -> ActionResult:
-        filter_parts = []
+        variables: dict[str, Any] = {"first": min(int(params.get("limit", 50)), 250)}
+        filter_parts: list[str] = []
         if params.get("team_id"):
-            filter_parts.append('team: {id: "' + params["team_id"] + '"}')
+            variables["cycleTeamId"] = params["team_id"]
+            filter_parts.append("team: {id: {eq: $cycleTeamId}}")
         if params.get("is_active") is not None:
-            filter_parts.append(f"active: {str(params['is_active']).lower()}")
+            variables["cycleActive"] = params["is_active"]
+            filter_parts.append("active: {eq: $cycleActive}")
         filter_str = ", ".join(filter_parts) if filter_parts else ""
-        limit = min(int(params.get("limit", 50)), 250)
 
         gql = (
-            "{"
-            "cycles(filter: {" + filter_str + "}, first: " + str(limit) + ") {"
-            "nodes {"
-            "id name description startsAt endsAt completedAt active"
-            "}"
-            "}"
-            "}"
+            "query listCycles($cycleTeamId: String, $cycleActive: Boolean, $first: Int!) {\n"
+            "cycles(filter: {" + filter_str + "}, first: $first) {\n"
+            "nodes {\n"
+            "id name description startsAt endsAt completedAt active\n"
+            "}\n"
+            "}\n"
+            "}\n"
         )
         try:
-            data = self._graphql(gql)
+            data = self._graphql(gql, variables or None)
             cycles = data.get("cycles", {}).get("nodes", [])
             return ActionResult(
                 success=True,
@@ -889,11 +854,7 @@ class LinearConnector(BaseConnector):
                 action="list_cycles",
                 connector=self.name,
             )
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    def _resolve_team_id(self, team_key: str) -> Optional[str]:
+    def _resolve_team_id(self, team_key: str) -> str | None:
         """Resolve a team key (e.g. 'ENG') to a team UUID."""
         result = self._list_teams({"key": team_key, "limit": 1})
         if result.success and result.data.get("teams"):

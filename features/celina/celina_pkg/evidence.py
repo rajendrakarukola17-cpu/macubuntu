@@ -29,10 +29,135 @@ GENESIS_HASH = "0" * 64
 _UNDO_ID_RE = re.compile(r"\[undo:\s*(act_[0-9_a-f]+)\]")
 
 _PROMPT_INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("ignore_instructions", re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior)\s+instructions\b", re.I)),
-    ("system_override", re.compile(r"\b(?:disregard|override)\s+(?:system\s+prompt|security\s+policy|tier-?2|approval)\b", re.I)),
-    ("secret_exfil", re.compile(r"\b(?:exfiltrate|steal|dump|upload)\s+(?:~?/?\.ssh|credentials|api[_\s]?keys?|\.gnupg|\.aws)\b", re.I)),
-    ("hidden_directive", re.compile(r"<\s*/?(?:system|tool_override|admin_override)\s*>", re.I)),
+    # ignore/disregard/forget/override instructions (incl. 4-word variant)
+    (
+        "ignore_instructions",
+        re.compile(
+            r"\b(ignore|disregard|forget|override|bypass|cancel|stop)\s+(all\s+)?(?:the\s+)?(?:previous|prior)?\s*(instructions|rules|guidelines|system|prompt|safety)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "ignore_your_training",
+        re.compile(r"\bignore\s+your\s+(safety|training|guidelines)\b", re.IGNORECASE),
+    ),
+    (
+        "forget_safety",
+        re.compile(r"\bforget\s+(all\s+)?(safety|training)\b", re.IGNORECASE),
+    ),
+    # Persona / role change
+    (
+        "persona_change",
+        re.compile(
+            r"\b(you\s+are\s+now|you\s+must|from\s+now\s+on|act\s+as"
+            r"|pretend\s+to\s+be|roleplay\s+as)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "unrestricted_mode",
+        re.compile(r"\b(unrestricted|root|developer)\s+mode\b", re.IGNORECASE),
+    ),
+    (
+        "dan_jailbreak",
+        re.compile(r"\bDAN\b|\bdo\s+anything\s+now\b", re.IGNORECASE),
+    ),
+    # Role prefix / system label
+    (
+        "role_prefix",
+        re.compile(r"\b(system|developer|assistant|user)\s*:\s*", re.IGNORECASE),
+    ),
+    (
+        "bracket_system",
+        re.compile(r"\[(SYSTEM|system|CELINA|celina)\s*\]", re.IGNORECASE),
+    ),
+    # Jailbreak / safety override
+    (
+        "jailbreak_term",
+        re.compile(
+            r"\b(jailbreak|prompt\s+injection|override\s+safety|disable\s+safety|disable_?safety|disable_?approval)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "bypass_approval",
+        re.compile(
+            r"\b(override|bypass)\s+(all\s+)?"
+            r"(approval|safety|gate|guardrail|confirmation|required)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    # Exfiltration / repetition
+    (
+        "exfiltration",
+        re.compile(
+            r"\b(repeat\s+above|repeat\s+the\s+above|verbatim\s+above|print\s+above|print\s+your\s+system\s+prompt)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    # CELINA_ directives
+    (
+        "celina_directive",
+        re.compile(r"\bCELINA_[A-Z_]+\b", re.IGNORECASE),
+    ),
+    # Tool names in hostile context
+    (
+        "tool_call_in_text",
+        re.compile(
+            r"\b(write_file|edit_file|move_file|trash_file|run_shell_command|code_sandbox|run_python_sandbox)\s*\(",
+            re.IGNORECASE,
+        ),
+    ),
+    # HTML/XML comments with directives
+    (
+        "html_xml_directive",
+        re.compile(
+            r"<!--\s*(CELINA|system|tool_override|admin_override|celina_directive)|<\s*/?(celina_directive|system|tool_override|admin_override)\s*>",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "short_directive",
+        re.compile(r"\b(ignore_safety|disable_approval|approve_all|bypass_guard)\b", re.IGNORECASE),
+    ),
+    # NEW INSTRUCTION / prefix patterns
+    (
+        "new_instruction",
+        re.compile(r"\bnew\s+instruction\s*:?\s", re.IGNORECASE),
+    ),
+    (
+        "celina_override_dot",
+        re.compile(r"\b(window\.)?celina[Oo]verride\b", re.IGNORECASE),
+    ),
+    (
+        "xss_pattern",
+        re.compile(
+            r"\bdata:text/html\b|\bjavascript:\s*(void\s*\()?|meta\s+http-equiv\s*=",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "file_op_prefix",
+        re.compile(
+            r"\b(EDIT_FILE|RENAME_FILE|TRASH_FILE|RUN|CHMOD|CHOWN|OVERRIDE|NEW_INSTRUCTION|MODE|RESET)\s*:",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "json_action_field",
+        re.compile(
+            r'"action"\s*:\s*"(write_file|edit_file|move_file|trash_file|run_shell_command)"',
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "credential_exposure",
+        re.compile(r"\blogin\s*=\s*\w+\s+password\s*=", re.IGNORECASE),
+    ),
+    (
+        "celina_colon",
+        re.compile(r"\bCELINA:\s+", re.IGNORECASE),
+    ),
 )
 
 
@@ -106,7 +231,7 @@ class EvidenceLedger:
         if not self.anchor_path.is_file():
             return None
         try:
-            return json.loads(self.anchor_path.read_text(encoding="utf-8"))
+            return json.loads(self.anchor_path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]  # json.loads returns Any; anchor schema validated on read
         except (OSError, json.JSONDecodeError) as exc:
             raise EvidenceIntegrityError(f"EVIDENCE ANCHOR CORRUPT ({self.anchor_path}): {exc}") from exc
 
@@ -138,6 +263,16 @@ class EvidenceLedger:
     def _verify_anchor_on_open(self) -> None:
         anchor = self._read_anchor()
         if anchor is None:
+            if self.ledger_path.is_file():
+                try:
+                    with self.ledger_path.open("r", encoding="utf-8") as fh:
+                        has_records = any(line.strip() for line in fh)
+                except OSError as exc:
+                    message = f"EVIDENCE LEDGER UNREADABLE: {exc}"
+                    raise EvidenceIntegrityError(message) from exc
+                if has_records:
+                    message = "EVIDENCE ANCHOR MISSING for non-empty ledger"
+                    raise EvidenceIntegrityError(message)
             return
         expected_count = int(anchor.get("count") or 0)
         expected_tip = str(anchor.get("tip_hash") or GENESIS_HASH)
@@ -230,6 +365,7 @@ class EvidenceLedger:
         }
 
         with self._lock:
+            self._verify_anchor_on_open()
             config.ensure_private_dir(self.ledger_path.parent)
             prev_seq, prev_hash = self._read_last_link()
             body: dict[str, Any] = {
@@ -280,6 +416,139 @@ class EvidenceLedger:
                     pass
             return record
 
+    # ------------------------------------------------------------------
+    # Full observability lifecycle (P2 workstream):
+    # predict → approve → execute → verify → calibrate
+    # ------------------------------------------------------------------
+
+    def record_prediction(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        predicted_success: float,
+        root_goal_id: str = "",
+        task_id: str = "",
+        trace_id: str = "",
+        actor_identity: str = "",
+        sim_digest: str = "",
+    ) -> dict[str, Any]:
+        """Record a tool-outcome prediction at dispatch time (audit item 8).
+
+        The outcome is filled in later by :meth:`record_verification` using
+        independent read-after-write verification — never the tool's own
+        exit code.
+        """
+        return self.record_execution(
+            tool_name=tool_name,
+            arguments=arguments,
+            result_text=f"predicted_success={predicted_success}",
+            why_reasoning=f"sim_digest={sim_digest[:16]}..." if sim_digest else "",
+            tier="tier2",
+            root_goal_id=root_goal_id,
+            task_id=task_id,
+            trace_id=trace_id,
+            actor_identity=actor_identity or f"uid:{os.getuid()}",
+            policy_decision="predict",
+            event_type="prediction",
+        )
+
+    def record_approval(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        sim_digest: str,
+        decision: str = "allow",
+        root_goal_id: str = "",
+        task_id: str = "",
+        trace_id: str = "",
+        actor_identity: str = "",
+    ) -> dict[str, Any]:
+        """Record an approval decision bound to a sim digest (audit item 2)."""
+        return self.record_execution(
+            tool_name=tool_name,
+            arguments=arguments,
+            result_text=f"approval_decision={decision}",
+            why_reasoning=f"sim_digest={sim_digest[:16]}...",
+            tier="tier2",
+            root_goal_id=root_goal_id,
+            task_id=task_id,
+            trace_id=trace_id,
+            actor_identity=actor_identity or f"uid:{os.getuid()}",
+            policy_decision=decision,
+            event_type="approval",
+        )
+
+    def record_verification(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        verified_success: bool,
+        verification_method: str = "independent_read_after_write",
+        root_goal_id: str = "",
+        task_id: str = "",
+        trace_id: str = "",
+        actor_identity: str = "",
+    ) -> dict[str, Any]:
+        """Record a verified outcome from independent verification (audit item 8).
+
+        `verified_success` must come from independent read-after-write
+        verification (re-stat/hash, systemctl is-active), never from the
+        tool's own exit code.
+        """
+        return self.record_execution(
+            tool_name=tool_name,
+            arguments=arguments,
+            result_text=f"verified_success={verified_success} method={verification_method}",
+            why_reasoning="",
+            tier="tier2",
+            root_goal_id=root_goal_id,
+            task_id=task_id,
+            trace_id=trace_id,
+            actor_identity=actor_identity or f"uid:{os.getuid()}",
+            policy_decision="verified",
+            event_type="verification",
+        )
+
+    def record_calibration(
+        self,
+        *,
+        tool_name: str,
+        context_key: str,
+        signed_bias: float,
+        wilson_lower: float,
+        is_unproven: bool,
+        root_goal_id: str = "",
+        task_id: str = "",
+        trace_id: str = "",
+        actor_identity: str = "",
+    ) -> dict[str, Any]:
+        """Record a calibration observation (audit items 6, 7).
+
+        Captures signed bias, Wilson lower bound, and unproven status for
+        a tool in a given context (tool × online/offline × gear).
+        """
+        return self.record_execution(
+            tool_name=tool_name,
+            arguments={
+                "context_key": context_key,
+                "signed_bias": signed_bias,
+                "wilson_lower": wilson_lower,
+                "is_unproven": is_unproven,
+            },
+            result_text=f"calibration bias={signed_bias} wilson={wilson_lower}",
+            why_reasoning=f"unproven={is_unproven}",
+            tier="tier2",
+            root_goal_id=root_goal_id,
+            task_id=task_id,
+            trace_id=trace_id,
+            actor_identity=actor_identity or f"uid:{os.getuid()}",
+            policy_decision="calibrate",
+            event_type="calibration",
+        )
+
     def record_security_event(
         self,
         *,
@@ -327,7 +596,7 @@ class EvidenceLedger:
                         out.append(json.loads(s))
             return out[-max(1, int(limit)) :]
 
-    def verify_chain(self) -> tuple[bool, str, int]:
+    def verify_chain(self) -> tuple[bool, str, int]:  # noqa: PLR0912  # Check missing anchors without weakening chain validation.
         """Verifies sequence continuity, prev_hash linkage, entry_hash, and external fail-closed anchor."""
         with self._lock:
             anchor = None
@@ -367,6 +636,8 @@ class EvidenceLedger:
                     expected_prev = recalc
                     expected_seq += 1
                     count += 1
+            if anchor is None and count:
+                return False, "EVIDENCE ANCHOR MISSING for non-empty ledger", count
             if anchor is not None:
                 anc_cnt = int(anchor.get("count") or 0)
                 anc_tip = str(anchor.get("tip_hash") or GENESIS_HASH)
@@ -375,6 +646,13 @@ class EvidenceLedger:
                 if count == anc_cnt and anc_cnt > 0 and expected_prev != anc_tip:
                     return False, f"Evidence ledger tip mismatch against anchor (expected {anc_tip[:16]}..., got {expected_prev[:16]}...).", count
             return True, f"✅ Evidence chain verified ({count} tamper-evident records, tip={expected_prev[:16]}...).", count
+
+    def verify(self) -> tuple[bool, str, int]:
+        """Verify the chain and raise on any integrity or anchor failure."""
+        ok, message, count = self.verify_chain()
+        if not ok:
+            raise EvidenceIntegrityError(message)
+        return ok, message, count
 
     def export_evidence(self, output_path: Optional[Path | str] = None) -> dict[str, Any]:
         """Verifies chain integrity first, then exports a self-verifying .jsonl + .sha256 bundle."""

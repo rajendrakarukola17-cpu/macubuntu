@@ -3,37 +3,28 @@
   <schema id="org.gnome.shell.extensions.celina-island" path="/org/gnome/shell/extensions/celina-island/">
     <key name="panel-position" type="s">
       <default>'center'</default>
-      <summary>Panel slot for the Celina Dynamic Island indicator</summary>
-      <description>Placement inside the GNOME top bar: left, center, or right.</description>
+      <summary>Panel Slot</summary>
+      <description>Horizontal slot in the GNOME top panel: left, center, or right.</description>
     </key>
     <key name="pill-scale" type="d">
-      <range min="0.8" max="1.4"/>
       <default>1.0</default>
-      <summary>Dynamic Island pill visual scale factor</summary>
+      <summary>Pill Scale Factor</summary>
+      <description>Visual scale between 0.8x and 1.4x.</description>
     </key>
     <key name="show-privacy-dots" type="b">
       <default>true</default>
-      <summary>Show live microphone, camera, and screencast privacy dots</summary>
-    </key>
-    <key name="privacy-dot-mic-color" type="s">
-      <default>'#ff9f0a'</default>
-      <summary>Hex color for the active microphone indicator dot</summary>
-    </key>
-    <key name="privacy-dot-cam-color" type="s">
-      <default>'#30d158'</default>
-      <summary>Hex color for the active camera indicator dot</summary>
-    </key>
-    <key name="privacy-dot-screen-color" type="s">
-      <default>'#bf5af2'</default>
-      <summary>Hex color for the active screencast indicator dot</summary>
+      <summary>Show Privacy Dots</summary>
+      <description>Display live microphone, camera, and screencast indicator dots.</description>
     </key>
     <key name="show-focus-badge" type="b">
       <default>true</default>
-      <summary>Show active Focus Mode badge inside the island pill</summary>
+      <summary>Show Focus Mode Badge</summary>
+      <description>Display active Focus Mode badge inside the island pill.</description>
     </key>
     <key name="focus-badge-position" type="s">
       <default>'right'</default>
-      <summary>Position of the Focus Mode badge inside the pill (left or right)</summary>
+      <summary>Focus Badge Side</summary>
+      <description>Alignment of the Focus badge relative to the island label.</description>
     </key>
   </schema>
 </schemalist>

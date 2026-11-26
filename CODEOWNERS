@@ -1,0 +1,51 @@
+# CODEOWNERS — Celina Protected Core (Phase 9 B2)
+#
+# Files listed here require explicit review from the designated owner
+# before any change can be merged. This protects the security-critical
+# core from silent weakening.
+#
+# Pattern syntax matches GitHub CODEOWNERS: https://docs.github.com/en/repositories/managing-your-repository/about-code-owners
+
+# ======================================================================
+# Protected core security modules — require security team review
+# ======================================================================
+/features/celina/celina_pkg/approval.py        @security-core
+/features/celina/celina_pkg/evidence.py        @security-core
+/features/celina/celina_pkg/config.py          @security-core
+/features/celina/celina_pkg/connectors/base.py @security-core
+/features/celina/celina_pkg/net_policy.py      @security-core
+/features/celina/celina_pkg/tools.py           @security-core
+/features/celina/celina_pkg/cli_bridge.py      @security-core
+
+# ======================================================================
+# Protected core manifest — 106-tool capability manifest (B1)
+# ======================================================================
+/system/capabilities/celina-capabilities.json   @security-core @audit
+/features/celina/config/celina-capabilities.json @security-core @audit
+
+# ======================================================================
+# Verification gate and integrity tooling — changes require review
+# ======================================================================
+/scripts/verify_all.sh                          @security-core
+/tools/manifest_integrity.py                    @security-core
+/tools/validate_configs.py                      @security-core
+
+# ======================================================================
+# Security tooling configuration
+# ======================================================================
+/pyproject.toml                                 @security-core
+/.secrets.baseline                              @security-core
+/.pre-commit-config.yaml                        @security-core
+
+# ======================================================================
+# CI workflows — changes require review
+# ======================================================================
+/.github/workflows/                             @security-core
+/.github/dependabot.yml                         @security-core
+
+# Pre-self-improvement freeze: protected baseline and guardrails
+/features/celina/celina_pkg/landlock_policy.py  @security-core
+/selfimprove/protected_hashes.json               @security-core
+/tests/selfimprove/test_protected_core.py        @security-core
+/tests/selfimprove/test_layering.py              @security-core
+/CODEOWNERS                                     @security-core

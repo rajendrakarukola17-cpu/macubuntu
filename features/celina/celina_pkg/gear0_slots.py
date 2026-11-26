@@ -1,17 +1,18 @@
-"""
-Celina AI (Celly) - Gear 0 Slots / Deterministic Slot Filling (Update 19)
+"""Celina AI (Celly) - Gear 0 Slots / Deterministic Slot Filling (Update 19)
 
 Siri-style deterministic slot filling — extracts structured parameters from
 natural language using regex patterns. Zero LLM, zero AI RAM, sub-1ms.
+
 Examples:
   - "Set a timer for 10 minutes" → {timer: 10, unit: minutes}
   - "Remind me to call mom at 5pm" → {task: call mom, time: 5pm}
+
 """
 
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Pattern
+from typing import Any
 
 
 class Slot:
@@ -34,16 +35,16 @@ class Slot:
 class SlotFiller:
     """Compiles a slot-filling schema and fills slots from user input."""
 
-    def __init__(self, slots: List[Slot], overall_pattern: Optional[str] = None):
+    def __init__(self, slots: list[Slot], overall_pattern: str | None = None):
         self.slots = slots
         self.overall_pattern = re.compile(overall_pattern, re.IGNORECASE) if overall_pattern else None
 
-    def fill(self, query: str) -> Optional[Dict[str, Any]]:
+    def fill(self, query: str) -> dict[str, Any] | None:
         """Extract slots from query. Returns dict of slot_name → value, or None if required slots missing."""
         if self.overall_pattern and not self.overall_pattern.search(query):
             return None
 
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
         for slot in self.slots:
             m = slot.pattern.search(query)
             if m:
@@ -78,17 +79,17 @@ _ALARM_SLOTS = [
 _ALARM_OVERALL = r"(?:set\s+an\s+alarm|alarm)"
 
 
-def fill_timer(query: str) -> Optional[Dict[str, Any]]:
+def fill_timer(query: str) -> dict[str, Any] | None:
     """Extract timer slots: 'set a timer for 10 minutes' → {minutes: 10}."""
     return SlotFiller(_TIMER_SLOTS, _TIMER_OVERALL).fill(query)
 
 
-def fill_reminder(query: str) -> Optional[Dict[str, Any]]:
+def fill_reminder(query: str) -> dict[str, Any] | None:
     """Extract reminder slots: 'remind me to call mom at 5pm' → {task: 'call mom', time: '5pm'}."""
     return SlotFiller(_REMINDER_SLOTS, _REMINDER_OVERALL).fill(query)
 
 
-def fill_alarm(query: str) -> Optional[Dict[str, Any]]:
+def fill_alarm(query: str) -> dict[str, Any] | None:
     """Extract alarm slots: 'set an alarm for 7am' → {time: '7am'}."""
     return SlotFiller(_ALARM_SLOTS, _ALARM_OVERALL).fill(query)
 
@@ -96,7 +97,7 @@ def fill_alarm(query: str) -> Optional[Dict[str, Any]]:
 __all__ = [
     "Slot",
     "SlotFiller",
-    "fill_timer",
-    "fill_reminder",
     "fill_alarm",
+    "fill_reminder",
+    "fill_timer",
 ]

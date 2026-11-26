@@ -1,24 +1,21 @@
-"""
-Celina AI (Celly) - Gear 0 Clipboard History (Update 19)
+"""Celina AI (Celly) - Gear 0 Clipboard History (Update 19)
 
 Local clipboard history — stores copied text locally, zero cloud.
+
 Examples:
   - "Show clipboard history"
   - "Paste last item"
+
 """
 
 from __future__ import annotations
 
-import mimetypes
-import shutil
-import subprocess
 from collections import deque
 from pathlib import Path
-from typing import Deque, Optional
 
 _HISTORY_PATH = Path.home() / ".local" / "share" / "celina" / "gear0_clipboard_history.txt"
 _MAX_HISTORY = 50
-_CLIPBOARD: Deque[str] = deque(maxlen=_MAX_HISTORY)
+_CLIPBOARD: deque[str] = deque(maxlen=_MAX_HISTORY)
 
 # Password-manager app names — clipboard content from these should not be stored
 PASSWORD_MANAGER_APPS = frozenset({
@@ -81,7 +78,7 @@ def clipboard_history() -> str:
     return "\n".join(lines)
 
 
-def clipboard_paste_last() -> Optional[str]:
+def clipboard_paste_last() -> str | None:
     """Get the most recent clipboard item."""
     if _CLIPBOARD:
         return _CLIPBOARD[0]
@@ -98,7 +95,7 @@ _SHOW_CLIPBOARD_RE = __import__("re").compile(
 )
 
 
-def gear0_clipboard_classify(query: str) -> Optional[str]:
+def gear0_clipboard_classify(query: str) -> str | None:
     """Classify query into a clipboard handler name, or None."""
     low = query.strip().lower()
     if _SHOW_CLIPBOARD_RE.match(low):
@@ -106,7 +103,7 @@ def gear0_clipboard_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_clipboard_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_clipboard_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Clipboard handler."""
     try:
         if handler == "history":

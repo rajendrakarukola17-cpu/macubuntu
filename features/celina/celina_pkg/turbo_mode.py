@@ -1,5 +1,4 @@
-"""
-Celina Turbo / Zero-Lag 8 GB Performance Mode (`turbo_mode.py` + `celina-turbo` CLI)
+"""Celina Turbo / Zero-Lag 8 GB Performance Mode (`turbo_mode.py` + `celina-turbo` CLI)
 
 Eliminates desktop lag on 8 GB Ubuntu 26.04 laptops running macOS-style GNOME effects
 alongside local AI by tackling all three real bottlenecks at once:
@@ -29,11 +28,11 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
 import requests
 
 from . import command_runner, config
+from .model_selector import get_ram_tier, tier_keep_alive
 
 log = logging.getLogger("celina.turbo")
 
@@ -71,15 +70,20 @@ def _eject_ollama_now() -> tuple[bool, str]:
 
 def _read_zram_summary() -> str:
     swaps = Path("/proc/swaps")
+    total_size_mb = 0
+    total_used_mb = 0
+    any_zram = False
     try:
         if swaps.is_file():
             for ln in swaps.read_text(encoding="utf-8", errors="ignore").splitlines()[1:]:
                 parts = ln.split()
                 if len(parts) >= 4 and "zram" in parts[0]:
-                    size_mb = int(parts[2]) // 1024
-                    used_mb = int(parts[3]) // 1024
-                    pct = int((used_mb * 100) / max(1, size_mb))
-                    return f"{used_mb} MiB / {size_mb} MiB ({pct}%)"
+                    any_zram = True
+                    total_size_mb += int(parts[2]) // 1024
+                    total_used_mb += int(parts[3]) // 1024
+            if any_zram:
+                pct = int((total_used_mb * 100) / max(1, total_size_mb))
+                return f"{total_used_mb} MiB / {total_size_mb} MiB ({pct}%)"
     except Exception as exc:
         log.debug("ZRAM swap read failed: %s", exc)
     return "inactive"
@@ -103,7 +107,7 @@ def _set_gnome_effects(*, lite: bool) -> list[str]:
     return notes
 
 
-def enable_turbo_mode(*, dry_run: bool = False, env_path: Optional[Path] = None) -> str:
+def enable_turbo_mode(*, dry_run: bool = False, env_path: Path | None = None) -> str:
     """Activates Zero-Lag 8 GB Turbo Mode immediately and persists it to ~/.config/celina/env."""
     if dry_run:
         return (
@@ -118,6 +122,57 @@ def enable_turbo_mode(*, dry_run: bool = False, env_path: Optional[Path] = None)
     _ok, ol_msg = _eject_ollama_now()
     steps.append(ol_msg)
 
+    # Offload heavy AI backends: llama-server & Whisper warm worker
+    try:
+        from .voice import offload_whisper_if_idle
+        offload_whisper_if_idle(force=True)
+        steps.append("Offloaded Whisper warm worker (0 MB idle RAM)")
+    except Exception:
+        pass  # Whisper optional — ignore if module unavailable
+
+    # Unload Mirage 22 MB CPU VLM from RAM (reclaim ~22 MB on Turbo activation)
+    try:
+        from . import gear0_5_1_mirage as _mirage_mod
+        _m = _mirage_mod.get_gear051_mirage(force=False)
+        _m.unload()
+        steps.append("Unloaded Mirage 22 MB CPU VLM from RAM (0 MB idle)")
+    except Exception:
+        pass  # Mirage optional — ignore if module unavailable
+
+    # Clear ephemeral compression CCR cache (reclaim RAM on Turbo activation)
+    try:
+        from . import context_compressor
+        cleared = context_compressor.clear_compression_state()
+        steps.append(f"Cleared compression CCR cache ({cleared['ccr_cleared']} entries)")
+    except Exception:
+        pass  # context_compressor optional — ignore if module unavailable
+
+    # Clear transient sensory buffer (RAM-only, zero disk trail)
+    try:
+        from . import sensory_buffer as _sensory_mod
+        _sensory_mod.get_sensory_buffer().clear()
+        steps.append("Cleared transient sensory buffer (RAM-only)")
+    except Exception:
+        pass  # sensory_buffer optional — ignore if module unavailable
+
+    # Stop llama-server systemd service if running (NPU/local inference backend)
+    try:
+        import subprocess as _sp
+        _sp.run(["systemctl", "--user", "stop", "celina-llama-server"], capture_output=True, timeout=3.0)
+        steps.append("Stopped celina-llama-server service (freed NPU/llama.cpp RAM)")
+    except Exception:
+        pass  # llama-server optional — ignore if absent or not running
+
+    # Evict pinned pages via celina-vmtouch-ctl (non-blocking, ignore if absent)
+    try:
+        vmtouch_ctl = config.HOME / ".local" / "bin" / "celina-vmtouch-ctl"
+        if vmtouch_ctl.is_file():
+            import subprocess as _sp
+            _sp.run([str(vmtouch_ctl), "evict"], capture_output=True, timeout=3.0)
+            steps.append("Evicted pinned page-cache via celina-vmtouch-ctl (instant RAM headroom)")
+    except Exception:
+        pass  # vmtouch-ctl optional — ignore if absent or failing
+
     # Persist Lite/Turbo settings cleanly (0600)
     try:
         config.set_env_pairs(
@@ -127,6 +182,24 @@ def enable_turbo_mode(*, dry_run: bool = False, env_path: Optional[Path] = None)
         steps.append("Saved CELINA_LITE_MODE=1 & CELINA_OLLAMA_KEEP_ALIVE=0 (instant RAM eviction + zero background AT-SPI2)")
     except OSError as exc:
         steps.append(f"Warning: could not persist env ({exc})")
+
+    # Emit LiteModeChanged(True) over session D-Bus so celina-island@macubuntu.org drops blur/shader frames
+    try:
+        import subprocess as _sp
+        _sp.run(
+            [
+                "dbus-send",
+                "--session",
+                "--dest=org.macubuntu.Celina",
+                "/org/macubuntu/Celina",
+                "org.macubuntu.Celina.SetLiteMode",
+                "boolean:true",
+            ],
+            capture_output=True,
+            timeout=3.0,
+        )
+    except Exception:
+        pass  # D-Bus optional — ignore if service not running
 
     # Disable heavy GPU blur/animations when running inside a real graphical session
     if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
@@ -150,7 +223,7 @@ def enable_turbo_mode(*, dry_run: bool = False, env_path: Optional[Path] = None)
     )
 
 
-def disable_turbo_mode(*, dry_run: bool = False, env_path: Optional[Path] = None) -> str:
+def disable_turbo_mode(*, dry_run: bool = False, env_path: Path | None = None) -> str:
     """Restores standard macOS visual effects & 45s Ollama keep-alive."""
     if dry_run:
         return (
@@ -159,17 +232,37 @@ def disable_turbo_mode(*, dry_run: bool = False, env_path: Optional[Path] = None
         )
 
     steps: list[str] = []
+    _tier = get_ram_tier()
+    _keep_alive = tier_keep_alive(_tier)
     try:
         config.set_env_pairs(
-            {"CELINA_LITE_MODE": "0", "CELINA_OLLAMA_KEEP_ALIVE": "45s"},
+            {"CELINA_LITE_MODE": "0", "CELINA_OLLAMA_KEEP_ALIVE": _keep_alive},
             env_path=env_path,
         )
-        steps.append("Restored CELINA_LITE_MODE=0 & CELINA_OLLAMA_KEEP_ALIVE=45s")
+        steps.append(f"Restored CELINA_LITE_MODE=0 & CELINA_OLLAMA_KEEP_ALIVE={_keep_alive} (tier={_tier})")
     except OSError as exc:
         steps.append(f"Warning: could not persist env ({exc})")
 
     if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
         steps.extend(_set_gnome_effects(lite=False))
+
+    # Emit LiteModeChanged(False) over session D-Bus so island restores blur/shader frames
+    try:
+        import subprocess as _sp
+        _sp.run(
+            [
+                "dbus-send",
+                "--session",
+                "--dest=org.macubuntu.Celina",
+                "/org/macubuntu/Celina",
+                "org.macubuntu.Celina.SetLiteMode",
+                "boolean:false",
+            ],
+            capture_output=True,
+            timeout=3.0,
+        )
+    except Exception:
+        pass  # D-Bus optional — ignore if service not running
 
     return "✨ Standard macOS Visual Mode RESTORED:\n" + "\n".join(f"  • {s}" for s in steps)
 
@@ -212,7 +305,7 @@ _AUTOPLAY_BLOCK = (
 )
 
 
-def _discover_firefox_profiles(home: Optional[Path] = None) -> list[Path]:
+def _discover_firefox_profiles(home: Path | None = None) -> list[Path]:
     """Finds Firefox profile directories across Ubuntu Snap, DEB, and Flatpak."""
     base = (home or Path.home()).resolve()
     roots = (
@@ -234,9 +327,8 @@ def _discover_firefox_profiles(home: Optional[Path] = None) -> list[Path]:
     return found
 
 
-def configure_firefox_autoplay(*, enable: bool = True, dry_run: bool = False, home: Optional[Path] = None) -> str:
-    """
-    Safely updates ONLY a delimited Celina block inside Firefox profile user.js
+def configure_firefox_autoplay(*, enable: bool = True, dry_run: bool = False, home: Path | None = None) -> str:
+    """Safely updates ONLY a delimited Celina block inside Firefox profile user.js
     so YouTube/Spotify tabs opened by Celina start playing with sound automatically
     (instead of Firefox's default 'Block Audio' shield pausing every new tab).
     """
@@ -267,7 +359,8 @@ def configure_firefox_autoplay(*, enable: bool = True, dry_run: bool = False, ho
         else:
             final_txt = (cleaned + "\n") if cleaned else ""
 
-        ujs.write_text(final_txt, encoding="utf-8")
+        # P5: Atomic write for user.js (zero data loss on crash/power failure).
+        config.atomic_write_private_text(ujs, final_txt)
         updated.append(prof.name)
 
     if enable:
@@ -279,7 +372,7 @@ def configure_firefox_autoplay(*, enable: bool = True, dry_run: bool = False, ho
     return f"🔇 Restored Firefox default autoplay blocking in {len(updated)} profile(s): {', '.join(updated)} (restart Firefox to apply)."
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="celina-turbo",
         description="Toggle Celina Zero-Lag 8 GB Turbo Mode & Firefox hands-free YouTube autoplay.",

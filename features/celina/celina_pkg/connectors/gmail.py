@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gmail Connector (Update 23)
+"""Celina AI (Celly) - Gmail Connector (Update 23)
 
 Adapted from MausBot concepts (Apache-2.0, github.com/milind-soni/OpenMausBot)
 to Python. Connects to Gmail via the Gmail API using OAuth 2.0 credentials.
@@ -15,15 +14,16 @@ Hard refusals:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from celina_pkg.approval import RiskLevel
+
 from .base import (
+    ActionResult,
     BaseConnector,
+    ConnectorAction,
     ConnectorConfig,
     ConnectorStatus,
-    ConnectorAction,
-    ActionResult,
 )
 
 GMAIL_API_URL = "https://gmail.googleapis.com/gmail/v1"
@@ -109,7 +109,7 @@ class GmailConnector(BaseConnector):
             read_only_actions=GMAIL_READ_ONLY_ACTIONS,
         )
         super().__init__(cfg, approval_cb)
-        self._access_token: Optional[str] = None
+        self._access_token: str | None = None
 
     def is_configured(self) -> bool:
         creds = self._load_credentials()
@@ -169,21 +169,20 @@ class GmailConnector(BaseConnector):
             try:
                 if action_name == "list_messages":
                     return self._list_messages(params)
-                elif action_name == "get_message":
+                if action_name == "get_message":
                     return self._get_message(params)
-                elif action_name == "list_labels":
+                if action_name == "list_labels":
                     return self._list_labels(params)
-                elif action_name == "get_profile":
+                if action_name == "get_profile":
                     return self._get_profile(params)
-                elif action_name == "send_message":
+                if action_name == "send_message":
                     return self._send_message(params)
-                else:
-                    return ActionResult(
-                        success=False,
-                        error=f"Action not implemented: {action_name}",
-                        action=action_name,
-                        connector=self.name,
-                    )
+                return ActionResult(
+                    success=False,
+                    error=f"Action not implemented: {action_name}",
+                    action=action_name,
+                    connector=self.name,
+                )
             except Exception as exc:
                 return ActionResult(
                     success=False,
@@ -200,7 +199,7 @@ class GmailConnector(BaseConnector):
             "Content-Type": "application/json",
         }
 
-    def _get(self, path: str, params: Optional[dict[str, str]] = None) -> dict[str, Any]:
+    def _get(self, path: str, params: dict[str, str] | None = None) -> dict[str, Any]:
         import urllib.parse
         url = f"{GMAIL_API_URL}{path}"
         if params:
@@ -232,7 +231,7 @@ class GmailConnector(BaseConnector):
 
     def _get_message(self, params: dict[str, Any]) -> ActionResult:
         message_id = params["message_id"]
-        body = self._get(f"/users/me/messages/{message_id}")
+        body = self._get(self._build_path("users", "me", "messages", message_id))
         return ActionResult(success=True, data={"message": body}, action="get_message", connector=self.name)
 
     def _list_labels(self, params: dict[str, Any]) -> ActionResult:
@@ -251,11 +250,38 @@ class GmailConnector(BaseConnector):
 
     def _send_message(self, params: dict[str, Any]) -> ActionResult:
         import base64
+        import re
 
         to = params["to"]
         subject = params["subject"]
         body_text = params["body"]
 
+        # Collect all header-like fields for CRLF / line-separator injection check.
+        # Includes cc, bcc, from, reply_to and any other string header params.
+        header_fields = {
+            "to": to,
+            "subject": subject,
+            "cc": params.get("cc", ""),
+            "bcc": params.get("bcc", ""),
+            "from": params.get("from", ""),
+            "reply_to": params.get("reply_to", ""),
+        }
+
+        # Reject CR, LF, and Unicode line separators to prevent header injection.
+        # Check BEFORE stripping so injection attempts are fail-closed.
+        _LINE_INJECTION_CHARS = ("\r", "\n", "\u2028", "\u2029", "\x0b", "\x0c")
+        for _field_name, _field_value in header_fields.items():
+            if _field_value and any(c in _field_value for c in _LINE_INJECTION_CHARS):
+                return ActionResult(
+                    success=False,
+                    error=f"Rejected: header '{_field_name}' contains line-injection characters",
+                    action="send_message",
+                    connector=self.name,
+                )
+
+        # Strip any remaining line-injection chars from all fields
+        to = re.sub(r"[\r\n\u2028\u2029\x0b\x0c]+", "", to)
+        subject = re.sub(r"[\r\n\u2028\u2029\x0b\x0c]+", "", subject)
         # Build RFC 2822 message and base64url encode it
         raw_msg = (
             f"To: {to}\r\n"

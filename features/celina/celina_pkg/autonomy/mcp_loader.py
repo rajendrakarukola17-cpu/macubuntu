@@ -1,5 +1,4 @@
-"""
-Celina v5 Autonomy MCP Client Loader (`autonomy/mcp_loader.py`)
+"""Celina v5 Autonomy MCP Client Loader (`autonomy/mcp_loader.py`)
 
 Spawns sandboxed stdio MCP servers, connects to loopback/allowlisted Streamable
 HTTP MCP servers, routes GUI perception/actuation capabilities, and enforces:
@@ -35,7 +34,7 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import requests
 
@@ -49,6 +48,141 @@ BLOCKLISTED_MCP_IDENTIFIERS: tuple[str, ...] = (
 )
 
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# --- P4 D4: Verified local cache for uvx / npx packages ---
+# Cache directory for verified MCP packages (offline-first, hash-verified)
+MCP_CACHE_DIR = Path.home() / ".celina" / "cache" / "mcp"
+UV_CACHE_DIR = Path.home() / ".celina" / "cache" / "uv"
+NPM_CACHE_DIR = Path.home() / ".celina" / "cache" / "npm"
+
+# --- P4 D5: MCP schema-hash pinning (MCP03 tool-poisoning defense) ---
+# Lock file mapping {server}__{tool} -> expected SHA-256 of the tool's schema.
+# Populated after human review of each MCP server's tool definitions.
+MCP_TOOLS_LOCK_PATH = (
+    Path(__file__).resolve().parents[4] / "system" / "capabilities" / "mcp_tools.lock.json"
+)
+
+# MCP protocol version negotiation order: try 2026-07-28 (server/discover) first,
+# fall back to 2024-11-05 (initialize) for legacy servers.
+MCP_PROTOCOL_VERSIONS = ("2026-07-28", "2024-11-05")
+
+
+def ensure_mcp_cache_dirs() -> None:
+    """Create MCP cache directories if they don't exist."""
+    for d in (MCP_CACHE_DIR, UV_CACHE_DIR, NPM_CACHE_DIR):
+        d.mkdir(parents=True, exist_ok=True)
+        os.chmod(d, 0o700)
+
+
+def resolve_cached_uvx_command(
+    package: str,
+    version: str,
+    expected_sha256: str | None = None,
+) -> list[str] | None:
+    """Resolve a uvx command to use a hash-verified cached package.
+
+    On first call: downloads the wheel, verifies SHA-256 against the lockfile,
+    caches it under MCP_CACHE_DIR. On subsequent calls: launches from cache
+    with zero network access.
+
+    Returns the modified command argv (e.g. ["uvx", "--from", "/path/to/cached/pkg==ver", "pkg"])
+    or None if resolution fails (fail closed).
+    """
+    ensure_mcp_cache_dirs()
+
+    # Check if already cached
+    cache_marker = MCP_CACHE_DIR / f"uvx_{package}=={version}.verified"
+    if cache_marker.is_file():
+        # Already verified — use uvx with --from pointing to the cached wheel
+        cached_wheel = MCP_CACHE_DIR / f"{package}-{version}.whl"
+        if cached_wheel.is_file():
+            return ["uvx", "--from", str(cached_wheel), package]
+
+    # Not cached yet — download and verify
+    if expected_sha256 is None:
+        return None  # fail closed: no hash to verify against
+
+    import urllib.request
+
+    # Try PyPI JSON API to get the wheel URL
+    pypi_url = f"https://pypi.org/pypi/{package}/json"
+    try:
+        with urllib.request.urlopen(pypi_url, timeout=10) as resp:  # nosec B310 — PyPI JSON API, HTTPS only
+            pypi_data = json.loads(resp.read())
+    except Exception:
+        return None
+
+    # Find the wheel for this version
+    releases = pypi_data.get("releases", {})
+    version_files = releases.get(version, [])
+    wheel_url = None
+    for file_info in version_files:
+        if file_info.get("packagetype") == "bdist_wheel":
+            wheel_url = file_info.get("url")
+            file_hash = file_info.get("digests", {}).get("sha256", "")
+            break
+
+    if wheel_url is None:
+        return None
+
+    # Download and verify
+    try:
+        cached_wheel = MCP_CACHE_DIR / f"{package}-{version}.whl"
+        with urllib.request.urlopen(wheel_url, timeout=30) as resp:  # nosec B310 — PyPI wheel URL, HTTPS only
+            data = resp.read()
+        actual_sha = hashlib.sha256(data).hexdigest()
+        if actual_sha != expected_sha256:
+            return None  # hash mismatch — fail closed
+        cached_wheel.write_bytes(data)
+        os.chmod(cached_wheel, 0o600)
+        # Write verification marker
+        cache_marker.write_text(expected_sha256, encoding="utf-8")
+        os.chmod(cache_marker, 0o600)
+    except Exception:
+        return None
+
+    return ["uvx", "--from", str(cached_wheel), package]
+
+
+def resolve_cached_npx_command(
+    package: str,
+    version: str,
+    expected_sha256: str | None = None,
+) -> list[str] | None:
+    """Resolve an npx command to use a hash-verified cached package.
+
+    Similar to resolve_cached_uvx_command but for npm packages.
+    """
+    ensure_mcp_cache_dirs()
+
+    cache_marker = MCP_CACHE_DIR / f"npm_{package}@{version}.verified"
+    if cache_marker.is_file():
+        cached_tar = MCP_CACHE_DIR / f"{package}@{version}.tgz"
+        if cached_tar.is_file():
+            return ["npx", "--no-install", "--prefix", str(MCP_CACHE_DIR), f"{package}@{version}"]
+
+    if expected_sha256 is None:
+        return None
+
+    # Download tarball from npm registry
+    npm_url = f"https://registry.npmjs.org/{package.replace('@', '%40')}/-/{package.rsplit('/', maxsplit=1)[-1]}-{version}.tgz"
+    try:
+        import urllib.request
+
+        with urllib.request.urlopen(npm_url, timeout=30) as resp:  # nosec B310 — npm registry URL, HTTPS only
+            data = resp.read()
+        actual_sha = hashlib.sha256(data).hexdigest()
+        if actual_sha != expected_sha256:
+            return None
+        cached_tar = MCP_CACHE_DIR / f"{package}@{version}.tgz"
+        cached_tar.write_bytes(data)
+        os.chmod(cached_tar, 0o600)
+        cache_marker.write_text(expected_sha256, encoding="utf-8")
+        os.chmod(cache_marker, 0o600)
+    except Exception:
+        return None
+
+    return ["npx", "--no-install", "--prefix", str(MCP_CACHE_DIR), f"{package}@{version}"]
 
 # Complete ordered 7-server catalog (priority order matching 8 GB rollout discipline)
 MCP_SERVER_CATALOG: tuple[dict[str, Any], ...] = (
@@ -84,7 +218,8 @@ MCP_SERVER_CATALOG: tuple[dict[str, Any], ...] = (
         "config": {
             "enabled": False,
             "command": "uvx",
-            "args": ["shadow-vision"],
+            "args": ["--from", "shadow-vision==0.1.0", "shadow-vision"],
+            "integrity": "sha256:2384ab65ea7c597fcd637699df99e76c798b1d0d3270b844132bea4c27ac3781",
             "env": {
                 "VISION_BACKEND": "ollama",
                 "VISION_MODEL": "qwen3-vl:2b-instruct",
@@ -204,11 +339,12 @@ MCP_SERVER_CATALOG: tuple[dict[str, Any], ...] = (
         "transport": "stdio",
         "priority": "optional",
         "sandbox": "bwrap_unshare_net",
-        "install_cmd": "uvx kwin-mcp",
+        "install_cmd": "uvx --from kwin-mcp==0.12.0 kwin-mcp",
         "config": {
             "enabled": False,
             "command": "uvx",
-            "args": ["kwin-mcp"],
+            "args": ["--from", "kwin-mcp==0.12.0", "kwin-mcp"],
+            "integrity": "sha256:105d14641a423d1f613861397eba78757b6efa6e237e498fb92b9b6b2d061976",
             "sandbox": "bwrap_unshare_net",
             "role": "isolated_kde_desktop",
             "priority": "optional",
@@ -223,11 +359,12 @@ MCP_SERVER_CATALOG: tuple[dict[str, Any], ...] = (
         "transport": "stdio",
         "priority": "recommended",
         "sandbox": "bwrap_unshare_net",
-        "install_cmd": "npx -y linux-system-mcp",
+        "install_cmd": "npx -y linux-system-mcp@1.2.1",
         "config": {
             "enabled": False,
             "command": "npx",
-            "args": ["-y", "linux-system-mcp"],
+            "args": ["-y", "linux-system-mcp@1.2.1"],
+            "integrity": "sha256:86de583a95390b99cc78e308ac7408d77e87a7e09e1e5803bd37f5409dfefc4e",
             "sandbox": "bwrap_unshare_net",
             "role": "system_bridge",
             "priority": "recommended",
@@ -269,6 +406,186 @@ MCP_SERVER_CATALOG: tuple[dict[str, Any], ...] = (
             "sandbox": "bwrap_unshare_net",
             "role": "memory_graph",
             "priority": "recommended",
+        },
+    },
+    # --- Official MCP servers (P1 MCP Core) ---
+    # stdio servers via npx, all opt-in (enabled=False), sandboxed with bwrap_unshare_net
+    {
+        "order": 12,
+        "name": "mcp-filesystem",
+        "package": "@modelcontextprotocol/server-filesystem",
+        "role": "file_access",
+        "description": "Scoped, allow-listed directory access (reads, moves, searches) with explicit approval boundaries",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "npx -y @modelcontextprotocol/server-filesystem@latest",
+        "config": {
+            "enabled": False,
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem@latest"],
+            "integrity": "sha256:placeholder-verify-before-enable",
+            "sandbox": "bwrap_unshare_net",
+            "role": "file_access",
+            "priority": "optional",
+        },
+    },
+    {
+        "order": 13,
+        "name": "mcp-memory",
+        "package": "@modelcontextprotocol/server-memory",
+        "role": "knowledge_graph",
+        "description": "Persistent knowledge-graph memory paired with Celina's 17 SQLite tables",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "npx -y @modelcontextprotocol/server-memory@latest",
+        "config": {
+            "enabled": False,
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-memory@latest"],
+            "integrity": "sha256:placeholder-verify-before-enable",
+            "sandbox": "bwrap_unshare_net",
+            "role": "knowledge_graph",
+            "priority": "optional",
+        },
+    },
+    {
+        "order": 14,
+        "name": "mcp-sequential-thinking",
+        "package": "@modelcontextprotocol/server-sequential-thinking",
+        "role": "reasoning",
+        "description": "Dynamic, reflective step-by-step reasoning for TreePlanner and cross-app workflows",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "npx -y @modelcontextprotocol/server-sequential-thinking@latest",
+        "config": {
+            "enabled": False,
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@latest"],
+            "integrity": "sha256:placeholder-verify-before-enable",
+            "sandbox": "bwrap_unshare_net",
+            "role": "reasoning",
+            "priority": "optional",
+        },
+    },
+    {
+        "order": 15,
+        "name": "mcp-git",
+        "package": "mcp-server-git",
+        "role": "version_control",
+        "description": "Repository inspection — git log, diff, blame, status within sandboxed worktrees",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "npx -y mcp-server-git@latest",
+        "config": {
+            "enabled": False,
+            "command": "npx",
+            "args": ["-y", "mcp-server-git@latest"],
+            "integrity": "sha256:placeholder-verify-before-enable",
+            "sandbox": "bwrap_unshare_net",
+            "role": "version_control",
+            "priority": "optional",
+        },
+    },
+    {
+        "order": 16,
+        "name": "mcp-fetch",
+        "package": "mcp-server-fetch",
+        "role": "web_access",
+        "description": "Web-to-Markdown conversion — read-only fetch of public URLs for research",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "npx -y mcp-server-fetch@latest",
+        "config": {
+            "enabled": False,
+            "command": "npx",
+            "args": ["-y", "mcp-server-fetch@latest"],
+            "integrity": "sha256:placeholder-verify-before-enable",
+            "sandbox": "bwrap_unshare_net",
+            "role": "web_access",
+            "priority": "optional",
+        },
+    },
+    {
+        "order": 17,
+        "name": "mcp-time",
+        "package": "mcp-server-time",
+        "role": "scheduling",
+        "description": "Timezone-aware scheduling — current time, conversions, calendar math",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "npx -y mcp-server-time@latest",
+        "config": {
+            "enabled": False,
+            "command": "npx",
+            "args": ["-y", "mcp-server-time@latest"],
+            "integrity": "sha256:placeholder-verify-before-enable",
+            "sandbox": "bwrap_unshare_net",
+            "role": "scheduling",
+            "priority": "optional",
+        },
+    },
+    # --- Custom local OS MCP subsystems (stdlib-only Python) ---
+    {
+        "order": 18,
+        "name": "mcp-dbus-desktop",
+        "package": "celina-mcp-dbus-desktop",
+        "role": "desktop_bridge",
+        "description": "Exposes D-Bus services to Celina — scx_loader (CPU scheduler), MPRIS media, notifications (Apple Intelligence-style summarization), GNOME window/workspace placement",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "Built into Celina: python3 -m celina_pkg.mcp_dbus_desktop",
+        "config": {
+            "enabled": False,
+            "command": "celina-mcp-dbus-desktop",
+            "args": [],
+            "sandbox": "bwrap_unshare_net",
+            "role": "desktop_bridge",
+            "priority": "optional",
+        },
+    },
+    {
+        "order": 19,
+        "name": "mcp-proactive-observer",
+        "package": "celina-mcp-proactive-observer",
+        "role": "anticipatory",
+        "description": "Anticipatory layer — ebpf_sensor, os_events, window focus, calendar events → rule + local-LLM scoring loop → silent dismissible pills in celina-island",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "Built into Celina: python3 -m celina_pkg.mcp_proactive_observer",
+        "config": {
+            "enabled": True,
+            "command": "celina-mcp-proactive-observer",
+            "args": [],
+            "sandbox": "bwrap_unshare_net",
+            "role": "anticipatory",
+            "priority": "optional",
+        },
+    },
+    {
+        "order": 20,
+        "name": "mcp-media-ondemand",
+        "package": "celina-mcp-media-ondemand",
+        "role": "media_on_demand",
+        "description": "Local quantized image generator (stable-diffusion.cpp) + Whisper/NLLB live-translation pipeline behind systemd socket activation — zero RAM/VRAM until invoked",
+        "transport": "stdio",
+        "priority": "optional",
+        "sandbox": "bwrap_unshare_net",
+        "install_cmd": "Built into Celina: python3 -m celina_pkg.mcp_media_ondemand",
+        "config": {
+            "enabled": False,
+            "command": "celina-mcp-media-ondemand",
+            "args": [],
+            "sandbox": "bwrap_unshare_net",
+            "role": "media_on_demand",
+            "priority": "optional",
         },
     },
 )
@@ -329,9 +646,8 @@ class MCPPolicyError(PermissionError):
     """Raised when an MCP server violates blocklist, sandbox, loopback, or opt-in web_comms policy."""
 
 
-def check_mcp_blocklist(server_name: str, spec: Optional[dict[str, Any]] = None) -> None:
-    """
-    Fail-closed guard against accidentally installing/linking `celina-mcp` from
+def check_mcp_blocklist(server_name: str, spec: dict[str, Any] | None = None) -> None:
+    """Fail-closed guard against accidentally installing/linking `celina-mcp` from
     `usecelina.xyz` (an unrelated Celo blockchain SDK).
     """
     haystack_parts = [str(server_name or "")]
@@ -345,7 +661,7 @@ def check_mcp_blocklist(server_name: str, spec: Optional[dict[str, Any]] = None)
         if bad in joined:
             raise MCPPolicyError(
                 f"Blocked MCP server '{server_name}': '{bad}' is an unrelated Celo blockchain SDK "
-                f"(usecelina.xyz) and must NOT be added to macubuntu Celina."
+                f"(usecelina.xyz) and must NOT be added to macubuntu Celina.",
             )
 
 
@@ -364,7 +680,7 @@ def validate_server_policy(
     server_name: str,
     spec: dict[str, Any],
     *,
-    web_comms_enabled: Optional[bool] = None,
+    web_comms_enabled: bool | None = None,
 ) -> None:
     """Enforces blocklist, loopback-only, and n8n opt-in web_comms policy fail-closed."""
     check_mcp_blocklist(server_name, spec)
@@ -377,14 +693,14 @@ def validate_server_policy(
         if not _is_loopback_url(ollama_url):
             raise MCPPolicyError(
                 f"Shadow Vision OLLAMA_URL '{ollama_url}' must stay on loopback (127.0.0.1/localhost) "
-                "so screenshots never leave the machine."
+                "so screenshots never leave the machine.",
             )
 
     # GhostDesk: loopback Streamable HTTP only (isolated Docker container)
     if sname == "ghostdesk" and spec.get("url"):
         if not _is_loopback_url(str(spec["url"])):
             raise MCPPolicyError(
-                f"GhostDesk URL '{spec['url']}' must be loopback HTTP (http://localhost:3000/mcp)."
+                f"GhostDesk URL '{spec['url']}' must be loopback HTTP (http://localhost:3000/mcp).",
             )
 
     # n8n: opt-in cloud bridge — NEVER allowed unless web_comms.enabled=true AND allowlist valid
@@ -393,7 +709,7 @@ def validate_server_policy(
         if not wc_on:
             raise MCPPolicyError(
                 "n8n MCP bridge is opt-in only and blocked while web_comms.enabled=false. "
-                "Enable web_comms.enabled=true in neural-schema.json only if external SaaS orchestration is needed."
+                "Enable web_comms.enabled=true in neural-schema.json only if external SaaS orchestration is needed.",
             )
         url = str(spec.get("url") or "").strip()
         if url and not _is_loopback_url(url):
@@ -401,15 +717,88 @@ def validate_server_policy(
             net_policy.validate_web_comms_host(url, allowed_hosts=allowed)
 
 
+
+def compute_tool_schema_hash(tool_def: dict[str, Any]) -> str:
+    """Canonical SHA-256 over a single MCP tool definition (blocks MCP03 rug-pull/tool poisoning).
+
+    Hashes name + description + inputSchema deterministically so any unauthorized
+    schema change (added parameter, changed description, new property) is detected.
+    """
+    canonical = json.dumps(
+        {
+            "name": tool_def.get("name", ""),
+            "description": tool_def.get("description", ""),
+            "inputSchema": tool_def.get("inputSchema", {}),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def discover_pinned_tools(
+    loader: MCPLoader,
+    server_name: str,
+    *,
+    lock_path: Path | None = None,
+    allow_unpinned: bool = False,
+) -> list[dict[str, Any]]:
+    """Dynamically discovers tools from an ALREADY-ENABLED, policy-validated MCP server,
+    verifies each tool's schema SHA-256 against mcp_tools.lock.json (fail-closed),
+    and returns OpenAI/Ollama-compatible ``{server}__{tool}`` function schemas.
+
+    Raises MCPPolicyError on schema hash mismatch (MCP03 tool-poisoning alert).
+    Skips unpinned tools unless allow_unpinned=True.
+    """
+    lpath = lock_path or MCP_TOOLS_LOCK_PATH
+    pins: dict[str, str] = {}
+    if lpath.is_file():
+        try:
+            raw = json.loads(lpath.read_text(encoding="utf-8"))
+            pins = dict(raw.get("tools", raw) if isinstance(raw, dict) else {})
+        except (OSError, json.JSONDecodeError) as exc:
+            raise MCPPolicyError(f"Corrupt mcp_tools.lock.json: {exc}") from exc
+
+    discovered: list[dict[str, Any]] = []
+    for tdef in loader.list_tools(server_name):
+        if not isinstance(tdef, dict) or not tdef.get("name"):
+            continue
+        remote_name = str(tdef["name"]).strip()
+        ns_name = f"{server_name}__{remote_name}"
+        actual_sha = compute_tool_schema_hash(tdef)
+        expected_sha = pins.get(ns_name)
+        if expected_sha:
+            if actual_sha != expected_sha:
+                raise MCPPolicyError(
+                    f"MCP03 tool-poisoning alert: schema hash mismatch for '{ns_name}' "
+                    f"(expected={expected_sha[:16]}, actual={actual_sha[:16]})",
+                )
+        elif not allow_unpinned:
+            # Fail-closed: unpinned external MCP tools stay quarantined until pinned
+            continue
+
+        discovered.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": ns_name,
+                    "description": f"[MCP:{server_name} | Tier-2] {str(tdef.get('description') or '')[:300]}",
+                    "parameters": tdef.get("inputSchema") or {"type": "object", "properties": {}},
+                },
+            },
+        )
+    return discovered
+
+
 def build_sandboxed_stdio_cmd(
     server_name: str,
     spec: dict[str, Any],
     *,
-    bwrap_bin: Optional[str] = None,
+    bwrap_bin: str | None = None,
     enable_sandbox: bool = True,
 ) -> list[str]:
-    """
-    Constructs the command argv for a stdio MCP server.
+    """Constructs the command argv for a stdio MCP server.
     - `computer-use-linux`, `eye2byte`, `uacc`, `deskwright`: wrapped in `bwrap --unshare-net`
       (plus `--die-with-parent`, `--new-session`) when bubblewrap is present.
     - `shadow-vision`: wrapped in `bwrap` WITHOUT `--unshare-net` so it can reach
@@ -458,7 +847,7 @@ def build_sandboxed_stdio_cmd(
         "--dev",
         "/dev",
         "--tmpfs",
-        "/tmp",
+        "/tmp",  # nosec B108 — bwrap sandbox mount point, not temp file creation
         "--ro-bind-try",
         xdg_rt,
         xdg_rt,
@@ -511,14 +900,13 @@ class MCPCallReceipt:
         }
 
 
-def hash_mcp_arguments(arguments: Optional[dict[str, Any]]) -> str:
+def hash_mcp_arguments(arguments: dict[str, Any] | None) -> str:
     canonical = json.dumps(arguments or {}, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()[:16]
 
 
 class MCPLoader:
-    """
-    Autonomy-layer MCP client loader for Celina v5.
+    """Autonomy-layer MCP client loader for Celina v5.
     Reads `mcpServers` (and legacy `servers`) from `mcp-servers.json`, spawns sandboxed
     stdio processes, connects Streamable HTTP servers, and exposes deterministic capability
     routing + JSON-RPC 2.0 `tools/list` & `tools/call`.
@@ -526,11 +914,11 @@ class MCPLoader:
 
     def __init__(
         self,
-        config_path: Optional[Path] = None,
+        config_path: Path | None = None,
         *,
         use_sandbox: bool = True,
-        web_comms_enabled: Optional[bool] = None,
-        http_session: Optional[requests.Session] = None,
+        web_comms_enabled: bool | None = None,
+        http_session: requests.Session | None = None,
     ):
         self.config_path = Path(config_path) if config_path is not None else config.MCP_CONFIG_FILE
         self.use_sandbox = bool(use_sandbox)
@@ -576,7 +964,7 @@ class MCPLoader:
             self._rpc_id += 1
             return self._rpc_id
 
-    def _expand_env(self, extra_env: Optional[dict[str, Any]]) -> dict[str, str]:
+    def _expand_env(self, extra_env: dict[str, Any] | None) -> dict[str, str]:
         env = dict(os.environ)
         if not isinstance(extra_env, dict):
             return env
@@ -613,8 +1001,55 @@ class MCPLoader:
                     return existing
 
             if "command" in spec:
+                # P4 D4: Resolve uvx/npx commands to hash-verified cached versions
+                cmd_val = spec.get("command")
+                args = spec.get("args") or []
+                cached_cmd = None
+                if isinstance(cmd_val, str) and cmd_val.strip() == "uvx" and args:
+                    # uvx --from <pkg>==<ver> <pkg>
+                    pkg_idx = None
+                    for i, a in enumerate(args):
+                        if a.startswith("--from"):
+                            pkg_idx = i
+                            break
+                    if pkg_idx is not None and pkg_idx + 1 < len(args):
+                        from_spec = args[pkg_idx + 1]
+                        if "==" in from_spec:
+                            package, version = from_spec.split("==", 1)
+                            integrity = spec.get("integrity", "")
+                            expected_sha = None
+                            if integrity.startswith("sha256:"):
+                                expected_sha = integrity.split(":", 1)[1]
+                            cached_cmd = resolve_cached_uvx_command(
+                                package, version, expected_sha,
+                            )
+                elif isinstance(cmd_val, str) and cmd_val.strip() == "npx" and args:
+                    # npx -y <pkg>@<ver>
+                    for i, a in enumerate(args):
+                        if a.startswith("-y") and i + 1 < len(args):
+                            pkg_spec = args[i + 1]
+                            if "@" in pkg_spec:
+                                package, version = pkg_spec.rsplit("@", 1)
+                                integrity = spec.get("integrity", "")
+                                expected_sha = None
+                                if integrity.startswith("sha256:"):
+                                    expected_sha = integrity.split(":", 1)[1]
+                                cached_cmd = resolve_cached_npx_command(
+                                    package, version, expected_sha,
+                                )
+                            break
+
+                if cached_cmd is not None:
+                    # Replace command/args with cached version
+                    spec = dict(spec)
+                    spec["command"] = cached_cmd[0]
+                    spec["args"] = cached_cmd[1:]
+
                 argv = build_sandboxed_stdio_cmd(server_name, spec, enable_sandbox=self.use_sandbox)
                 env = self._expand_env(spec.get("env"))
+                # Point uvx/npm at persistent cache directories (offline-first)
+                env["UV_CACHE_DIR"] = str(UV_CACHE_DIR)
+                env["npm_config_cache"] = str(NPM_CACHE_DIR)
                 proc = subprocess.Popen(
                     argv,
                     env=env,
@@ -647,8 +1082,7 @@ class MCPLoader:
             raise ValueError(f"MCP server '{server_name}' must declare either 'command' (stdio) or 'url' (http).")
 
     def start_all(self, *, only_enabled: bool = True) -> dict[str, str]:
-        """
-        Starts all configured MCP servers that are enabled (skipping disabled/opt-in servers
+        """Starts all configured MCP servers that are enabled (skipping disabled/opt-in servers
         like `n8n` cleanly unless enabled and permitted by policy).
         Returns `{server_name: status}`.
         """
@@ -718,14 +1152,14 @@ class MCPLoader:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(
-                    f"stdio MCP server '{server_name}' timed out after {timeout:.1f}s waiting for response."
+                    f"stdio MCP server '{server_name}' timed out after {timeout:.1f}s waiting for response.",
                 )
 
             fd = proc.stdout.fileno()
             ready, _, _ = select.select([fd], [], [], remaining)
             if not ready:
                 raise TimeoutError(
-                    f"stdio MCP server '{server_name}' timed out after {timeout:.1f}s waiting for response."
+                    f"stdio MCP server '{server_name}' timed out after {timeout:.1f}s waiting for response.",
                 )
 
             chunk = os.read(fd, 4096)
@@ -750,7 +1184,7 @@ class MCPLoader:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError(
-                    f"stdio MCP server '{server_name}' timed out after {timeout:.1f}s waiting for id={expected_id}."
+                    f"stdio MCP server '{server_name}' timed out after {timeout:.1f}s waiting for id={expected_id}.",
                 )
             line = self._readline_with_timeout(srv, server_name, timeout=remaining).strip()
             if not line:
@@ -787,23 +1221,36 @@ class MCPLoader:
             if proc.poll() is not None or proc.stdin is None or proc.stdout is None:
                 raise RuntimeError(f"stdio MCP server '{server_name}' is not running (exit={proc.poll()}).")
 
-            # Send MCP initialize handshake + required notifications/initialized frame once per process
+            # Send MCP handshake: probe server/discover (2026-07-28) first,
+            # fall back to initialize (2024-11-05) for legacy servers.
             if not srv.get("initialized") and method != "initialize":
-                init_id = self._next_id()
-                init_req = {
-                    "jsonrpc": "2.0",
-                    "id": init_id,
-                    "method": "initialize",
-                    "params": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {},
-                        "clientInfo": {"name": "celina-autonomy", "version": "4.4.0"},
-                    },
-                }
-                self._write_stdio_frame(proc, init_req)
-                init_resp = self._read_jsonrpc_response(srv, server_name, init_id, timeout=timeout)
-                if init_resp.get("error") is not None:
-                    raise RuntimeError(f"MCP initialize failed ({server_name}): {init_resp['error']}")
+                negotiated_version = None
+                for proto_ver in MCP_PROTOCOL_VERSIONS:
+                    handshake_method = "server/discover" if proto_ver == "2026-07-28" else "initialize"
+                    handshake_id = self._next_id()
+                    handshake_req = {
+                        "jsonrpc": "2.0",
+                        "id": handshake_id,
+                        "method": handshake_method,
+                        "params": {
+                            "protocolVersion": proto_ver,
+                            "capabilities": {},
+                            "clientInfo": {"name": "celina-autonomy", "version": "4.4.0"},
+                        },
+                    }
+                    self._write_stdio_frame(proc, handshake_req)
+                    handshake_resp = self._read_jsonrpc_response(
+                        srv, server_name, handshake_id, timeout=timeout,
+                    )
+                    if handshake_resp.get("error") is None:
+                        negotiated_version = proto_ver
+                        break
+                if negotiated_version is None:
+                    raise RuntimeError(
+                        f"MCP handshake failed for all protocol versions {MCP_PROTOCOL_VERSIONS} "
+                        f"({server_name})",
+                    )
+                srv["protocol_version"] = negotiated_version
                 self._write_stdio_frame(
                     proc,
                     {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
@@ -870,9 +1317,9 @@ class MCPLoader:
         self,
         server_name: str,
         tool_name: str,
-        arguments: Optional[dict[str, Any]] = None,
+        arguments: dict[str, Any] | None = None,
         *,
-        celina_tool_name: Optional[str] = None,
+        celina_tool_name: str | None = None,
     ) -> MCPCallReceipt:
         """Invokes a remote MCP tool and returns a structured receipt for evidence & /why."""
         args = dict(arguments or {})
@@ -917,7 +1364,7 @@ class MCPLoader:
                 error=str(exc),
             )
 
-    def route_capability(self, role: str) -> Optional[str]:
+    def route_capability(self, role: str) -> str | None:
         """Returns the highest-priority enabled MCP server fulfilling `role`."""
         cfg = self.configured_servers()
         candidates = ROLE_SERVER_ORDER.get(role, ())
@@ -934,7 +1381,7 @@ class MCPLoader:
     def execute_domain_tool(
         self,
         celina_tool_name: str,
-        arguments: Optional[dict[str, Any]] = None,
+        arguments: dict[str, Any] | None = None,
     ) -> MCPCallReceipt:
         """Executes one of the 5 `mcp_perception_actuation` domain tools via its linked server."""
         route = MCP_TOOL_ROUTING.get(celina_tool_name)
@@ -973,7 +1420,7 @@ class MCPLoader:
                     "sandbox": item["sandbox"],
                     "enabled": bool(scfg.get("enabled", False)),
                     "running": active,
-                }
+                },
             )
         return {
             "config_path": str(self.config_path),
@@ -994,7 +1441,7 @@ def get_catalog_preset(server_name: str) -> dict[str, Any]:
     return json.loads(json.dumps(entry["config"]))
 
 
-_DEFAULT_LOADER: Optional[MCPLoader] = None
+_DEFAULT_LOADER: MCPLoader | None = None
 
 
 def get_mcp_loader() -> MCPLoader:

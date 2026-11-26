@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Risk-Aware, Argument-Bound Approval System (Phase 4)
+"""Celina AI (Celly) - Risk-Aware, Argument-Bound Approval System (Phase 4)
 Replaces coarse boolean approval with cryptographic argument binding:
   - 8 explicit RiskLevel tiers
   - ApprovalToken binding (tool, target, canonical SHA-256 arguments_hash, risk, expires_at)
@@ -13,11 +12,16 @@ from __future__ import annotations
 import datetime
 import hashlib
 import json
+import logging
 import re
+import threading
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Optional
+from typing import Any
+
+log = logging.getLogger(__name__)
 
 ApprovalCallback = Callable[[str, str], bool]
 
@@ -37,10 +41,14 @@ class RiskLevel(str, Enum):
 TOOL_RISK_MAP: dict[str, RiskLevel] = {
     # Read-only
     "get_system_stats": RiskLevel.READ_ONLY,
+    "grep_code": RiskLevel.READ_ONLY,
+    "list_files": RiskLevel.READ_ONLY,
     "list_running_apps": RiskLevel.READ_ONLY,
     "search_files": RiskLevel.READ_ONLY,
     "search_in_files": RiskLevel.READ_ONLY,
     "read_file": RiskLevel.READ_ONLY,
+    "read_function_signatures": RiskLevel.READ_ONLY,
+    "read_lines": RiskLevel.READ_ONLY,
     "read_document": RiskLevel.READ_ONLY,
     "get_clipboard": RiskLevel.READ_ONLY,
     "get_highlighted_text": RiskLevel.READ_ONLY,
@@ -147,6 +155,8 @@ TOOL_RISK_MAP: dict[str, RiskLevel] = {
     # Skill management & security scanning
     "ponytail_evaluate": RiskLevel.LOCAL_MUTATION,
     "skilspector_scan": RiskLevel.SECURITY_SENSITIVE,
+    # Android device automation via Artemis (ADB — can install APKs, send SMS, place calls, delete data)
+    "artemis_run_task": RiskLevel.SECURITY_SENSITIVE,
 }
 
 # Sensitive window keywords where typing / synthetic input must ALWAYS re-confirm (or be refused)
@@ -185,14 +195,29 @@ ALWAYS_RECONFIRM_TOOLS: frozenset[str] = frozenset({
     "drag_and_drop",
     "ponytail_evaluate",
     "skilspector_scan",
+    "artemis_run_task",
 })
 
 
-def compute_arguments_hash(tool: str, arguments: Optional[dict[str, Any]]) -> str:
+def _jsonable(value: Any) -> Any:
+    """Recursively convert a value to JSON-serializable primitives so
+    json.dumps never raises on datetimes, Paths, or other non-standard types.
+    """
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    # Fallback for datetimes, Paths, enums, custom objects, etc.
+    return str(value)
+
+
+def compute_arguments_hash(tool: str, arguments: dict[str, Any] | None) -> str:
     """Computes a canonical SHA-256 hash bound to the exact tool name and final arguments."""
     payload = {
         "tool": str(tool),
-        "arguments": arguments if isinstance(arguments, dict) else {},
+        "arguments": _jsonable(arguments) if isinstance(arguments, dict) else {},
     }
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -200,7 +225,7 @@ def compute_arguments_hash(tool: str, arguments: Optional[dict[str, Any]]) -> st
 
 def classify_risk(
     tool: str,
-    arguments: Optional[dict[str, Any]] = None,
+    arguments: dict[str, Any] | None = None,
     active_window: str = "",
 ) -> RiskLevel:
     """Determines exact effective RiskLevel, escalating for high-risk targets/arguments."""
@@ -227,11 +252,10 @@ def classify_risk(
 
 def requires_fresh_confirmation(
     tool: str,
-    arguments: Optional[dict[str, Any]] = None,
+    arguments: dict[str, Any] | None = None,
     active_window: str = "",
 ) -> bool:
-    """
-    Returns True if this action MUST be freshly confirmed immediately prior to execution
+    """Returns True if this action MUST be freshly confirmed immediately prior to execution
     and may NEVER inherit an upfront multi-step workflow/skill approval.
     """
     if tool in ALWAYS_RECONFIRM_TOOLS:
@@ -254,13 +278,15 @@ class ApprovalToken:
     target: str
     arguments_hash: str
     risk: RiskLevel
-    expires_at: float
+    expires_at: float            # wall-clock, display only
+    expires_at_monotonic: float  # monotonic, authoritative expiry check
     single_use: bool = True
     consumed: bool = False
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def to_record(self) -> dict[str, Any]:
         exp_iso = datetime.datetime.fromtimestamp(
-            self.expires_at, tz=datetime.timezone.utc
+            self.expires_at, tz=datetime.UTC,
         ).isoformat()
         return {
             "tool": self.tool,
@@ -270,11 +296,12 @@ class ApprovalToken:
             "expires_at": exp_iso,
         }
 
-    def verify_for(self, tool: str, arguments: Optional[dict[str, Any]], now: Optional[float] = None) -> tuple[bool, str]:
-        ts = time.time() if now is None else now
+    def verify_for(self, tool: str, arguments: dict[str, Any] | None, now: float | None = None) -> tuple[bool, str]:
+        # Authoritative expiry uses monotonic clock (immune to NTP/DST/manual jumps)
+        ts = time.monotonic() if now is None else now
         if self.single_use and self.consumed:
             return False, "Approval token already consumed; fresh confirmation required."
-        if ts > self.expires_at:
+        if ts > self.expires_at_monotonic:
             return False, "Approval token expired; fresh confirmation required."
         if tool != self.tool:
             return False, f"Approval tool mismatch (approved '{self.tool}', attempted '{tool}')."
@@ -289,8 +316,18 @@ class ApprovalToken:
     def consume(self) -> None:
         self.consumed = True
 
+    def verify_and_consume_atomic(
+        self, tool: str, arguments: dict[str, Any] | None, now: float | None = None,
+    ) -> tuple[bool, str]:
+        with self._lock:
+            ok, err = self.verify_for(tool, arguments, now=now)
+            if not ok:
+                return False, err
+            self.consumed = True
+            return True, ""
 
-def infer_target(tool: str, arguments: Optional[dict[str, Any]]) -> str:
+
+def infer_target(tool: str, arguments: dict[str, Any] | None) -> str:
     args = arguments or {}
     for key in (
         "path", "src", "dst", "dest", "mount_dir", "video_device", "webhook_url", "url",
@@ -315,17 +352,16 @@ def infer_target(tool: str, arguments: Optional[dict[str, Any]]) -> str:
 
 def request_bound_approval(
     tool: str,
-    arguments: Optional[dict[str, Any]],
-    approval_cb: Optional[ApprovalCallback],
+    arguments: dict[str, Any] | None,
+    approval_cb: ApprovalCallback | None,
     *,
-    title: Optional[str] = None,
-    target: Optional[str] = None,
+    title: str | None = None,
+    target: str | None = None,
     active_window: str = "",
     extra_warning: str = "",
     ttl_seconds: float = 60.0,
-) -> tuple[Optional[ApprovalToken], Optional[str]]:
-    """
-    Requests user approval and returns an ApprovalToken cryptographically bound
+) -> tuple[ApprovalToken | None, str | None]:
+    """Requests user approval and returns an ApprovalToken cryptographically bound
     to the exact tool name and final arguments.
     """
     if approval_cb is None:
@@ -334,7 +370,9 @@ def request_bound_approval(
     risk = classify_risk(tool, arguments, active_window=active_window)
     tgt = target or infer_target(tool, arguments)
     arg_hash = compute_arguments_hash(tool, arguments)
-    expires_at = time.time() + max(5.0, min(300.0, float(ttl_seconds)))
+    ttl = max(5.0, min(300.0, float(ttl_seconds)))
+    expires_at = time.time() + ttl              # wall-clock, display only
+    expires_at_monotonic = time.monotonic() + ttl  # monotonic, authoritative
 
     token = ApprovalToken(
         tool=tool,
@@ -342,6 +380,7 @@ def request_bound_approval(
         arguments_hash=arg_hash,
         risk=risk,
         expires_at=expires_at,
+        expires_at_monotonic=expires_at_monotonic,
         single_use=True,
     )
 
@@ -362,37 +401,41 @@ def request_bound_approval(
         detail_lines.insert(0, f"⚠️  {extra_warning}")
 
     prompt_title = title or f"Approve {risk.value} action: {tool}?"
-    approved = bool(approval_cb(prompt_title, "\n".join(detail_lines)))
+    try:
+        approved = bool(approval_cb(prompt_title, "\n".join(detail_lines)))
+    except Exception as exc:
+        log.warning("approval_cb raised (%s) — failing closed", exc)
+        return None, "Denied: approval callback raised (fail-closed)."
     if not approved:
         return None, "Cancelled by user."
     return token, None
 
 
 def verify_and_consume(
-    token: Optional[ApprovalToken],
+    token: ApprovalToken | None,
     tool: str,
-    arguments: Optional[dict[str, Any]],
+    arguments: dict[str, Any] | None,
     *,
-    now: Optional[float] = None,
+    now: float | None = None,
 ) -> tuple[bool, str]:
     if token is None:
         return False, f"Denied: Missing bound approval token for '{tool}'."
-    ok, err = token.verify_for(tool, arguments, now=now)
-    if not ok:
-        return False, f"Denied: {err}"
-    token.consume()
-    return True, ""
+    return token.verify_and_consume_atomic(tool, arguments, now=now)
 
 
 class ApprovalEngine:
-    """
-    Synchronous Tier-2 approval bridge for the Celina v5 Autonomy Engine.
+    """Synchronous Tier-2 approval bridge for the Celina v5 Autonomy Engine.
     Strictly fails CLOSED (returns False) if no interactive approval channel
     or Dynamic Island confirmation grants the exact (tool, arguments_hash) pair.
+
+    The callback is shown the arguments_hash for user confirmation; the hash
+    is also bound to the returned token so a caller cannot substitute a
+    different arguments_hash after approval.
     """
 
-    def __init__(self, approval_cb: Optional[Callable[[str, str], bool]] = None):
+    def __init__(self, approval_cb: Callable[[str, str], bool] | None = None):
         self._approval_cb = approval_cb
+        self._pending: dict[str, ApprovalToken] = {}
 
     def request_sync(
         self,
@@ -407,7 +450,21 @@ class ApprovalEngine:
         if self._approval_cb is None:
             # Fail-closed in headless / background mode when no interactive UI approver is attached
             return False
+
+        # Bind the hash: create a token and store it keyed by arguments_hash
         risk = TOOL_RISK_MAP.get(tool, RiskLevel.SECURITY_SENSITIVE)
+        ttl = max(5.0, min(300.0, float(timeout)))
+        token = ApprovalToken(
+            tool=tool,
+            target=f"autonomy:{tool}",
+            arguments_hash=arguments_hash,
+            risk=risk,
+            expires_at=time.time() + ttl,
+            expires_at_monotonic=time.monotonic() + ttl,
+            single_use=True,
+        )
+        self._pending[arguments_hash] = token
+
         title = f"Autonomy approval ({risk.value}): {tool}"
         details = (
             f"Tool:     {tool}\n"
@@ -417,7 +474,18 @@ class ApprovalEngine:
             f"Goal:     {context[:280]}"
         )
         try:
-            return bool(self._approval_cb(title, details))
+            approved = bool(self._approval_cb(title, details))
         except Exception:
+            self._pending.pop(arguments_hash, None)
             return False
+
+        if not approved:
+            self._pending.pop(arguments_hash, None)
+            return False
+
+        # Verify the binding: only succeed if the stored hash matches what was approved
+        stored = self._pending.pop(arguments_hash, None)
+        if stored is None or stored.arguments_hash != arguments_hash:
+            return False
+        return True
 

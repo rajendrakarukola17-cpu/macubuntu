@@ -1,5 +1,4 @@
-"""
-Celina v5 Proactive Daemon (`proactive/daemon.py`)
+"""Celina v5 Proactive Daemon (`proactive/daemon.py`)
 
 Event-driven world model consuming eBPF sensor events and system signals.
 Strict safety boundary:
@@ -18,8 +17,9 @@ import json
 import logging
 import signal
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from ..ebpf_sensor import DEFAULT_EBPF_STREAM, EbpfEventClient
 
@@ -34,7 +34,7 @@ class WorldState:
     battery_pct: int = 100
     on_ac: bool = True
     active_app: str = ""
-    calendar_event: Optional[str] = None
+    calendar_event: str | None = None
     focus_mode: str = "none"
     cpu_pressure: float = 0.0
     memory_pressure: float = 0.0
@@ -47,7 +47,7 @@ class ProactiveDaemon:
     def __init__(
         self,
         rules_path: Path = DEFAULT_RULES_PATH,
-        state_publisher: Optional[Callable[[dict[str, Any]], None]] = None,
+        state_publisher: Callable[[dict[str, Any]], None] | None = None,
         *,
         clock: Callable[[], float] = time.monotonic,
     ):

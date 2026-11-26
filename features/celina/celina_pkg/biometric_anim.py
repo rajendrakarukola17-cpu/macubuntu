@@ -1,5 +1,4 @@
-"""
-Celina AI - 60 FPS Apple-Style Face ID & Touch ID Dynamic Island Animator (v4.3)
+"""Celina AI - 60 FPS Apple-Style Face ID & Touch ID Dynamic Island Animator (v4.3)
 Pure Cairo vector geometry + spring physics driven by REAL OS D-Bus signals:
   - System Bus  : `net.reactivated.Fprint.Device` (`VerifyFingerSelected`, `VerifyStatus`)
                   for live Touch ID scan / match / shake-on-fail across sudo, Polkit & approvals.
@@ -16,8 +15,9 @@ Design & Security Invariants:
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Literal
 
 BiometricKind = Literal["face", "touch"]
 BiometricPhase = Literal["idle", "scanning", "success", "failure", "collapsing"]
@@ -37,7 +37,7 @@ SCREENSAVER_IFACE = "org.gnome.ScreenSaver"
 
 
 def _clamp01(x: float) -> float:
-    return 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
+    return 0.0 if x < 0.0 else (min(x, 1.0))
 
 
 def _ease_out_cubic(t: float) -> float:
@@ -46,8 +46,7 @@ def _ease_out_cubic(t: float) -> float:
 
 
 def classify_fprintd_status(result: str, done: bool) -> str:
-    """
-    Classifies a real `net.reactivated.Fprint.Device.VerifyStatus(result, done)` signal.
+    """Classifies a real `net.reactivated.Fprint.Device.VerifyStatus(result, done)` signal.
     Returns: 'success' | 'failure' | 'retry' | 'ignore'.
     """
     code = (result or "").strip().lower()
@@ -80,8 +79,7 @@ class BiometricVisualFrame:
 
 
 class BiometricAnimState:
-    """
-    Deterministic 60 FPS animation state machine for Apple Face ID & Touch ID visuals.
+    """Deterministic 60 FPS animation state machine for Apple Face ID & Touch ID visuals.
     100% independent of GTK/Cairo so every curve and state transition is unit-testable.
     """
 
@@ -92,7 +90,7 @@ class BiometricAnimState:
         self._t: float = 0.0
         self._phase_t: float = 0.0
         self._expand: float = 0.0
-        self._auto_resolve: Optional[tuple[float, bool]] = None
+        self._auto_resolve: tuple[float, bool] | None = None
 
     @property
     def is_active(self) -> bool:
@@ -103,7 +101,7 @@ class BiometricAnimState:
         kind: BiometricKind = "face",
         *,
         label: str = "",
-        auto_resolve_after: Optional[float] = None,
+        auto_resolve_after: float | None = None,
         auto_matched: bool = True,
     ) -> None:
         self.kind = "touch" if kind == "touch" else "face"
@@ -306,7 +304,7 @@ def _draw_face_id_glyph(cr: Any, cx: float, cy: float, rad: float, scan_phase: f
 
 
 def _draw_touch_id_ridges(
-    cr: Any, cx: float, cy: float, rad: float, ridge_fill: float, scan_phase: float, alpha: float
+    cr: Any, cx: float, cy: float, rad: float, ridge_fill: float, scan_phase: float, alpha: float,
 ) -> None:
     """Draws 6 concentric biometric fingerprint ridge arcs illuminating from center outward."""
     cr.set_line_width(2.5)
@@ -376,10 +374,9 @@ def _draw_failure_ring_and_cross(cr: Any, cx: float, cy: float, rad: float, prog
 
 
 class BiometricDBusObserver:
-    """
-    Zero-polling D-Bus observer connecting real OS authentication signals to Dynamic Island:
-      1. `net.reactivated.Fprint.Device` (`VerifyFingerSelected`, `VerifyStatus`) -> live Touch ID
-      2. `org.gnome.ScreenSaver` (`ActiveChanged(False)`) -> live unlock confirmation animation
+    """Zero-polling D-Bus observer connecting real OS authentication signals to Dynamic Island:
+    1. `net.reactivated.Fprint.Device` (`VerifyFingerSelected`, `VerifyStatus`) -> live Touch ID
+    2. `org.gnome.ScreenSaver` (`ActiveChanged(False)`) -> live unlock confirmation animation
     """
 
     def __init__(
@@ -387,9 +384,9 @@ class BiometricDBusObserver:
         *,
         on_start: Callable[[BiometricKind, str], None],
         on_resolve: Callable[[bool, str], None],
-        on_retry: Optional[Callable[[str], None]] = None,
-        on_unlock_welcome: Optional[Callable[[BiometricKind], None]] = None,
-        preferred_unlock_kind: Optional[Callable[[], BiometricKind]] = None,
+        on_retry: Callable[[str], None] | None = None,
+        on_unlock_welcome: Callable[[BiometricKind], None] | None = None,
+        preferred_unlock_kind: Callable[[], BiometricKind] | None = None,
         system_bus: Any = None,
         session_bus: Any = None,
     ):
@@ -460,7 +457,7 @@ class BiometricDBusObserver:
                     None,
                     Gio.DBusSignalFlags.NONE,
                     lambda _c, _s, _p, _i, _sig, params: self.handle_fprintd_selected(str(params.unpack()[0])),
-                )
+                ),
             )
             self._sys_subs.append(
                 sbus.signal_subscribe(
@@ -471,9 +468,9 @@ class BiometricDBusObserver:
                     None,
                     Gio.DBusSignalFlags.NONE,
                     lambda _c, _s, _p, _i, _sig, params: self.handle_fprintd_status(
-                        str(params.unpack()[0]), bool(params.unpack()[1])
+                        str(params.unpack()[0]), bool(params.unpack()[1]),
                     ),
-                )
+                ),
             )
             subscribed = True
         except Exception:
@@ -492,7 +489,7 @@ class BiometricDBusObserver:
                     None,
                     Gio.DBusSignalFlags.NONE,
                     lambda _c, _s, _p, _i, _sig, params: self.handle_screensaver_changed(bool(params.unpack()[0])),
-                )
+                ),
             )
             subscribed = True
         except Exception:

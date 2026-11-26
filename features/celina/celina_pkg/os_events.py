@@ -1,5 +1,4 @@
-"""
-Celina AI — OS Event Bus, Focus Modes & Automatic cgroup v2 App Nap Daemon (P2)
+"""Celina AI — OS Event Bus, Focus Modes & Automatic cgroup v2 App Nap Daemon (P2)
 Brings macOS-level invisible OS cohesion to Ubuntu 26.04 Wayland:
   1. Focus Modes (default / work / coding / sleep / presentation):
      Atomically coordinates GNOME Do-Not-Disturb, Night Light, and power profile.
@@ -26,11 +25,20 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
-from . import approval, automation, command_runner, config, ios_ancs, privacy, spotlight_index
+from . import (
+    approval,
+    automation,
+    command_runner,
+    config,
+    ios_ancs,
+    privacy,
+    spotlight_index,
+)
 
 ApprovalCallback = Callable[[str, str], bool]
 
@@ -76,8 +84,8 @@ FOCUS_STATE_FILE = config.BASE_DIR / "focus_mode.json"
 class FocusProfile:
     name: str
     show_banners: bool
-    night_light: Optional[bool]
-    power_profile: Optional[str]
+    night_light: bool | None
+    power_profile: str | None
     description: str
 
 
@@ -129,8 +137,8 @@ class FocusModeManager:
     def __init__(
         self,
         state_path: Path = FOCUS_STATE_FILE,
-        runner: Optional[RunnerFn] = None,
-        which: Callable[[str], Optional[str]] = shutil.which,
+        runner: RunnerFn | None = None,
+        which: Callable[[str], str | None] = shutil.which,
     ):
         self.state_path = Path(state_path)
         self._run = runner or (lambda cmd: command_runner.run_command(cmd, timeout=4.0))
@@ -215,8 +223,7 @@ class AppNapDecision:
 
 
 class AutoAppNapPolicy:
-    """
-    Pure decision engine mirroring macOS App Nap assertions:
+    """Pure decision engine mirroring macOS App Nap assertions:
     Never freezes protected/critical apps, the focused app, audio-active apps,
     or apps occluded for less than idle_threshold_sec.
     """
@@ -258,7 +265,7 @@ class CgroupFreezer:
     def __init__(self, cgroup_root: Path = Path("/sys/fs/cgroup")):
         self._root = cgroup_root
 
-    def find_app_cgroup(self, pid: int) -> Optional[Path]:
+    def find_app_cgroup(self, pid: int) -> Path | None:
         cg_file = Path(f"/proc/{pid}/cgroup")
         if not cg_file.exists():
             return None
@@ -285,8 +292,7 @@ class CgroupFreezer:
 
 
 class DynamicThemeScheduler:
-    """
-    macOS Dynamic Desktop (Auto Light <-> Dark Appearance at Sunrise/Sunset).
+    """macOS Dynamic Desktop (Auto Light <-> Dark Appearance at Sunrise/Sunset).
     Zero network calls: uses configurable local sunrise/sunset hours (default 06:30 -> 18:30)
     and only invokes gsettings when the target GNOME color-scheme actually changes.
     """
@@ -297,20 +303,20 @@ class DynamicThemeScheduler:
         sunrise_hour: float = 6.5,
         sunset_hour: float = 18.5,
         runner: Callable[[list[str]], command_runner.CommandResult] = command_runner.run_command,
-        which: Callable[[str], Optional[str]] = shutil.which,
+        which: Callable[[str], str | None] = shutil.which,
     ):
         self.sunrise_hour = float(sunrise_hour)
         self.sunset_hour = float(sunset_hour)
         self._run = runner
         self._which = which
-        self._last_scheme: Optional[str] = None
+        self._last_scheme: str | None = None
 
-    def desired_scheme(self, now: Optional[datetime.datetime] = None) -> str:
+    def desired_scheme(self, now: datetime.datetime | None = None) -> str:
         t = now or datetime.datetime.now()
         h = t.hour + (t.minute / 60.0)
         return "default" if self.sunrise_hour <= h < self.sunset_hour else "prefer-dark"
 
-    def apply_if_needed(self, now: Optional[datetime.datetime] = None) -> str:
+    def apply_if_needed(self, now: datetime.datetime | None = None) -> str:
         target = self.desired_scheme(now=now)
         if target == self._last_scheme:
             return target
@@ -324,17 +330,16 @@ class DynamicThemeScheduler:
 
 
 class AutoAppNapCoordinator:
-    """
-    Live occlusion tracker connecting AutoAppNapPolicy + CgroupFreezer safely:
-      - Tracks how long each non-active user GUI app has been out of focus
-      - Auto-thaws immediately when an app regains foreground focus OR starts PipeWire audio
-      - Guarantees thaw_all() on shutdown / SIGTERM so no app is ever left frozen!
+    """Live occlusion tracker connecting AutoAppNapPolicy + CgroupFreezer safely:
+    - Tracks how long each non-active user GUI app has been out of focus
+    - Auto-thaws immediately when an app regains foreground focus OR starts PipeWire audio
+    - Guarantees thaw_all() on shutdown / SIGTERM so no app is ever left frozen!
     """
 
     def __init__(
         self,
-        policy: Optional[AutoAppNapPolicy] = None,
-        freezer: Optional[CgroupFreezer] = None,
+        policy: AutoAppNapPolicy | None = None,
+        freezer: CgroupFreezer | None = None,
     ):
         self.policy = policy or AutoAppNapPolicy()
         self.freezer = freezer or CgroupFreezer()
@@ -358,8 +363,8 @@ class AutoAppNapCoordinator:
         *,
         active_app: str,
         active_audio_apps: set[str],
-        candidate_pids: Optional[dict[int, str]] = None,
-        now: Optional[float] = None,
+        candidate_pids: dict[int, str] | None = None,
+        now: float | None = None,
     ) -> list[str]:
         ts = now if now is not None else time.time()
         active_low = (active_app or "").strip().lower()
@@ -399,8 +404,7 @@ class AutoAppNapCoordinator:
 
 
 class OSEventMonitor:
-    """
-    Unified event daemon core (`celina-eventd.service`):
+    """Unified event daemon core (`celina-eventd.service`):
       - Hardware privacy dots (mic/cam/screen-share) & battery state
       - Active Focus Mode & optional Dynamic Light/Dark Appearance
       - Live iOS BLE ANCS status
@@ -412,10 +416,10 @@ class OSEventMonitor:
     def __init__(
         self,
         state_file: Path = config.BASE_DIR / "live_os_events.json",
-        theme_scheduler: Optional[DynamicThemeScheduler] = None,
-        app_nap: Optional[AutoAppNapCoordinator] = None,
-        enable_dynamic_appearance: Optional[bool] = None,
-        enable_auto_app_nap: Optional[bool] = None,
+        theme_scheduler: DynamicThemeScheduler | None = None,
+        app_nap: AutoAppNapCoordinator | None = None,
+        enable_dynamic_appearance: bool | None = None,
+        enable_auto_app_nap: bool | None = None,
     ):
         self.state_file = Path(state_file)
         self.theme_scheduler = theme_scheduler or DynamicThemeScheduler()
@@ -432,7 +436,7 @@ class OSEventMonitor:
         )
         self._last_spotlight_refresh: float = 0.0
         self._lock = threading.Lock()
-        self._latest_usb_alert: Optional[dict[str, Any]] = None
+        self._latest_usb_alert: dict[str, Any] | None = None
         self._dbus_failed_units: set[str] = set()
         self._slow_poll_ttl_sec: float = 60.0
         self._last_slow_poll_ts: float = 0.0
@@ -455,7 +459,7 @@ class OSEventMonitor:
             else:
                 self._dbus_failed_units.discard(clean)
 
-    def maybe_refresh_spotlight(self, *, interval_sec: float = 900.0, now: Optional[float] = None) -> int:
+    def maybe_refresh_spotlight(self, *, interval_sec: float = 900.0, now: float | None = None) -> int:
         ts = now if now is not None else time.time()
         if ts - self._last_spotlight_refresh < interval_sec:
             return 0
@@ -485,7 +489,7 @@ class OSEventMonitor:
         finally:
             idx.close()
 
-    def poll_once(self, *, now: Optional[datetime.datetime] = None) -> dict[str, Any]:
+    def poll_once(self, *, now: datetime.datetime | None = None) -> dict[str, Any]:
         appearance = (
             self.theme_scheduler.apply_if_needed(now=now)
             if self.enable_dynamic_appearance
@@ -561,8 +565,8 @@ class OSEventMonitor:
 # ============================================================================
 
 def get_failed_user_services(
-    runner: Optional[RunnerFn] = None,
-    which: Callable[[str], Optional[str]] = shutil.which,
+    runner: RunnerFn | None = None,
+    which: Callable[[str], str | None] = shutil.which,
 ) -> list[str]:
     """Returns currently failed systemd --user service unit names (0 extra dependencies)."""
     if not which("systemctl"):
@@ -583,11 +587,10 @@ def diagnose_systemd_service(
     unit_name: str,
     lines: int = 20,
     *,
-    runner: Optional[RunnerFn] = None,
-    which: Callable[[str], Optional[str]] = shutil.which,
+    runner: RunnerFn | None = None,
+    which: Callable[[str], str | None] = shutil.which,
 ) -> str:
-    """
-    Systemd Crash & Journal Doctor: inspects `systemctl --user status` and recent
+    """Systemd Crash & Journal Doctor: inspects `systemctl --user status` and recent
     `journalctl --user -u <unit>` logs with strict unit validation and secret redaction.
     """
     clean = (unit_name or "").strip()
@@ -624,7 +627,7 @@ def diagnose_systemd_service(
     hint = ""
     if "segfault" in combined_low or "core dumped" in combined_low or "sigsegv" in combined_low:
         hint = "CRITICAL: Segmentation fault / crash detected."
-    elif "out of memory" in combined_low or "oom-kill" in combined_low or "killed" in combined_low and "signal=kill" in combined_low:
+    elif "out of memory" in combined_low or "oom-kill" in combined_low or ("killed" in combined_low and "signal=kill" in combined_low):
         hint = "MEMORY LIMIT: Service was terminated by OOM killer."
     elif "address already in use" in combined_low or "bind failed" in combined_low:
         hint = "PORT CONFLICT: Another process is already bound to this port/socket."
@@ -667,11 +670,10 @@ def format_usb_drive_alert(label: str, size_bytes: int, mount_point: str = "") -
 
 def inspect_secret_service_lock_state(
     *,
-    runner: Optional[RunnerFn] = None,
-    which: Callable[[str], Optional[str]] = shutil.which,
+    runner: RunnerFn | None = None,
+    which: Callable[[str], str | None] = shutil.which,
 ) -> dict[str, Any]:
-    """
-    Queries Freedesktop Secret Service (`org.freedesktop.secrets`, GNOME Keyring / KeePassXC)
+    """Queries Freedesktop Secret Service (`org.freedesktop.secrets`, GNOME Keyring / KeePassXC)
     STRICTLY for collection labels and Locked booleans — NEVER reads any password or secret!
     """
     if not which("gdbus"):
@@ -719,11 +721,10 @@ def inspect_secret_service_lock_state(
 def get_secret_vault_status(
     unlock: bool = False,
     *,
-    runner: Optional[RunnerFn] = None,
-    which: Callable[[str], Optional[str]] = shutil.which,
+    runner: RunnerFn | None = None,
+    which: Callable[[str], str | None] = shutil.which,
 ) -> str:
-    """
-    Reports GNOME Keyring / KeePassXC Secret Service (`org.freedesktop.secrets`) vault lock status
+    """Reports GNOME Keyring / KeePassXC Secret Service (`org.freedesktop.secrets`) vault lock status
     without ever reading any stored passwords into Python. If `unlock=True` and a collection is
     locked, invokes the native Freedesktop OS unlock prompt (`org.freedesktop.Secret.Service.Unlock`).
     """
@@ -771,12 +772,11 @@ def manage_default_apps(
     mime_type: str = "web",
     desktop_id: str = "",
     *,
-    runner: Optional[RunnerFn] = None,
-    which: Callable[[str], Optional[str]] = shutil.which,
-    approval_cb: Optional[ApprovalCallback] = None,
+    runner: RunnerFn | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Inspects or switches Ubuntu GNOME default MIME handlers via `gio mime` / `xdg-mime`.
+    """Inspects or switches Ubuntu GNOME default MIME handlers via `gio mime` / `xdg-mime`.
     Supports friendly aliases: web/browser, pdf, mail, files/finder, text, image, video, audio.
     """
     act = (action or "get").strip().lower()
@@ -832,9 +832,8 @@ def manage_default_apps(
     return "Error: Neither `gio` nor `xdg-mime` is available."
 
 
-def _start_zero_poll_os_dbus_watchers(mon: OSEventMonitor) -> Optional[threading.Thread]:
-    """
-    Zero-polling background GLib D-Bus watcher for:
+def _start_zero_poll_os_dbus_watchers(mon: OSEventMonitor) -> threading.Thread | None:
+    """Zero-polling background GLib D-Bus watcher for:
       - System D-Bus `org.freedesktop.UDisks2` `InterfacesAdded` (USB drives / SD cards)
       - Session D-Bus `org.freedesktop.systemd1.Manager` `JobRemoved` (user unit failures)
     Degrades silently when PyGObject/Gio is absent (e.g. minimal headless environments).
@@ -904,11 +903,10 @@ def _start_zero_poll_os_dbus_watchers(mon: OSEventMonitor) -> Optional[threading
 def get_os_parity_health(
     *,
     etc_root: Path | str = "/etc",
-    home_root: Optional[Path | str] = None,
+    home_root: Path | str | None = None,
     dev_root: Path | str = "/dev",
 ) -> dict[str, Any]:
-    """
-    Zero-overhead (<1 ms) OS-level macOS parity readiness inspector for macubuntu.
+    """Zero-overhead (<1 ms) OS-level macOS parity readiness inspector for macubuntu.
     Checks deployed kernel/systemd/PipeWire/WirePlumber/udev/Wayland drop-ins.
     """
     etc = Path(etc_root)

@@ -1,5 +1,4 @@
-"""
-Celina AI - Native GNOME Calendar / Evolution RFC 5545 (.ics) App Intent Bridge (v4.3)
+"""Celina AI - Native GNOME Calendar / Evolution RFC 5545 (.ics) App Intent Bridge (v4.3)
 Gives Celina genuine Siri-style Calendar App Intents without fragile GUI clicking or cloud lock-in:
   - Reads GNOME Calendar's native local backend (`~/.local/share/evolution/calendar/system/calendar.ics`)
     plus a private fallback `~/.local/share/celina/calendar.ics` (`0600`) when Evolution isn't initialized.
@@ -10,11 +9,11 @@ Gives Celina genuine Siri-style Calendar App Intents without fragile GUI clickin
 from __future__ import annotations
 
 import datetime
-import re
+import fcntl
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 from . import approval, config
 
@@ -29,12 +28,12 @@ class CalendarEvent:
     uid: str
     summary: str
     start: datetime.datetime
-    end: Optional[datetime.datetime] = None
+    end: datetime.datetime | None = None
     location: str = ""
     description: str = ""
 
 
-def _resolve_calendar_path(ics_path: Optional[Path] = None) -> Path:
+def _resolve_calendar_path(ics_path: Path | None = None) -> Path:
     if ics_path is not None:
         return Path(ics_path)
     if EVOLUTION_DEFAULT_ICS.exists():
@@ -55,14 +54,13 @@ def _unfold_ics_lines(raw: str) -> list[str]:
 
 def _unescape_ics(val: str) -> str:
     return (
-        val.replace("\\n", "\n")
+        val.replace("\\\\", "\\")     # escape first: literal backslash -> single backslash
+        .replace("\\n", "\n")
         .replace("\\N", "\n")
         .replace("\\,", ",")
         .replace("\\;", ";")
-        .replace("\\\\", "\\")
         .strip()
     )
-
 
 def _escape_ics(val: str) -> str:
     return (
@@ -76,7 +74,20 @@ def _escape_ics(val: str) -> str:
     )
 
 
-def _parse_ics_datetime(raw_val: str) -> Optional[datetime.datetime]:
+def _fold_ics_line(line: str, limit: int = 75) -> str:
+    """Fold an RFC 5545 line at `limit` octets (CRLF + single space)."""
+    if len(line.encode("utf-8")) <= limit:
+        return line
+    out = [line[:limit]]
+    rest = line[limit:]
+    while rest:
+        chunk = rest[:limit - 1]
+        out.append(" " + chunk)
+        rest = rest[limit - 1:]
+    return "\r\n".join(out)
+
+
+def _parse_ics_datetime(raw_val: str, tzid: str = "") -> datetime.datetime | None:
     v = (raw_val or "").strip()
     if not v:
         return None
@@ -87,7 +98,13 @@ def _parse_ics_datetime(raw_val: str) -> Optional[datetime.datetime]:
         try:
             dt = datetime.datetime.strptime(core, fmt)
             if is_utc:
-                dt = dt.replace(tzinfo=datetime.timezone.utc).astimezone().replace(tzinfo=None)
+                dt = dt.replace(tzinfo=datetime.UTC).astimezone().replace(tzinfo=None)
+            elif tzid:
+                try:
+                    from zoneinfo import ZoneInfo
+                    dt = dt.replace(tzinfo=ZoneInfo(tzid)).astimezone().replace(tzinfo=None)
+                except Exception:
+                    pass  # unknown TZ -> keep naive (documented tradeoff)
             return dt
         except ValueError:
             continue
@@ -107,17 +124,21 @@ def parse_ics_events(raw_ics: str) -> list[CalendarEvent]:
             continue
         if upper == "END:VEVENT":
             if in_event:
-                dt_start = _parse_ics_datetime(cur.get("DTSTART", ""))
+                dt_start = _parse_ics_datetime(
+                    cur.get("DTSTART", ""), tzid=cur.get("_DTSTART_TZID", ""),
+                )
                 if dt_start is not None:
                     events.append(
                         CalendarEvent(
                             uid=cur.get("UID", ""),
                             summary=_unescape_ics(cur.get("SUMMARY", "(Untitled Event)")),
                             start=dt_start,
-                            end=_parse_ics_datetime(cur.get("DTEND", "")),
+                            end=_parse_ics_datetime(
+                                cur.get("DTEND", ""), tzid=cur.get("_DTEND_TZID", ""),
+                            ),
                             location=_unescape_ics(cur.get("LOCATION", "")),
                             description=_unescape_ics(cur.get("DESCRIPTION", "")),
-                        )
+                        ),
                     )
             in_event = False
             cur = {}
@@ -128,6 +149,12 @@ def parse_ics_events(raw_ics: str) -> list[CalendarEvent]:
         prop_name = key_part.split(";", 1)[0].strip().upper()
         if prop_name in {"UID", "SUMMARY", "DTSTART", "DTEND", "LOCATION", "DESCRIPTION"}:
             cur[prop_name] = val_part.strip()
+            # Capture TZID parameter for timezone-aware datetime parsing
+            for piece in key_part.split(";")[1:]:
+                if "=" in piece:
+                    k, v = piece.split("=", 1)
+                    if k.strip().upper() == "TZID":
+                        cur["_" + prop_name + "_TZID"] = v.strip()
     events.sort(key=lambda e: e.start)
     return events
 
@@ -144,8 +171,8 @@ def _event_end_or_default(ev: CalendarEvent) -> datetime.datetime:
 def load_upcoming_events(
     days: int = 7,
     *,
-    ics_path: Optional[Path] = None,
-    now: Optional[datetime.datetime] = None,
+    ics_path: Path | None = None,
+    now: datetime.datetime | None = None,
 ) -> list[CalendarEvent]:
     """Returns parsed upcoming CalendarEvent objects sorted chronologically."""
     path = _resolve_calendar_path(ics_path)
@@ -166,8 +193,8 @@ def load_upcoming_events(
 def get_upcoming_events(
     days: int = 7,
     *,
-    ics_path: Optional[Path] = None,
-    now: Optional[datetime.datetime] = None,
+    ics_path: Path | None = None,
+    now: datetime.datetime | None = None,
 ) -> str:
     """Lists upcoming GNOME Calendar / local .ics events within the next `days` days."""
     path = _resolve_calendar_path(ics_path)
@@ -185,7 +212,7 @@ def get_upcoming_events(
     return "\n".join(lines)
 
 
-def _parse_user_datetime(text: str) -> Optional[datetime.datetime]:
+def _parse_user_datetime(text: str) -> datetime.datetime | None:
     s = (text or "").strip()
     for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
         try:
@@ -202,11 +229,10 @@ def create_calendar_event(
     location: str = "",
     description: str = "",
     *,
-    ics_path: Optional[Path] = None,
-    approval_cb: Optional[ApprovalCallback] = None,
+    ics_path: Path | None = None,
+    approval_cb: ApprovalCallback | None = None,
 ) -> str:
-    """
-    Creates a native RFC 5545 VEVENT in GNOME Calendar (or private Celina .ics),
+    """Creates a native RFC 5545 VEVENT in GNOME Calendar (or private Celina .ics),
     protected by argument-bound approval and atomic 0600 file persistence.
     `start_time` format: 'YYYY-MM-DD HH:MM' (e.g. '2026-11-15 14:30').
     """
@@ -240,7 +266,7 @@ def create_calendar_event(
     if not ok:
         return err
 
-    now_utc = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    now_utc = datetime.datetime.now(datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
     ev_uid = f"{uuid.uuid4()}@celina.local"
     vevent_lines = [
         "BEGIN:VEVENT",
@@ -255,25 +281,31 @@ def create_calendar_event(
     if description.strip():
         vevent_lines.append(f"DESCRIPTION:{_escape_ics(description[:500])}")
     vevent_lines.append("END:VEVENT")
-    vevent_block = "\r\n".join(vevent_lines) + "\r\n"
+    vevent_block = "\r\n".join(_fold_ics_line(l) for l in vevent_lines) + "\r\n"
 
+    lock_path = path.with_suffix(path.suffix + ".lock")
     try:
-        if path.exists():
-            existing = path.read_text(encoding="utf-8", errors="replace")
-            idx = existing.upper().rfind("END:VCALENDAR")
-            if idx != -1:
-                updated = existing[:idx] + vevent_block + existing[idx:]
-            else:
-                updated = existing.rstrip() + "\r\n" + vevent_block + "END:VCALENDAR\r\n"
-        else:
-            updated = (
-                "BEGIN:VCALENDAR\r\n"
-                "VERSION:2.0\r\n"
-                "PRODID:-//macubuntu//Celina Calendar Bridge//EN\r\n"
-                + vevent_block
-                + "END:VCALENDAR\r\n"
-            )
-        config.atomic_write_private_text(path, updated)
+        with open(lock_path, "w") as lf:
+            fcntl.flock(lf, fcntl.LOCK_EX)
+            try:
+                if path.exists():
+                    existing = path.read_text(encoding="utf-8", errors="replace")
+                    idx = existing.upper().rfind("END:VCALENDAR")
+                    if idx != -1:
+                        updated = existing[:idx] + vevent_block + existing[idx:]
+                    else:
+                        updated = existing.rstrip() + "\r\n" + vevent_block + "END:VCALENDAR\r\n"
+                else:
+                    updated = (
+                        "BEGIN:VCALENDAR\r\n"
+                        "VERSION:2.0\r\n"
+                        "PRODID:-//macubuntu//Celina Calendar Bridge//EN\r\n"
+                        + vevent_block
+                        + "END:VCALENDAR\r\n"
+                    )
+                config.atomic_write_private_text(path, updated)
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
     except OSError as exc:
         return f"Error saving calendar event to {path}: {exc}"
 

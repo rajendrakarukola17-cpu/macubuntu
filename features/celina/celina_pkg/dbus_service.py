@@ -1,5 +1,4 @@
-"""
-Celina AI — D-Bus Inter-Process Nervous System (`org.macubuntu.Celina`)
+"""Celina AI — D-Bus Inter-Process Nervous System (`org.macubuntu.Celina`)
 
 Provides the strict, UID-verified session D-Bus service connecting:
   - Native GNOME Shell Extension (`celina-island@macubuntu.org`)
@@ -22,11 +21,28 @@ import os
 import signal
 import sys
 import time
-from typing import Any, Optional
+from typing import Any
 
-from . import capabilities, config, evidence, os_events, state_ops
+from . import capabilities, config, evidence, state_ops
 
 BUS_NAME = "org.macubuntu.Celina"
+
+
+def _read_celina_version() -> str:
+    """Read celina version dynamically from the capability manifest."""
+    try:
+        import json as _json
+        from pathlib import Path as _P
+        _manifest = _P(__file__).resolve().parents[3] / "features" / "celina" / "config" / "celina-capabilities.json"
+        if _manifest.is_file():
+            data = _json.loads(_manifest.read_text(encoding="utf-8"))
+            return str(data.get("celina_version", "4.4"))
+    except Exception:
+        pass
+    return "4.4"
+
+
+CELINA_VERSION = _read_celina_version()
 OBJECT_PATH = "/org/macubuntu/Celina"
 INTERFACE_NAME = "org.macubuntu.Celina1"
 AUTONOMY_INTERFACE_NAME = "org.macubuntu.Celina.Autonomy"
@@ -71,6 +87,10 @@ INTROSPECTION_XML = f"""
       <arg type="s" name="mode" direction="in"/>
       <arg type="s" name="result_json" direction="out"/>
     </method>
+    <method name="SetLiteMode">
+      <arg type="b" name="enabled" direction="in"/>
+      <arg type="s" name="result_json" direction="out"/>
+    </method>
     <signal name="StatusChanged">
       <arg type="s" name="status_json"/>
     </signal>
@@ -82,6 +102,9 @@ INTROSPECTION_XML = f"""
     <signal name="EdgeGlowChanged">
       <arg type="b" name="active"/>
       <arg type="s" name="mode"/>
+    </signal>
+    <signal name="LiteModeChanged">
+      <arg type="b" name="enabled"/>
     </signal>
   </interface>
   <interface name="{AUTONOMY_INTERFACE_NAME}">
@@ -112,25 +135,33 @@ ALLOWED_FOCUS_MODES = frozenset({"off", "work", "coding", "dnd", "sleep", "prese
 
 
 class CelinaDBusBackend:
-    """
-    Pure-Python D-Bus method handler enforcing peer-UID isolation and routing
+    """Pure-Python D-Bus method handler enforcing peer-UID isolation and routing
     all requests cleanly through Celina's existing security boundaries.
     Fully unit-testable without a live D-Bus daemon or GTK display server.
     """
 
-    def __init__(self, expected_uid: Optional[int] = None):
+    def __init__(self, expected_uid: int | None = None, mcp_action_cb: Any | None = None):
         self.expected_uid = os.getuid() if expected_uid is None else int(expected_uid)
         self._focus_mode = "off"
         self._started_at = time.time()
+        self._mcp_action_cb = mcp_action_cb
 
-    def verify_caller_uid(self, caller_uid: Optional[int]) -> tuple[bool, str]:
+    def emit_mcp_action_started(self, server: str, tool: str) -> None:
+        """Emit MCPActionStarted signal via the registered callback (if any)."""
+        if self._mcp_action_cb is not None:
+            try:
+                self._mcp_action_cb(server, tool)
+            except Exception:
+                pass
+
+    def verify_caller_uid(self, caller_uid: int | None) -> tuple[bool, str]:
         if caller_uid is None:
             return False, "Denied: unable to verify caller Unix UID."
         if int(caller_uid) != self.expected_uid:
             return False, f"Denied: caller UID {caller_uid} does not match session owner UID {self.expected_uid}."
         return True, ""
 
-    def get_status(self, *, caller_uid: Optional[int] = None) -> str:
+    def get_status(self, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -140,7 +171,7 @@ class CelinaDBusBackend:
             "ok": True,
             "assistant": config.get_assistant_name(),
             "nickname": config.get_assistant_nickname(),
-            "version": "4.4.0",
+            "version": CELINA_VERSION,
             "focus_mode": self._focus_mode,
             "uptime_sec": int(time.time() - self._started_at),
             "evidence_chain_ok": ev_ok,
@@ -151,10 +182,10 @@ class CelinaDBusBackend:
         }
         return json.dumps(payload, sort_keys=True)
 
-    def get_state(self, *, caller_uid: Optional[int] = None) -> str:
+    def get_state(self, *, caller_uid: int | None = None) -> str:
         return self.get_status(caller_uid=caller_uid)
 
-    def offload(self, *, caller_uid: Optional[int] = None) -> str:
+    def offload(self, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -166,12 +197,12 @@ class CelinaDBusBackend:
         body = json.dumps({"model": model, "keep_alive": 0}).encode("utf-8")
         req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=2.0):
+            with urllib.request.urlopen(req, timeout=2.0):  # nosec B310 — Ollama localhost API, scheme fixed to http
                 return json.dumps({"ok": True, "model": model, "message": f"Offloaded {model} from memory."})
         except Exception:
-            return json.dumps({"ok": True, "model": model, "message": f"Offload scheduled (local runtime idle/offline)."})
+            return json.dumps({"ok": True, "model": model, "message": "Offload scheduled (local runtime idle/offline)."})
 
-    def get_privacy_state(self, *, caller_uid: Optional[int] = None) -> str:
+    def get_privacy_state(self, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -188,11 +219,11 @@ class CelinaDBusBackend:
                 pass
         return json.dumps({"ok": True, **dots}, sort_keys=True)
 
-    def get_focus_mode(self, *, caller_uid: Optional[int] = None) -> str:
+    def get_focus_mode(self, *, caller_uid: int | None = None) -> str:
         ok, _err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         return self._focus_mode if ok else "denied"
 
-    def set_focus_mode(self, mode: str, *, caller_uid: Optional[int] = None) -> str:
+    def set_focus_mode(self, mode: str, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -208,20 +239,20 @@ class CelinaDBusBackend:
             pass
         return json.dumps({"ok": True, "focus_mode": clean}, sort_keys=True)
 
-    def get_capabilities_summary(self, *, caller_uid: Optional[int] = None) -> str:
+    def get_capabilities_summary(self, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return err
         return capabilities.format_capabilities_summary()
 
-    def undo_last(self, *, caller_uid: Optional[int] = None) -> str:
+    def undo_last(self, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
         u_ok, msg = state_ops.get_undo_journal().undo_action()
         return json.dumps({"ok": u_ok, "message": msg}, sort_keys=True)
 
-    def ask_prompt(self, prompt: str, *, caller_uid: Optional[int] = None) -> str:
+    def ask_prompt(self, prompt: str, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -239,7 +270,7 @@ class CelinaDBusBackend:
         return json.dumps({"ok": True, "source": src, "reply": reply}, sort_keys=True)
 
     # --- org.macubuntu.Celina.Autonomy methods (same UID verification) ---
-    def submit_goal(self, goal: str, *, caller_uid: Optional[int] = None) -> str:
+    def submit_goal(self, goal: str, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -260,7 +291,7 @@ class CelinaDBusBackend:
         finally:
             graph.close()
 
-    def get_task_graph(self, *, caller_uid: Optional[int] = None) -> str:
+    def get_task_graph(self, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -272,7 +303,7 @@ class CelinaDBusBackend:
         finally:
             graph.close()
 
-    def cancel_task(self, task_id: str, *, caller_uid: Optional[int] = None) -> str:
+    def cancel_task(self, task_id: str, *, caller_uid: int | None = None) -> str:
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
             return json.dumps({"ok": False, "error": err})
@@ -290,7 +321,7 @@ class CelinaDBusBackend:
         tool_name: str,
         arguments_json: str = "{}",
         *,
-        caller_uid: Optional[int] = None,
+        caller_uid: int | None = None,
         approval_cb: Any = None,
     ) -> str:
         """Capability #9: Routes D-Bus tool invocations through UnifiedCapabilityBus."""
@@ -311,11 +342,12 @@ class CelinaDBusBackend:
             arguments=args,
             transport="dbus",
             caller_uid=uid,
+            uid_provenance="dbus",
         )
         res = capability_bus.get_capability_bus().dispatch(req, approval_cb=approval_cb)
         return json.dumps(res.to_dict(), sort_keys=True)
 
-    def get_mcp_status(self, *, caller_uid: Optional[int] = None) -> str:
+    def get_mcp_status(self, *, caller_uid: int | None = None) -> str:
         """Returns the ordered MCP perception/actuation server catalog & runtime status."""
         ok, err = self.verify_caller_uid(self.expected_uid if caller_uid is None else caller_uid)
         if not ok:
@@ -325,8 +357,17 @@ class CelinaDBusBackend:
         return json.dumps({"ok": True, **mcp_loader.get_mcp_loader().status()}, sort_keys=True)
 
 
-def run_dbus_daemon() -> int:
-    """Hosts org.macubuntu.Celina & org.macubuntu.Celina.Autonomy on session D-Bus."""
+def run_dbus_daemon(role: str = "control") -> int:
+    """Hosts org.macubuntu.Celina & org.macubuntu.Celina.Autonomy on session D-Bus.
+
+    ``role`` is one of ``"control"`` (celina-dbus) or ``"router"`` (celina-router).
+    Sets the process comm name via prctl so ananicy-cpp can match the exact
+    Celina daemon entry point.
+    """
+    from . import config as _config
+
+    _config.set_process_name("celina-dbus" if role == "control" else "celina-router")
+
     try:
         import gi
 
@@ -343,7 +384,7 @@ def run_dbus_daemon() -> int:
     autonomy_iface_info = node_info.interfaces[1]
     loop = GLib.MainLoop()
 
-    def _resolve_sender_uid(conn: Any, sender: str) -> Optional[int]:
+    def _resolve_sender_uid(conn: Any, sender: str) -> int | None:
         try:
             res = conn.call_sync(
                 "org.freedesktop.DBus",
@@ -361,7 +402,7 @@ def run_dbus_daemon() -> int:
             return None
 
     def _on_method_call(
-        conn: Any, sender: str, _obj_path: str, _iface: str, method_name: str, params: Any, invocation: Any
+        conn: Any, sender: str, _obj_path: str, _iface: str, method_name: str, params: Any, invocation: Any,
     ) -> None:
         uid = _resolve_sender_uid(conn, sender)
         args = params.unpack() if params is not None else ()
@@ -375,7 +416,7 @@ def run_dbus_daemon() -> int:
             elif method_name == "SetFocusMode":
                 out = backend.set_focus_mode(str(args[0]) if args else "", caller_uid=uid)
                 conn.emit_signal(
-                    None, OBJECT_PATH, INTERFACE_NAME, "StatusChanged", GLib.Variant("(s)", (backend.get_status(caller_uid=uid),))
+                    None, OBJECT_PATH, INTERFACE_NAME, "StatusChanged", GLib.Variant("(s)", (backend.get_status(caller_uid=uid),)),
                 )
             elif method_name == "Offload":
                 out = backend.offload(caller_uid=uid)
@@ -388,7 +429,7 @@ def run_dbus_daemon() -> int:
             elif method_name == "SubmitGoal":
                 out = backend.submit_goal(str(args[0]) if args else "", caller_uid=uid)
                 conn.emit_signal(
-                    None, OBJECT_PATH, AUTONOMY_INTERFACE_NAME, "TaskStateChanged", GLib.Variant("(ss)", (str(out), "running"))
+                    None, OBJECT_PATH, AUTONOMY_INTERFACE_NAME, "TaskStateChanged", GLib.Variant("(ss)", (str(out), "running")),
                 )
             elif method_name == "GetTaskGraph":
                 out = backend.get_task_graph(caller_uid=uid)
@@ -396,7 +437,7 @@ def run_dbus_daemon() -> int:
                 tid = str(args[0]) if args else ""
                 out = backend.cancel_task(tid, caller_uid=uid)
                 conn.emit_signal(
-                    None, OBJECT_PATH, AUTONOMY_INTERFACE_NAME, "TaskStateChanged", GLib.Variant("(ss)", (tid, "cancelled"))
+                    None, OBJECT_PATH, AUTONOMY_INTERFACE_NAME, "TaskStateChanged", GLib.Variant("(ss)", (tid, "cancelled")),
                 )
             elif method_name == "GetMCPStatus":
                 out = backend.get_mcp_status(caller_uid=uid)
@@ -417,6 +458,20 @@ def run_dbus_daemon() -> int:
                         GLib.Variant("(bs)", (active_flag, glow_mode)),
                     )
                     out = json.dumps({"ok": True, "active": active_flag, "mode": glow_mode}, sort_keys=True)
+            elif method_name == "SetLiteMode":
+                ok_uid, err_uid = backend.verify_caller_uid(uid)
+                if not ok_uid:
+                    out = json.dumps({"ok": False, "error": err_uid})
+                else:
+                    enabled = bool(args[0]) if len(args) >= 1 else False
+                    conn.emit_signal(
+                        None,
+                        OBJECT_PATH,
+                        INTERFACE_NAME,
+                        "LiteModeChanged",
+                        GLib.Variant("(b)", (enabled,)),
+                    )
+                    out = json.dumps({"ok": True, "enabled": enabled}, sort_keys=True)
             else:
                 invocation.return_dbus_error("org.freedesktop.DBus.Error.UnknownMethod", f"Unknown: {method_name}")
                 return
@@ -427,6 +482,20 @@ def run_dbus_daemon() -> int:
     def _on_bus_acquired(conn: Any, _name: str) -> None:
         conn.register_object(OBJECT_PATH, iface_info, _on_method_call, None, None)
         conn.register_object(OBJECT_PATH, autonomy_iface_info, _on_method_call, None, None)
+        # Wire MCPActionStarted: engine._emit_mcp_action() -> backend.emit_mcp_action_started()
+        # -> self._mcp_action_cb() -> this closure -> D-Bus signal for Dynamic Island.
+        def _mcp_action_dbus_emit(server: str, tool: str) -> None:
+            try:
+                conn.emit_signal(
+                    None,
+                    OBJECT_PATH,
+                    AUTONOMY_INTERFACE_NAME,
+                    "MCPActionStarted",
+                    GLib.Variant("(ss)", (str(server), str(tool))),
+                )
+            except Exception:
+                pass
+        backend._mcp_action_cb = _mcp_action_dbus_emit
 
     owner_id = Gio.bus_own_name(
         Gio.BusType.SESSION,
@@ -451,8 +520,7 @@ def run_dbus_daemon() -> int:
 
 
 def emit_edge_glow(active: bool, mode: str = "task") -> bool:
-    """
-    Notifies org.macubuntu.Celina1.SetEdgeGlow so the native GNOME Shell Wayland
+    """Notifies org.macubuntu.Celina1.SetEdgeGlow so the native GNOME Shell Wayland
     extension (`celina-island@macubuntu.org`) renders click-through fullscreen edge
     lighting directly on Mutter's compositor layer. Fails open cleanly if headless.
     """
@@ -493,7 +561,7 @@ def main() -> int:
         print(CelinaDBusBackend().get_status())
         return 0
     if args.daemon or args.role == "router":
-        return run_dbus_daemon()
+        return run_dbus_daemon(role=args.role)
     parser.print_help()
     return 0
 

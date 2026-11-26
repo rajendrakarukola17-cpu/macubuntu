@@ -66,7 +66,13 @@ if [[ "$VERIFY_ONLY" -eq 1 ]]; then
     echo ""
     echo "=== Post-Reboot Secure Boot & v4l2loopback Verification ==="
     if [[ "$SB_STATE" == "enabled" ]]; then
-        if [[ -n "$MOK_DER" ]] && detect_mok_enrolled "$MOK_DER"; then
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+            if [[ -n "$MOK_DER" ]]; then
+                echo "  [dry-run] would verify: detect_mok_enrolled $MOK_DER"
+            else
+                echo "  [dry-run] would verify: MOK enrollment (MOK_DER not found)"
+            fi
+        elif [[ -n "$MOK_DER" ]] && detect_mok_enrolled "$MOK_DER"; then
             echo "  ✅ DKMS MOK ($MOK_DER) is ENROLLED in UEFI firmware."
         else
             echo "  ❌ DKMS MOK is NOT enrolled yet. Run: ./tools/enroll-mok.sh and reboot."

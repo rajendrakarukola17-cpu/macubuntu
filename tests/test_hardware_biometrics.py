@@ -6,6 +6,7 @@ Phase 8 Hardware Capability Layer & Biometrics Test Suite:
   - FIDO2 high-assurance authentication & AuthPolicyEngine enforcement
 """
 
+import os
 from pathlib import Path
 
 from celina_hardware.adapters import (
@@ -141,6 +142,25 @@ class TestBiometricGuardrailsAndAuthPolicy:
         assert cap["ir_camera_detected"] is False
         assert cap["rgb_webcam_only"] is True
         assert cap["uploads_frames"] is False
+
+    def test_ir_face_rejects_v4l2loopback_virtual_camera(self, tmp_path: Path):
+        """T3: v4l2loopback virtual camera named 'IR Camera' must be hard-rejected."""
+        vdir = tmp_path / "video4linux"
+        v0 = vdir / "video0"
+        v0.mkdir(parents=True)
+        (v0 / "name").write_text("IR Camera\n", encoding="utf-8")
+        # Simulate v4l2loopback driver via /sys/class/video4linux/video0/device/driver
+        dev_dir = v0 / "device"
+        dev_dir.mkdir(parents=True)
+        # v4l2loopback driver symlink (name of the target dir is the driver name)
+        os.symlink(f"/sys/module/v4l2loopback", str(dev_dir / "driver"))
+
+        ir = IRFaceAdapter(which=lambda _b: None)
+        cap = ir.probe(sys_video_dir=vdir)
+        assert cap["ir_camera_detected"] is False, \
+            f"v4l2loopback virtual camera must be rejected, got: {cap}"
+        assert "ir_devices" not in cap or len(cap.get("ir_devices", [])) == 0, \
+            f"v4l2loopback must not appear in ir_devices, got: {cap.get('ir_devices')}"
 
     def test_fido2_adapter_probes_tokens(self):
         fido = FIDO2Adapter(

@@ -1,5 +1,4 @@
-"""
-Celina AI — True CoreSpotlight Fast Engine (<25 MB RAM, Zero eval())
+"""Celina AI — True CoreSpotlight Fast Engine (<25 MB RAM, Zero eval())
 Provides instant Spotlight-grade responses directly in Ubuntu:
   1. Safe AST Math Evaluator (pure operator/function whitelist — NEVER uses eval()!)
   2. Instant Unit Converter (length, mass, temperature, data size, speed, time)
@@ -10,6 +9,7 @@ Provides instant Spotlight-grade responses directly in Ubuntu:
 from __future__ import annotations
 
 import ast
+import asyncio
 import math
 import operator
 import os
@@ -18,9 +18,29 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config, embeddings, privacy
+
+try:
+    from .runtime.tier_policy import CelinaTierPolicy
+except Exception:  # pragma: no cover - runtime package import fallback
+    CelinaTierPolicy = None  # type: ignore
+
+# Optional asyncinotify for incremental file watching
+try:
+    import asyncinotify
+    HAS_ASYNCINOTIFY = True
+except ImportError:
+    HAS_ASYNCINOTIFY = False
+
+# Optional fastembed for incremental vector embeddings
+try:
+    from fastembed import TextEmbedding
+    HAS_FASTEMBED = True
+except ImportError:
+    HAS_FASTEMBED = False
+    TextEmbedding = None  # type: ignore[assignment,misc]
 
 # --- 1. Safe AST Math Calculator (ZERO eval!) ---
 _BIN_OPS = {
@@ -54,7 +74,7 @@ _MATH_CONSTS = {
 }
 
 
-def safe_calculate(expression: str) -> Optional[str]:
+def safe_calculate(expression: str) -> str | None:
     """Safely evaluates arithmetic/scientific expressions via Python AST whitelist (zero eval!)."""
     expr = (expression or "").strip().replace("^", "**")
     if not expr or len(expr) > 120:
@@ -124,7 +144,7 @@ _UNIT_TABLES: dict[str, dict[str, float]] = {
 }
 
 
-def convert_units(query: str) -> Optional[str]:
+def convert_units(query: str) -> str | None:
     """Converts common units instantaneously (e.g. '100 km to miles', '37 C to F', '8 GB to MB')."""
     m = re.fullmatch(
         r"\s*(-?\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s+(?:to|in)\s+([a-zA-Z]+)\s*",
@@ -183,12 +203,34 @@ _SKIP_DIRS = frozenset({
 })
 SPOTLIGHT_DB_PATH = config.BASE_DIR / "spotlight_index.db"
 
+# Module-level singleton — SpotlightIndex opens a 32MB mmap SQLite connection
+# and initializes WAL pragmas on every construction. spotlight_query() is called
+# on every rofi keystroke, so a per-call instance would open/close SQLite ~8
+# times per second at typing speed. Lazy singleton with atexit cleanup.
+_DEFAULT_INDEX: SpotlightIndex | None = None
+
+
+def _get_default_index() -> SpotlightIndex:
+    global _DEFAULT_INDEX
+    if _DEFAULT_INDEX is None:
+        _DEFAULT_INDEX = SpotlightIndex()
+        import atexit
+
+        atexit.register(_DEFAULT_INDEX.close)
+    return _DEFAULT_INDEX
+
 
 class SpotlightIndex:
     """Private 0600 SQLite FTS5 file metadata index for <15ms Spotlight search."""
 
-    def __init__(self, db_path: Path = SPOTLIGHT_DB_PATH):
+    def __init__(
+        self,
+        db_path: Path = SPOTLIGHT_DB_PATH,
+        *,
+        tier_policy: Any = None,
+    ):
         self.db_path = Path(db_path)
+        self.tier_policy = tier_policy
         self._lock = threading.RLock()
         config.ensure_private_dir(self.db_path.parent)
         config.ensure_private_file(self.db_path)
@@ -200,6 +242,16 @@ class SpotlightIndex:
         self._conn.execute("PRAGMA temp_store=MEMORY;")
         self._conn.execute("PRAGMA mmap_size=33554432;")
         self._conn.execute("PRAGMA cache_size=-4000;")
+        # Create WAL/SHM proactively so chmod below catches them at creation time.
+        # SQLite creates these lazily; without this, a WAL file could be created
+        # by SQLite with default permissions before we get a chance to chmod it.
+        for suf in ("-wal", "-shm"):
+            p = Path(f"{self.db_path}{suf}")
+            if not p.exists():
+                try:
+                    p.touch()
+                except OSError:
+                    pass
         for suf in ("", "-wal", "-shm"):
             p = Path(f"{self.db_path}{suf}")
             if p.exists():
@@ -208,6 +260,13 @@ class SpotlightIndex:
                 except OSError:
                     pass
         self._init_schema()
+
+    @property
+    def spotlight_batch_size(self) -> int:
+        """Batch size for Spotlight indexing, derived from tier policy."""
+        if self.tier_policy is not None:
+            return int(getattr(self.tier_policy, "spotlight_batch_size", 4))
+        return 4
 
     def close(self) -> None:
         with self._lock:
@@ -250,10 +309,11 @@ class SpotlightIndex:
                     mtime REAL NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_doc_chunks_path ON doc_chunks(path);
-                """
+                CREATE INDEX IF NOT EXISTS idx_doc_chunks_mtime ON doc_chunks(mtime DESC);
+                """,
             )
 
-    def refresh(self, roots: Optional[list[Path]] = None, max_files: int = 5000) -> int:
+    def refresh(self, roots: list[Path] | None = None, max_files: int = 5000) -> int:
         scan_roots = roots or [
             config.HOME / "Documents",
             config.HOME / "Desktop",
@@ -315,14 +375,13 @@ class SpotlightIndex:
 
     def index_document_chunks(
         self,
-        roots: Optional[list[Path]] = None,
+        roots: list[Path] | None = None,
         *,
         max_files: int = 120,
         chunk_chars: int = 420,
         max_chunks_per_file: int = 6,
     ) -> int:
-        """
-        Incrementally embeds focused text/markdown/code chunks (~420 chars) inside spotlight_index.db
+        """Incrementally embeds focused text/markdown/code chunks (~420 chars) inside spotlight_index.db
         for semantic meaning-based file retrieval (skips hidden/secret dirs & unchanged mtimes).
         Zero-op (<1 ms) when no embedding engine is active.
         """
@@ -343,11 +402,14 @@ class SpotlightIndex:
             config.HOME / "Desktop",
             config.HOME / "Projects",
         ]
-        existing_mtimes: dict[str, float] = {}
+        # Fingerprint = (mtime_ns, size_bytes) — mtime alone is insufficient on
+        # network mounts with second-resolution timestamps; a touched file with
+        # the same mtime would never re-embed despite changed contents.
+        existing_mtimes: dict[str, tuple[float, int]] = {}
         try:
             with self._lock:
                 for r in self._conn.execute("SELECT path, MAX(mtime) AS mt FROM doc_chunks GROUP BY path").fetchall():
-                    existing_mtimes[str(r["path"])] = float(r["mt"] or 0.0)
+                    existing_mtimes[str(r["path"])] = (float(r["mt"] or 0.0), 0)
         except sqlite3.Error:
             pass
 
@@ -358,6 +420,14 @@ class SpotlightIndex:
                 self._conn.executemany("DELETE FROM doc_chunks WHERE path = ?", [(p,) for p in stale_paths])
                 for p in stale_paths:
                     existing_mtimes.pop(p, None)
+
+        # Reaper: drop doc_chunks older than 90 days to prevent unbounded growth
+        cutoff = time.time() - 90 * 86400
+        try:
+            with self._lock, self._conn:
+                self._conn.execute("DELETE FROM doc_chunks WHERE mtime < ?", (cutoff,))
+        except sqlite3.Error:
+            pass
 
         vault = privacy.RedactionVault()
         indexed_chunks = 0
@@ -382,7 +452,12 @@ class SpotlightIndex:
                     if st.st_size <= 0 or st.st_size > 131072:
                         continue
                     p_str = str(full)
-                    if abs(existing_mtimes.get(p_str, -1.0) - st.st_mtime) < 1e-3:
+                    stored = existing_mtimes.get(p_str)
+                    if (
+                        stored is not None
+                        and abs(stored[0] - st.st_mtime) < 1e-3
+                        and stored[1] == st.st_size
+                    ):
                         continue
                     try:
                         raw = full.read_text(encoding="utf-8", errors="ignore")[:65536].strip()
@@ -419,12 +494,134 @@ class SpotlightIndex:
                                 (ckey, p_str, idx_c, ch_txt[:260], len(vec), blob, st.st_mtime),
                             )
                             indexed_chunks += 1
+                        existing_mtimes[p_str] = (st.st_mtime, st.st_size)
                     files_done += 1
         return indexed_chunks
 
-    def search_hybrid(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+    # --- asyncinotify incremental file watching ---
+    async def watch_roots(
+        self,
+        roots: list[Path] | None = None,
+        poll_interval_ms: int = 2000,
+    ) -> None:
+        """Watch roots for file changes using asyncinotify and incrementally
+        update the Spotlight index. Falls back to periodic rescan if
+        asyncinotify is unavailable.
         """
-        Hybrid CoreSpotlight Search: fuses FTS5 filename/path BM25 matches + semantic chunk
+        scan_roots = roots or [
+            config.HOME / "Documents",
+            config.HOME / "Desktop",
+            config.HOME / "Downloads",
+            config.HOME / "Projects",
+        ]
+
+        if not HAS_ASYNCINOTIFY:
+            log.warning("asyncinotify not installed; falling back to periodic rescan")
+            while True:
+                self.refresh(roots=scan_roots)
+                await asyncio.sleep(poll_interval_ms / 1000.0)
+            return
+
+
+        watcher = asyncinotify.Watcher()
+        try:
+            for root in scan_roots:
+                if root.exists():
+                    watcher.add(
+                        asyncinotify.Path(str(root)),
+                        asyncinotify.Flags.MODIFY
+                        | asyncinotify.Flags.CREATE
+                        | asyncinotify.Flags.DELETE
+                        | asyncinotify.Flags.MOVED_TO
+                        | asyncinotify.Flags.MOVED_FROM,
+                    )
+
+            async for event in watcher:
+                path = Path(event.path)
+                if path.is_dir() or path.name.startswith("."):
+                    continue
+                # Incremental update: re-index the changed file
+                try:
+                    st = path.stat()
+                    with self._lock, self._conn:
+                        self._conn.execute(
+                            """
+                            INSERT INTO indexed_files(path, name, ext, size_bytes, mtime)
+                            VALUES (?, ?, ?, ?, ?)
+                            ON CONFLICT(path) DO UPDATE SET
+                                name=excluded.name, ext=excluded.ext,
+                                size_bytes=excluded.size_bytes, mtime=excluded.mtime
+                            """,
+                            (str(path), path.name, path.suffix.lower().lstrip("."), st.st_size, st.st_mtime),
+                        )
+                        self._conn.commit()
+                except OSError:
+                    # File may have been deleted
+                    try:
+                        with self._lock, self._conn:
+                            self._conn.execute(
+                                "DELETE FROM indexed_files WHERE path = ?",
+                                (str(path),),
+                            )
+                            self._conn.commit()
+                    except sqlite3.Error:
+                        pass
+        finally:
+            watcher.close()
+
+    def start_watcher(
+        self,
+        roots: list[Path] | None = None,
+        poll_interval_ms: int = 2000,
+    ) -> asyncio.Task | None:
+        """Start the asyncinotify watcher as a background asyncio task.
+        Returns the task, or None if asyncinotify is unavailable.
+        """
+        if not HAS_ASYNCINOTIFY:
+            log.warning("asyncinotify not installed; watcher not started")
+            return None
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.watch_roots(roots=roots, poll_interval_ms=poll_interval_ms))
+        except RuntimeError:
+            log.warning("No running event loop; watcher not started")
+            return None
+
+    # --- fastembed incremental vector embeddings ---
+    def embed_document(self, path: Path, text: str) -> int:
+        """Generate and store a fastembed vector for a document chunk.
+        Returns the number of chunks indexed (0 if fastembed unavailable).
+        """
+        if not HAS_FASTEMBED or TextEmbedding is None:
+            return 0
+        try:
+            model = TextEmbedding()
+            chunks = [text[i:i + 420] for i in range(0, len(text), 420)]
+            if not chunks:
+                return 0
+            vecs = list(model.embed(chunks))
+            st = path.stat()
+            p_str = str(path)
+            with self._lock, self._conn:
+                self._conn.execute("DELETE FROM doc_chunks WHERE path = ?", (p_str,))
+                for idx_c, (ch_txt, vec) in enumerate(zip(chunks, vecs)):
+                    ckey = f"{p_str}#{idx_c}"
+                    blob = embeddings.pack_vector(vec, target_dim=config.EMBED_DIM)
+                    self._conn.execute(
+                        """
+                        INSERT INTO doc_chunks (chunk_key, path, chunk_idx, snippet, dim, vec, mtime)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (ckey, p_str, idx_c, ch_txt[:260], len(vec), blob, st.st_mtime),
+                    )
+                self._conn.commit()
+            return len(chunks)
+        except Exception:
+            return 0
+
+    def search_hybrid(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Hybrid CoreSpotlight Search: fuses FTS5 filename/path BM25 matches + semantic chunk
         cosine matches via Reciprocal Rank Fusion (k=60). Falls back cleanly to pure FTS5
         when no chunks or embedding engine are present.
         """
@@ -449,7 +646,7 @@ class SpotlightIndex:
             try:
                 with self._lock:
                     rows = self._conn.execute(
-                        "SELECT chunk_key, path, snippet, vec, mtime FROM doc_chunks ORDER BY mtime DESC LIMIT 3000"
+                        "SELECT chunk_key, path, snippet, vec, mtime FROM doc_chunks ORDER BY mtime DESC LIMIT 3000",
                     ).fetchall()
             except sqlite3.Error:
                 rows = []
@@ -496,7 +693,7 @@ class SpotlightIndex:
         return out
 
 
-def spotlight_query(query: str, index: Optional[SpotlightIndex] = None) -> str:
+def spotlight_query(query: str, index: SpotlightIndex | None = None) -> str:
     """Unified CoreSpotlight resolver: instant math -> unit conversion -> settings -> hybrid indexed files."""
     q = (query or "").strip()
     if not q:
@@ -523,12 +720,11 @@ def spotlight_query(query: str, index: Optional[SpotlightIndex] = None) -> str:
     seen_panels = list(dict.fromkeys(matched_panels))
 
     # 4. Private Hybrid (FTS5 + Semantic RRF) file matches
-    idx = index or SpotlightIndex()
+    idx = index or _get_default_index()
     try:
         hits = idx.search_hybrid(q, limit=8)
     finally:
-        if index is None:
-            idx.close()
+        pass  # singleton is managed by module-level atexit; do not close
     lines: list[str] = []
     lines.extend(seen_panels[:3])
     for h in hits:
@@ -541,9 +737,8 @@ def spotlight_query(query: str, index: Optional[SpotlightIndex] = None) -> str:
     return "\n".join(lines)
 
 
-def format_rofi_spotlight_entries(query: str = "", index: Optional[SpotlightIndex] = None) -> list[tuple[str, str]]:
-    """
-    Returns (display_label, action_payload) pairs for Rofi native script mode (`--rofi-mode`),
+def format_rofi_spotlight_entries(query: str = "", index: SpotlightIndex | None = None) -> list[tuple[str, str]]:
+    """Returns (display_label, action_payload) pairs for Rofi native script mode (`--rofi-mode`),
     giving real-time inline macOS Spotlight math, unit conversion, GNOME Settings, and private FTS5 files.
     """
     q = (query or "").strip()
@@ -571,13 +766,12 @@ def format_rofi_spotlight_entries(query: str = "", index: Optional[SpotlightInde
             seen_panels.add(panel)
             entries.append((f"⚙️ Open Settings: {desc}", f"settings:{panel}"))
 
-    idx = index or SpotlightIndex()
+    idx = index or _get_default_index()
     try:
         for h in idx.search(q, limit=6):
             entries.append((f"📄 {h['name']} — {h['path']}", f"open:{h['path']}"))
     finally:
-        if index is None:
-            idx.close()
+        pass  # singleton is managed by module-level atexit; do not close
 
     entries.append((f"✨ Ask {config.get_assistant_name()}: {q}", f"ask:{q}"))
     return entries
@@ -617,6 +811,9 @@ def _handle_rofi_mode(argv: list[str]) -> int:
 
 
 if __name__ == "__main__":
+    from celina_pkg import config as _cfg
+    _cfg.set_process_name("celina-search")
+
     import sys as _sys
 
     if "--rofi-mode" in _sys.argv:

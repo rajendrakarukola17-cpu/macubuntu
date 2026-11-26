@@ -1,0 +1,628 @@
+#!/usr/bin/env bash
+# ============================================================================
+# macubuntu-reconfigure — hardware-adaptive profile reconfiguration CLI
+#
+# Re-applies a declarative hardware profile (8gb / 16gb / 32gb) across every
+# adaptive subsystem, driven by /etc/macubuntu/hardware.json:
+#
+#   • /etc/macubuntu/hardware.json          ram_tier / ai_tier / ram_mb / …
+#   • /etc/systemd/zram-generator.conf      ZRAM_SIZE_EXPR evaluated → bytes
+#   • /etc/sysctl.d/99-macubuntu-vm.conf    swappiness, dirty_*_bytes, …
+#   • ~/.config/systemd/user/celina-ai.slice cgroup ceilings (High/Max/CPU/IO)
+#   • ~/.config/celina/models.ini           llama-server Router Mode preset
+#   • ~/.config/celina/tier-policy.json     CelinaTierPolicy serialization
+#
+# Usage:
+#   macubuntu-reconfigure --profile=16gb        Force 16 GB profile (override)
+#   macubuntu-reconfigure --auto                Auto-detect from /proc/meminfo
+#   macubuntu-reconfigure --dry-run             Preview, zero mutations
+#   macubuntu-reconfigure --rollback            Rollback to previous hardware.json
+#
+# Exit codes (P5 contract): 0 success | 1 error | 2 misuse | 3 rollback
+# ============================================================================
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+export REPO_DIR
+
+# --- CLI argument parsing (BEFORE any init, so --dry-run creates zero side effects) ---
+DRY_RUN="${DRY_RUN:-0}"
+FORCE_PROFILE=""
+AUTO_DETECT=0
+DO_ROLLBACK=0
+TARGET_USER=""  # real desktop user whose $HOME receives user-level files
+
+usage() {
+    cat <<'EOF'
+Usage: macubuntu-reconfigure [options]
+
+  --profile=<8gb|16gb|32gb>   Force a hardware profile (overrides detection)
+  --auto                      Auto-detect ram_tier from /proc/meminfo
+  --dry-run                   Preview all changes, make zero mutations
+  --rollback                  Rollback to previous hardware.json (exit 3)
+  --user <username>           Target desktop user for user-level files (auto-detected when run as root)
+  -h, --help                  Show this help
+
+Examples:
+  macubuntu-reconfigure --profile=32gb
+  macubuntu-reconfigure --auto --dry-run
+  macubuntu-reconfigure --rollback
+  sudo macubuntu-reconfigure --auto --user alice
+
+Exit codes: 0 success | 1 error | 2 misuse | 3 rollback completed
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --profile=*)
+            FORCE_PROFILE="${1#--profile=}"
+            shift
+            ;;
+        --profile)
+            FORCE_PROFILE="${2:?Missing --profile value}"
+            shift 2
+            ;;
+        --auto) AUTO_DETECT=1; shift ;;
+        --dry-run) DRY_RUN=1; export DRY_RUN=1; shift ;;
+        --rollback) DO_ROLLBACK=1; shift ;;
+        --user)
+            TARGET_USER="${2:?Missing --user value}"
+            shift 2
+            ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
+done
+
+# --- Validate profile names early --------------------------------------------
+valid_profile() {
+    local p="$1"
+    [[ "$p" == "8gb" || "$p" == "16gb" || "$p" == "32gb" ]]
+}
+
+# --- Resolve target user (never write to /root/ when invoked as root at boot) ---
+resolve_target_user() {
+    if [[ -n "$TARGET_USER" ]]; then
+        echo "$TARGET_USER"
+        return 0
+    fi
+    # When invoked via sudo/pkexec, SUDO_USER is the human desktop user
+    if [[ -n "${SUDO_USER:-}" && "${SUDO_USER:-}" != "root" ]]; then
+        echo "${SUDO_USER}"
+        return 0
+    fi
+    # Otherwise find the primary desktop user (UID >= 1000, not nobody)
+    local desktop_user
+    desktop_user="$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}' /etc/passwd 2>/dev/null || true)"
+    if [[ -n "$desktop_user" ]]; then
+        echo "$desktop_user"
+        return 0
+    fi
+    echo ""
+}
+
+if [[ "$(id -un 2>/dev/null || echo unknown)" == "root" ]]; then
+    TARGET_USER="$(resolve_target_user)"
+    if [[ -z "$TARGET_USER" ]]; then
+        echo "❌ Running as root but cannot determine desktop user — pass --user <username>" >&2
+        exit 2
+    fi
+    export TARGET_USER
+fi
+
+# --- Source shared engine only after CLI is parsed (DRY_RUN already set) -----
+# shellcheck source=../core/common.sh
+source "$REPO_DIR/core/common.sh"
+
+# init_defaults loads profile defaults; init_runtime_state creates WORKDIR etc.
+# Both are safe under DRY_RUN=1 (common.sh guards all writes), but we skip
+# init_runtime_state entirely in dry-run to guarantee zero filesystem touches.
+init_defaults
+if [[ "$DRY_RUN" != "1" ]]; then
+    init_runtime_state
+fi
+
+HW_DIR="/etc/macubuntu"
+HW_FILE="$HW_DIR/hardware.json"
+HW_PREV="$HW_DIR/hardware.json.prev"
+APPLIED_FILE="$HW_DIR/last_applied_profile"
+PROFILES_DIR="$REPO_DIR/profiles"
+STAGE35="$REPO_DIR/stages/35-memory-zram.sh"
+
+# User-level paths resolve to the REAL desktop user's $HOME, never /root/
+if [[ -n "${TARGET_USER:-}" ]]; then
+    TARGET_HOME="$(getent passwd "$TARGET_USER" 2>/dev/null | cut -d: -f6 || true)"
+    if [[ -z "$TARGET_HOME" ]]; then
+        echo "❌ Cannot resolve home directory for user '$TARGET_USER'" >&2
+        exit 2
+    fi
+else
+    TARGET_HOME="$HOME"
+fi
+export TARGET_HOME TARGET_USER
+CELINA_CONFIG_DIR="${TARGET_HOME}/.config/celina"
+CELINA_USER_SYSTEMD="${TARGET_HOME}/.config/systemd/user"
+
+# --- Rollback: P5 contract — exit 3, re-apply restored tier (not --auto!) ---
+if [[ "$DO_ROLLBACK" == "1" ]]; then
+    if ! sudo test -f "$HW_PREV" 2>/dev/null; then
+        echo "❌ No previous hardware.json to roll back to ($HW_PREV missing)" >&2
+        exit 1
+    fi
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] would roll back $HW_FILE from $HW_PREV"
+        echo "      [dry-run] would re-apply profile from rolled-back hardware.json (exit 3)"
+        exit 0
+    fi
+    # Always refresh HW_PREV before overwriting HW_FILE (remove stale-rollback bug)
+    sudo cp "$HW_FILE" "$HW_PREV" 2>/dev/null || true
+    # P5 rollback contract: restore previous hardware.json atomically
+    sudo cat "$HW_PREV" | write_root_file "$HW_FILE" 644
+    echo "  🔙 Rolled back $HW_FILE from $HW_PREV"
+    # Re-apply the RESTORED tier (not --auto, which would re-detect and overwrite)
+    RESTORED_TIER="$(read_current_ram_tier)"
+    echo "  ℹ️  Restored ram_tier=${RESTORED_TIER}"
+    if valid_profile "$RESTORED_TIER"; then
+        "$0" --profile="$RESTORED_TIER" "${TARGET_USER:+--user}" "${TARGET_USER:+$TARGET_USER}"
+    fi
+    exit 3  # P5 rollback contract
+fi
+
+# --- Determine target ram_tier ----------------------------------------------
+detect_ram_tier_from_meminfo() {
+    local ram_mb
+    ram_mb="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+    if (( ram_mb < 12000 )); then echo "8gb"; elif (( ram_mb < 24000 )); then echo "16gb"; else echo "32gb"; fi
+}
+
+read_current_ram_tier() {
+    if [[ -f "$HW_FILE" ]] && command -v jq >/dev/null 2>&1; then
+        jq -r '.ram_tier // "unknown"' "$HW_FILE" 2>/dev/null || echo unknown
+    else
+        echo unknown
+    fi
+}
+
+if [[ -n "$FORCE_PROFILE" ]]; then
+    if ! valid_profile "$FORCE_PROFILE"; then
+        echo "❌ Invalid --profile '$FORCE_PROFILE' (must be 8gb | 16gb | 32gb)" >&2
+        exit 2
+    fi
+    TARGET_TIER="$FORCE_PROFILE"
+elif [[ "$AUTO_DETECT" == "1" ]]; then
+    TARGET_TIER="$(detect_ram_tier_from_meminfo)"
+else
+    TARGET_TIER="$(read_current_ram_tier)"
+    if [[ "$TARGET_TIER" == "unknown" || "$TARGET_TIER" == "null" ]]; then
+        TARGET_TIER="$(detect_ram_tier_from_meminfo)"
+    fi
+fi
+
+echo "🎯 Target ram_tier: $TARGET_TIER"
+
+# --- Re-derive hardware.json ------------------------------------------------
+rederive_hardware_json() {
+    local tier="$1" ram_mb
+    ram_mb="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+
+    # Preserve existing NPU fields from the current hardware.json so reconfigure
+    # does not drop NPU telemetry (P1: backend.py reads npu_* for fit badges)
+    local npu_available="false" npu_vendor="none" npu_driver="none" npu_device="" npu_backend="none"
+    if [[ -f "$HW_FILE" ]] && command -v jq >/dev/null 2>&1; then
+        npu_available="$(jq -r '.npu_available // "false"' "$HW_FILE" 2>/dev/null || echo false)"
+        npu_vendor="$(jq -r '.npu_vendor // "none"' "$HW_FILE" 2>/dev/null || echo none)"
+        npu_driver="$(jq -r '.npu_driver // "none"' "$HW_FILE" 2>/dev/null || echo none)"
+        npu_device="$(jq -r '.npu_device // ""' "$HW_FILE" 2>/dev/null || echo "")"
+        npu_backend="$(jq -r '.npu_backend // "none"' "$HW_FILE" 2>/dev/null || echo none)"
+    fi
+
+    # Map ram_tier -> legacy tier + ai_tier (VRAM-dominant logic mirrored
+    # from lib/hw_detect.sh so reconfigure is self-contained)
+    local vram_mb=0 gpu_vendor="cpu" hw_tier
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+        gpu_vendor="nvidia"
+        vram_mb="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -nr | head -n1 || echo 0)"
+    elif compgen -G "/sys/class/drm/card*/device/mem_info_vram_total" >/dev/null 2>&1; then
+        gpu_vendor="amd"
+        local vram_bytes
+        vram_bytes="$(cat /sys/class/drm/card*/device/mem_info_vram_total 2>/dev/null | sort -nr | head -n1 || echo 0)"
+        vram_mb="$(( vram_bytes / 1024 / 1024 ))"
+    elif lspci 2>/dev/null | grep -qiE "VGA.*Intel|Display.*Intel|3D.*Intel"; then
+        gpu_vendor="intel"
+    fi
+
+    if [[ "$tier" == "8gb" ]]; then hw_tier="lite"; elif [[ "$tier" == "16gb" ]]; then hw_tier="balanced"; else hw_tier="workstation"; fi
+
+    # ai_tier: respect --profile target unless VRAM explicitly justifies higher.
+    # --profile=8gb on a 32 GB machine keeps ai_tier=8gb (user chose constraint).
+    local ai_tier="$tier"
+    if [[ "$tier" == "8gb" && $vram_mb -ge 20000 ]] || [[ "$tier" == "8gb" && $ram_mb -ge 24000 ]]; then ai_tier="32gb"
+    elif [[ "$tier" == "16gb" && $vram_mb -ge 10000 ]] || [[ "$tier" == "16gb" && $ram_mb -ge 12000 ]]; then ai_tier="16gb"
+    elif [[ "$tier" == "8gb" && $vram_mb -ge 10000 ]] || [[ "$tier" == "8gb" && $ram_mb -ge 12000 ]]; then ai_tier="16gb"
+    fi
+
+    local cpu_cores has_battery disk_transport disk_rota
+    cpu_cores="$(nproc 2>/dev/null || echo 1)"
+    if compgen -G "/sys/class/power_supply/BAT*" >/dev/null 2>&1; then has_battery="true"; else has_battery="false"; fi
+    disk_transport="unknown"; disk_rota="1"
+    local root_src root_disk
+    root_src="$(findmnt -no SOURCE / 2>/dev/null | sed 's/\[.*\]//' || echo "")"
+    if [[ -n "$root_src" ]]; then
+        root_disk="$(lsblk -ndo PKNAME "$root_src" 2>/dev/null | head -n1 || echo "")"
+        root_disk="${root_disk:-$(basename "$root_src" 2>/dev/null || echo root)}"
+        disk_transport="$(lsblk -ndo TRAN "/dev/${root_disk}" 2>/dev/null || echo unknown)"
+        disk_rota="$(cat "/sys/block/${root_disk}/queue/rotational" 2>/dev/null || echo 1)"
+    fi
+
+    cat <<EOF
+{
+  "ram_tier": "${tier}",
+  "ai_tier": "${ai_tier}",
+  "tier": "${hw_tier}",
+  "ram_mb": ${ram_mb},
+  "cpu_cores": ${cpu_cores},
+  "avx2": $(grep -qw avx2 /proc/cpuinfo 2>/dev/null && echo true || echo false),
+  "has_battery": ${has_battery},
+  "disk_transport": "${disk_transport:-unknown}",
+  "disk_rotational": ${disk_rota:-1},
+  "gpu_vendor": "${gpu_vendor}",
+  "vram_mb": ${vram_mb},
+  "npu_available": ${npu_available},
+  "npu_vendor": "${npu_vendor}",
+  "npu_driver": "${npu_driver}",
+  "npu_device": "${npu_device}",
+  "npu_backend": "${npu_backend}",
+  "probed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+}
+EOF
+}
+
+# --- Idempotent atomic write helper ----------------------------------------
+# Writes content to a root-owned path only if it differs (idempotent).
+atomic_write_if_changed() {
+    local path="$1" mode="$2"
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] write_root_file $path (mode $mode)"
+        return 0
+    fi
+    init_runtime_state  # ensures WORKDIR exists
+    mkdir -p "$WORKDIR"
+    local tmp_new
+    tmp_new="$(mktemp "$WORKDIR/newfile.XXXXXX")"
+    cat > "$tmp_new"
+    if [[ -f "$path" ]] && cmp -s "$tmp_new" "$path"; then
+        rm -f "$tmp_new"
+        return 2  # unchanged
+    fi
+    snapshot_file "$path"
+    write_root_file "$path" "$mode" < "$tmp_new"
+    rm -f "$tmp_new"
+    return 0
+}
+
+atomic_write_user_if_changed() {
+    local path="$1" mode="${2:-600}"
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] write_user_file $path (mode $mode)"
+        return 0
+    fi
+    mkdir -p "$(dirname "$path")"
+    local tmp_new
+    tmp_new="$(mktemp "${path}.new.XXXXXX")"
+    cat > "$tmp_new"
+    if [[ -f "$path" ]] && cmp -s "$tmp_new" "$path"; then
+        rm -f "$tmp_new"
+        return 2  # unchanged
+    fi
+    write_user_file "$path" "$mode" < "$tmp_new"
+    rm -f "$tmp_new"
+    return 0
+}
+
+echo ""
+echo "--- 1. Writing /etc/macubuntu/hardware.json ---"
+NEW_HW="$(rederive_hardware_json "$TARGET_TIER")"
+
+# Save previous for rollback before overwriting (sudo for /etc)
+if [[ -f "$HW_FILE" && "$DRY_RUN" != "1" && ! -f "$HW_PREV" ]]; then
+    sudo cp "$HW_FILE" "$HW_PREV" 2>/dev/null || true
+fi
+
+if printf '%s\n' "$NEW_HW" | atomic_write_if_changed "$HW_FILE" 644; then
+    rc=0
+else
+    rc=$?
+fi
+if [[ "$rc" -eq 2 ]]; then
+    echo "   ℹ️  hardware.json unchanged (already $TARGET_TIER)"
+elif [[ "$rc" -eq 0 ]]; then
+    echo "   ✅ hardware.json written (ram_tier=$TARGET_TIER)"
+else
+    echo "   ❌ failed to write hardware.json" >&2
+    exit 1
+fi
+
+# --- Source the target profile ----------------------------------------------
+PROFILE_FILE="$PROFILES_DIR/${TARGET_TIER}.env"
+if [[ ! -f "$PROFILE_FILE" ]]; then
+    echo "❌ Profile file not found: $PROFILE_FILE" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$PROFILE_FILE"
+
+echo ""
+echo "--- 2. ZRAM (zram-generator.conf) ---"
+# Evaluate ZRAM_SIZE_EXPR against detected RAM_MB
+RAM_MB_NOW="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0)"
+eval_zram_expr() {
+    local expr="$1" ram="$2"
+    local e="${expr//ram/$ram}"; e="${e// /}"
+    if [[ "$e" == "min("* && "$e" == *","* && "$e" == *")" ]]; then
+        local inner="${e#min(}"; inner="${inner%)}"
+        local a="${inner%%,*}"; local b="${inner##*,}"
+        a=$((a)); b=$((b))
+        (( a < b )) && echo "$a" || echo "$b"
+    else
+        echo "$((e))"
+    fi
+}
+ZRAM_SIZE_MB="$(eval_zram_expr "${ZRAM_SIZE_EXPR:-ram / 2}" "$RAM_MB_NOW")"
+rc=2  # default: unchanged
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo "   [dry-run] would write /etc/systemd/zram-generator.conf (zram-size=${ZRAM_SIZE_MB}M)"
+else
+if cat <<EOF | atomic_write_if_changed /etc/systemd/zram-generator.conf 644
+[zram0]
+zram-size = ${ZRAM_SIZE_MB}M
+compression-algorithm = zstd
+EOF
+then
+    rc=0
+else
+    rc=$?
+fi
+fi
+if [[ "$rc" -eq 2 ]]; then echo "   ℹ️  zram-generator.conf unchanged (${ZRAM_SIZE_MB}M)"
+elif [[ "$rc" -eq 0 ]]; then echo "   ✅ zram-generator.conf written (${ZRAM_SIZE_MB}M)"; fi
+
+echo ""
+echo "--- 3. VM sysctl (byte-capped writebacks) ---"
+# P1: Write to a dedicated drop-in so kernel.* / fs.* / kernel.yama.ptrace_scope
+# owned by 99-macubuntu-vm.conf are never wiped out.
+rc=2  # default: unchanged
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo "   [dry-run] would write /etc/sysctl.d/99-macubuntu-vm-adaptive.conf (swappiness=${SWAPPINESS:-60})"
+else
+if cat <<EOF | atomic_write_if_changed /etc/sysctl.d/99-macubuntu-vm-adaptive.conf 644
+# macubuntu hardware-adaptive VM tuning (ram_tier=$TARGET_TIER)
+# Only vm.* keys here — kernel.*, fs.*, and kernel.yama.ptrace_scope live in
+# 99-macubuntu-vm.conf and are preserved untouched.
+vm.swappiness = ${SWAPPINESS:-60}
+vm.dirty_background_bytes = ${DIRTY_BG_BYTES:-67108864}
+vm.dirty_bytes = ${DIRTY_BYTES:-201326592}
+vm.vfs_cache_pressure = ${VFS_CACHE_PRESSURE:-100}
+vm.page_cluster = ${VM_PAGE_CLUSTER:-0}
+vm.dirty_writeback_centisecs = ${VM_DIRTY_WRITEBACK_CENTISECS:-200}
+EOF
+then
+    rc=0
+else
+    rc=$?
+fi
+fi
+if [[ "$rc" -eq 2 ]]; then echo "   ℹ️  VM sysctl adaptive drop-in unchanged"
+elif [[ "$rc" -eq 0 ]]; then echo "   ✅ VM sysctl adaptive drop-in written (swappiness=${SWAPPINESS:-60})"; fi
+if [[ "$DRY_RUN" != "1" ]]; then
+    sudo sysctl --system 2>/dev/null || true
+fi
+
+echo ""
+echo "--- 4. celina-ai.slice cgroup ceilings ---"
+rc=2  # default: unchanged
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo "   [dry-run] would write $CELINA_USER_SYSTEMD/celina-ai.slice (MemoryHigh=${CELINA_SLICE_HIGH:-4G})"
+else
+mkdir -p "$CELINA_USER_SYSTEMD"
+if cat <<EOF | atomic_write_user_if_changed "$CELINA_USER_SYSTEMD/celina-ai.slice" 644
+[Unit]
+Description=Clamped cgroup slice for Celina AI workloads (ram_tier=$TARGET_TIER)
+
+[Slice]
+CPUWeight=${CELINA_CPU_WEIGHT:-50}
+IOWeight=${CELINA_IO_WEIGHT:-40}
+CPUQuota=200%
+MemoryHigh=${CELINA_SLICE_HIGH:-4G}
+MemoryMax=${CELINA_SLICE_MAX:-6G}
+ManagedOOMMemoryPressure=kill
+EOF
+then
+    rc=0
+else
+    rc=$?
+fi
+fi
+if [[ "$rc" -eq 2 ]]; then echo "   ℹ️  celina-ai.slice unchanged"
+elif [[ "$rc" -eq 0 ]]; then echo "   ✅ celina-ai.slice written (MemoryHigh=${CELINA_SLICE_HIGH:-4G})"; fi
+
+echo ""
+echo "--- 5. llama-server Router Mode preset (models.ini) ---"
+PRESET_OUT="$CELINA_CONFIG_DIR/models.ini"
+PRESET_SOCK_DIR="/run/user/$(id -u)/celina"
+PRESET_RC=2  # default: unchanged / dry-run
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo "   [dry-run] would write $PRESET_OUT (ai_tier=$TARGET_TIER)"
+else
+PYTHONPATH="$REPO_DIR/features/celina" python3 - "$PRESET_OUT" "$TARGET_TIER" "$PRESET_SOCK_DIR" "$TARGET_HOME" <<'PY'
+import json, os, sys
+from pathlib import Path
+import tempfile
+
+out_ini = Path(sys.argv[1])
+target_tier = sys.argv[2]          # 8gb | 16gb | 32gb (ram_tier)
+sock_dir = Path(sys.argv[3])
+target_home = Path(sys.argv[4])    # real desktop user's HOME (never /root)
+
+# ai_tier derived like hw_detect.sh (VRAM-dominant); reconfigure has no live
+# GPU probe here, so map ram_tier -> ai_tier conservatively (ai_tier >= ram_tier
+# only when VRAM justifies it; without a probe we keep ai_tier == ram_tier).
+ai_tier = target_tier
+
+TIER_LLM_CONFIGS = {
+    "8gb": {
+        "models_max": 1, "sleep_idle_seconds": 120, "parallel_slots": 1,
+        "kv_cache_type": "q8_0", "ctx_default": 8192,
+        "models": {
+            "fast": {"file": "LFM3-1.7B-Q4_K_M.gguf", "ctx_size": 8192},
+            "tactical": {"file": "Qwen3.5-4B-Q4_K_M.gguf", "ctx_size": 12288},
+        },
+    },
+    "16gb": {
+        "models_max": 2, "sleep_idle_seconds": 300, "parallel_slots": 2,
+        "kv_cache_type": "q8_0", "ctx_default": 16384,
+        "models": {
+            "fast": {"file": "Qwen3.5-4B-Q4_K_M.gguf", "ctx_size": 16384},
+            "multimodal": {"file": "gemma-4-E4B-it-Q4_0.gguf", "ctx_size": 24576},
+            "deep": {"file": "Qwen3-14B-Q4_K_M.gguf", "ctx_size": 16384},
+        },
+    },
+    "32gb": {
+        "models_max": 3, "sleep_idle_seconds": 900, "parallel_slots": 4,
+        "kv_cache_type": "f16", "ctx_default": 32768,
+        "models": {
+            "fast": {"file": "gemma-4-E4B-it-Q4_0.gguf", "ctx_size": 32768},
+            "deep": {"file": "Qwen3.6-35B-A3B-Q4_K_M.gguf", "ctx_size": 65536},
+            "reasoning": {"file": "Qwen3.8-27B-Q4_K_M.gguf", "ctx_size": 49152},
+        },
+    },
+}
+
+cfg = TIER_LLM_CONFIGS.get(ai_tier, TIER_LLM_CONFIGS["8gb"])
+threads = max(2, (os.cpu_count() or 4) - 2)  # leave 2 cores for GNOME + PipeWire
+lines = [
+    "version = 1", "",
+    "[*]",
+    f"ctx-size = {cfg['ctx_default']}",
+    "n-gpu-layers = auto",
+    "flash-attn = on",
+    "fit = on",
+    f"threads = {threads}",
+    f"parallel = {cfg['parallel_slots']}",
+    f"cache-type-k = {cfg['kv_cache_type']}",
+    f"cache-type-v = {cfg['kv_cache_type']}",
+    f"sleep-idle-seconds = {cfg['sleep_idle_seconds']}",
+    "jinja = on",
+    "",
+]
+for alias, m in cfg["models"].items():
+    model_path = target_home / ".cache" / "celina" / "models" / m["file"]
+    lines += [f"[{alias}]", f"model = {model_path}", f"ctx-size = {m['ctx_size']}", ""]
+
+# P1: atomic temp+replace write instead of direct write_text (never clobber live config)
+out_ini.parent.mkdir(parents=True, exist_ok=True)
+fd, tmp_path = tempfile.mkstemp(dir=out_ini.parent, prefix=".models.ini.", suffix=".tmp")
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    os.replace(tmp_path, out_ini)
+finally:
+    if os.path.exists(tmp_path):
+        os.unlink(tmp_path)
+print(str(out_ini))
+PY
+PRESET_RC=$?
+fi
+if [[ "$PRESET_RC" -ne 0 && "$DRY_RUN" != "1" ]]; then
+    echo "   ❌ preset_generator failed (exit $PRESET_RC)" >&2
+    exit 1
+fi
+echo "   ✅ models.ini written (ai_tier=$TARGET_TIER, models_max=${LLM_MODELS_MAX:-})"
+
+echo ""
+echo "--- 6. Celina tier policy (tier-policy.json) ---"
+POLICY_RC=2  # default: unchanged / dry-run
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo "   [dry-run] would write $CELINA_CONFIG_DIR/tier-policy.json (ram_tier=$TARGET_TIER)"
+else
+PYTHONPATH="$REPO_DIR/features/celina" python3 - "$TARGET_TIER" "$CELINA_CONFIG_DIR/tier-policy.json" <<'PY'
+import json, os, sys
+from pathlib import Path
+
+target_tier = sys.argv[1]
+out_path = Path(sys.argv[2])
+
+TIER_POLICIES = {
+    "8gb": {
+        "serialize_heavy_models": True,   # 8 GB MUST serialize heavy models to prevent OOM
+        "enable_ladybug_graph": False,
+        "enable_gliner_slots": False,
+        "keep_voice_hot": False,
+        "enable_astra_1fps_buffer": False,
+        "enable_libkrun_sandbox": False,
+        "spotlight_batch_size": 4,
+        "ram_psi_evict_threshold": 15.0,
+    },
+    "16gb": {
+        "serialize_heavy_models": False,
+        "enable_ladybug_graph": True,
+        "enable_gliner_slots": True,
+        "keep_voice_hot": True,
+        "enable_astra_1fps_buffer": False,
+        "enable_libkrun_sandbox": True,
+        "spotlight_batch_size": 8,
+        "ram_psi_evict_threshold": 20.0,
+    },
+    "32gb": {
+        "serialize_heavy_models": False,  # 32 GB has headroom for concurrent loads
+        "enable_ladybug_graph": True,
+        "enable_gliner_slots": True,
+        "keep_voice_hot": True,
+        "enable_astra_1fps_buffer": True,
+        "enable_libkrun_sandbox": True,
+        "spotlight_batch_size": 16,
+        "ram_psi_evict_threshold": 25.0,
+    },
+}
+
+policy = TIER_POLICIES.get(target_tier, TIER_POLICIES["8gb"])
+out_path.parent.mkdir(parents=True, exist_ok=True)
+tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+tmp.write_text(json.dumps(policy, indent=2, sort_keys=True), encoding="utf-8")
+tmp.replace(out_path)
+print(str(out_path))
+PY
+POLICY_RC=$?
+fi
+if [[ "$POLICY_RC" -ne 0 && "$DRY_RUN" != "1" ]]; then
+    echo "   ❌ tier policy generation failed (exit $POLICY_RC)" >&2
+    exit 1
+fi
+if [[ "$DRY_RUN" != "1" ]]; then
+    echo "   ✅ tier-policy.json written (ram_tier=$TARGET_TIER)"
+fi
+
+# --- Record applied profile for boot-time change detection ------------------
+if [[ "$DRY_RUN" != "1" ]]; then
+    sudo mkdir -p "$HW_DIR"  # P1: /etc/macubuntu needs root, never bare mkdir
+    printf '%s\n' "$TARGET_TIER" | atomic_write_if_changed "$APPLIED_FILE" 644 >/dev/null 2>&1 || true
+fi
+
+# --- Daemon reload ----------------------------------------------------------
+if [[ "$DRY_RUN" != "1" ]]; then
+    sudo systemctl daemon-reload 2>/dev/null || true
+    run_as_user systemctl --user daemon-reload 2>/dev/null || true
+fi
+
+echo ""
+echo "================================================================="
+echo "  ✅ macubuntu-reconfigure complete (ram_tier=$TARGET_TIER)"
+echo "     hardware.json | zram-generator.conf | VM sysctl"
+echo "     celina-ai.slice | models.ini | tier-policy.json"
+echo "================================================================="
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo ""
+    echo "  [DRY-RUN] No mutations were made. Re-run without --dry-run to apply."
+fi
+exit 0

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Audit Log (Update 19)
+"""Celina AI (Celly) - Gear 0 Audit Log (Update 19)
 
 Local, append-only audit trail for all Gear 0 actions. Zero cloud.
 Used by Gear 0 modules to log every handled request.
@@ -9,10 +8,7 @@ Also provides Gear 0-Audit classify/execute for status/health queries.
 from __future__ import annotations
 
 import datetime
-import shutil
-import subprocess
 from pathlib import Path
-from typing import Optional
 
 _AUDIT_LOG = Path.home() / ".local" / "share" / "celina" / "gear0_audit.log"
 
@@ -79,7 +75,7 @@ def audit_storage_status() -> str:
         return f"Failed to read disk usage: {exc}"
 
 
-def gear0_audit_classify(query: str) -> Optional[str]:
+def gear0_audit_classify(query: str) -> str | None:
     """Classify query into an audit handler name, or None."""
     low = query.strip().lower()
     if _AUDIT_LOG_RE.match(low):
@@ -91,7 +87,7 @@ def gear0_audit_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_audit_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_audit_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Audit handler."""
     try:
         if handler == "audit_log":

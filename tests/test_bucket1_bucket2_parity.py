@@ -439,17 +439,22 @@ class TestFivePillarSmoothnessOptimizations:
     def test_apps_kernel_io_wayland_and_sqlite_smoothness_optimizations(self, tmp_path: Path):
         repo_root = Path(__file__).resolve().parents[1]
 
-        sysctl_txt = (repo_root / "system" / "sysctl" / "99-macubuntu-vm.conf").read_text(encoding="utf-8")
+        sysctl_vm = (repo_root / "system" / "sysctl" / "99-macubuntu-vm.conf").read_text(encoding="utf-8")
+        sysctl_net = (repo_root / "system" / "sysctl" / "99-macubuntu-net.conf").read_text(encoding="utf-8")
         for expected in (
             "vm.dirty_background_bytes=67108864",
             "vm.dirty_bytes=268435456",
             "kernel.sched_autogroup_enabled=1",
             "fs.inotify.max_user_watches=524288",
-            "net.core.default_qdisc=fq",
-            "net.ipv4.tcp_congestion_control=bbr",
-            "net.ipv4.tcp_fastopen=3",
         ):
-            assert expected in sysctl_txt, f"Missing sysctl smoothness setting: {expected}"
+            assert expected in sysctl_vm, f"Missing sysctl smoothness setting: {expected}"
+        # Network keys are owned by 99-macubuntu-net.conf (deduplicated from vm.conf)
+        for expected in (
+            "net.core.default_qdisc = fq",
+            "net.ipv4.tcp_congestion_control = bbr",
+            "net.ipv4.tcp_fastopen = 3",
+        ):
+            assert expected in sysctl_net, f"Missing sysctl smoothness setting: {expected}"
 
         io_rules = (repo_root / "system" / "udev" / "60-macubuntu-io-scheduler.rules").read_text(encoding="utf-8")
         assert 'ATTR{queue/scheduler}="none"' in io_rules
@@ -507,12 +512,8 @@ class TestFivePillarSmoothnessOptimizations:
         from celina_pkg import cache as cache_mod, router as router_mod
 
         repo_root = Path(__file__).resolve().parents[1]
-        ollama_conf = (repo_root / "system" / "systemd" / "ollama-8gb-ram.conf").read_text(encoding="utf-8")
-        assert 'OLLAMA_KEEP_ALIVE=45s' in ollama_conf
-        assert 'Nice=10' in ollama_conf
-        assert 'IOWeight=30' in ollama_conf
-        assert 'OLLAMA_FLASH_ATTENTION=1' in ollama_conf
-        assert 'OLLAMA_KV_CACHE_TYPE=q8_0' in ollama_conf
+        # ollama-8gb-ram.conf removed — unified into Stage 35 tier-adapted
+        # ollama.service.d/90-macubuntu-qos.conf (no static 8GB-hardcoded drop-in)
         amd_conf = (repo_root / "system" / "systemd" / "ollama-amd-vulkan.conf").read_text(encoding="utf-8")
         assert 'OLLAMA_VULKAN=1' in amd_conf
         assert 'OLLAMA_IGPU_ENABLE=1' in amd_conf

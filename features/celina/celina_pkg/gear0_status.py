@@ -1,12 +1,13 @@
-"""
-Celina AI (Celly) - Gear 0 Status / Audit (Update 19)
+"""Celina AI (Celly) - Gear 0 Status / Audit (Update 19)
 
 System status and audit trail — shows Gear 0 health, resident modules, recent actions.
 Zero cloud, sub-5ms.
+
 Examples:
   - "Gear 0 status"
   - "Show audit log"
   - "System health"
+
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
 _AUDIT_LOG = Path.home() / ".local" / "share" / "celina" / "gear0_audit.log"
 
@@ -71,7 +71,7 @@ _AUDIT_RE = __import__("re").compile(
 )
 
 
-def gear0_status_classify(query: str) -> Optional[str]:
+def gear0_status_classify(query: str) -> str | None:
     """Classify query into a status handler name, or None."""
     low = query.strip().lower()
     if _STATUS_RE.match(low):
@@ -81,7 +81,7 @@ def gear0_status_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_status_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_status_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Status handler."""
     try:
         if handler == "gear0_status":
@@ -94,8 +94,8 @@ def gear0_status_execute(handler: str, query: str, dry_run: bool = False) -> Opt
 
 
 __all__ = [
-    "status_gear0",
-    "status_audit_tail",
     "gear0_status_classify",
     "gear0_status_execute",
+    "status_audit_tail",
+    "status_gear0",
 ]

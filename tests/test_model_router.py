@@ -152,6 +152,111 @@ def test_get_model_selection_summary():
         assert "all_tiers" in summary
 
 
+def test_get_ram_tier_constrained():
+    """get_ram_tier returns CONSTRAINED for <= 10 GB."""
+    from celina_pkg import model_selector
+    assert model_selector.get_ram_tier(8192) == "CONSTRAINED"   # 8 GB
+    assert model_selector.get_ram_tier(10240) == "CONSTRAINED"  # 10 GB boundary
+
+
+def test_get_ram_tier_balanced():
+    """get_ram_tier returns BALANCED for 10-22 GB."""
+    from celina_pkg import model_selector
+    assert model_selector.get_ram_tier(10241) == "BALANCED"
+    assert model_selector.get_ram_tier(16384) == "BALANCED"   # 16 GB
+    assert model_selector.get_ram_tier(22528) == "BALANCED"   # 22 GB boundary
+
+
+def test_get_ram_tier_headroom():
+    """get_ram_tier returns HEADROOM for >= 23 GB."""
+    from celina_pkg import model_selector
+    assert model_selector.get_ram_tier(22529) == "HEADROOM"
+    assert model_selector.get_ram_tier(32768) == "HEADROOM"   # 32 GB
+
+
+def test_tier_num_ctx():
+    """tier_num_ctx returns correct values per tier."""
+    from celina_pkg import model_selector
+    assert model_selector.tier_num_ctx("CONSTRAINED") == 2048
+    assert model_selector.tier_num_ctx("BALANCED") == 4096
+    assert model_selector.tier_num_ctx("HEADROOM") == 16384
+
+
+def test_tier_whisper_idle_offload():
+    """tier_whisper_idle_offload_sec returns correct values per tier."""
+    from celina_pkg import model_selector
+    assert model_selector.tier_whisper_idle_offload_sec("CONSTRAINED") == 90
+    assert model_selector.tier_whisper_idle_offload_sec("BALANCED") == 180
+    assert model_selector.tier_whisper_idle_offload_sec("HEADROOM") == 300
+
+
+def test_tier_cache_hot_max_items():
+    """tier_cache_hot_max_items returns correct values per tier."""
+    from celina_pkg import model_selector
+    assert model_selector.tier_cache_hot_max_items("CONSTRAINED") == 32
+    assert model_selector.tier_cache_hot_max_items("BALANCED") == 128
+    assert model_selector.tier_cache_hot_max_items("HEADROOM") == 512
+
+
+def test_tier_max_concurrent_mcp():
+    """tier_max_concurrent_mcp returns correct values per tier."""
+    from celina_pkg import model_selector
+    assert model_selector.tier_max_concurrent_mcp("CONSTRAINED") == 1
+    assert model_selector.tier_max_concurrent_mcp("BALANCED") == 2
+    assert model_selector.tier_max_concurrent_mcp("HEADROOM") == 4
+
+
+def test_forbidden_ui_targets_refusal():
+    """InputBroker.check_allowed refuses Celina's own UI and system auth dialogs (T2)."""
+    from celina_pkg import automation
+
+    broker = automation.InputBroker()
+
+    # Celina's own Dynamic Island should be refused
+    allowed, reason = broker.check_allowed(
+        active_window_info={"app": "celina-search", "title": "Celina Dynamic Island"}
+    )
+    assert not allowed
+    assert "self-approval" in reason.lower() or "protected" in reason.lower()
+
+    # Polkit dialog should be refused
+    allowed, reason = broker.check_allowed(
+        active_window_info={"app": "polkit-gnome-authentication-agent-1", "title": "Authentication"}
+    )
+    assert not allowed
+    assert "self-approval" in reason.lower() or "protected" in reason.lower()
+
+    # xdg-desktop-portal should be refused
+    allowed, reason = broker.check_allowed(
+        active_window_info={"app": "xdg-desktop-portal-gnome", "title": "Portal"}
+    )
+    assert not allowed
+    assert "self-approval" in reason.lower() or "protected" in reason.lower()
+
+    # Normal app (Firefox) should NOT be refused by T2
+    allowed, reason = broker.check_allowed(
+        active_window_info={"app": "firefox", "title": "Example Website"}
+    )
+    # May still be denied for other reasons (stop requested, rate limit), but NOT T2
+    if not allowed:
+        assert "self-approval" not in reason.lower()
+        assert "protected" not in reason.lower()
+
+
+def test_atspi_direct_action_forbidden_targets():
+    """_try_atspi_direct_action refuses Celina's own UI and system auth dialogs (T2)."""
+    from celina_pkg import automation
+
+    # These should be refused at the FORBIDDEN_UI_TARGETS level, before AT-SPI
+    result, msg = automation._try_atspi_direct_action("Celina Dynamic Island Approve")
+    assert not result
+    assert "self-approval" in msg.lower() or "protected" in msg.lower()
+
+    result, msg = automation._try_atspi_direct_action("Polkit Authentication")
+    assert not result
+    assert "self-approval" in msg.lower() or "protected" in msg.lower()
+
+
 if __name__ == "__main__":
     test_detect_total_ram_gb()
     test_detect_free_disk_gb()
@@ -166,4 +271,13 @@ if __name__ == "__main__":
     test_selection_no_local_runtime()
     test_user_preference_override()
     test_get_model_selection_summary()
+    test_get_ram_tier_constrained()
+    test_get_ram_tier_balanced()
+    test_get_ram_tier_headroom()
+    test_tier_num_ctx()
+    test_tier_whisper_idle_offload()
+    test_tier_cache_hot_max_items()
+    test_tier_max_concurrent_mcp()
+    test_forbidden_ui_targets_refusal()
+    test_atspi_direct_action_forbidden_targets()
     print("All model_router tests passed!")

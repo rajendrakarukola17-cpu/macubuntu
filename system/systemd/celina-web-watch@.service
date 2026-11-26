@@ -1,0 +1,21 @@
+[Unit]
+Description=Celina Active Web Watching (Tier 1 self-healing watchers)
+Documentation=file:///home/user/macubuntu/celina/tools/web_watch.py
+After=network-online.target macubuntu-hw-probe.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /home/user/macubuntu/celina/tools/web_watch.py --run-once
+# Run as the desktop user so it can read ~/.local/share/celina/web_watch and
+# send desktop notifications via notify-send / busctl.
+User=%i
+Group=%i
+# Fail-closed: watcher failure must not block boot or other services
+SuccessExitStatus=0
+# No filesystem writes outside ~/.local/share/celina/web_watch.
+ReadWritePaths=-/home/%i/.local/share/celina/web_watch
+# No network namespace isolation — watcher needs outbound HTTPS.
+
+[Install]
+WantedBy=multi-user.target

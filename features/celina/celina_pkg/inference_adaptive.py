@@ -1,15 +1,14 @@
-"""
-Celina AI — Capabilities #1 & #2:
-  1. Hardware-Adaptive Inference (LCP Slot Caching + 8-bit KV-Cache Quantization)
-     Default ON for constrained RAM hosts (<= 12 GB RAM, tuned for 8 GB RAM):
-     reduces prompt-evaluation latency by preserving Longest Common Prefix (LCP)
-     KV slots and quantizing KV caches (`q8_0` + flash attention) while dynamically
-     clamping `num_ctx` / `num_predict` from live `/proc/meminfo` MemAvailable to
-     eliminate OOM crashes during long-running tool loops.
-  2. Archetype-Aware Dynamic Model Routing + Intent Fast-Bypass Classifier
-     Short-circuits greetings, acknowledgements, and instant status lookups with
-     0 LLM reasoning tokens, and matches task archetypes to available quantized
-     models based on live RAM headroom.
+"""Celina AI — Capabilities #1 & #2:
+1. Hardware-Adaptive Inference (LCP Slot Caching + 8-bit KV-Cache Quantization)
+Default ON for constrained RAM hosts (<= 12 GB RAM, tuned for 8 GB RAM):
+reduces prompt-evaluation latency by preserving Longest Common Prefix (LCP)
+KV slots and quantizing KV caches (`q8_0` + flash attention) while dynamically
+clamping `num_ctx` / `num_predict` from live `/proc/meminfo` MemAvailable to
+eliminate OOM crashes during long-running tool loops.
+2. Archetype-Aware Dynamic Model Routing + Intent Fast-Bypass Classifier
+Short-circuits greetings, acknowledgements, and instant status lookups with
+0 LLM reasoning tokens, and matches task archetypes to available quantized
+models based on live RAM headroom.
 """
 
 from __future__ import annotations
@@ -20,12 +19,13 @@ import os
 import re
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from . import config
 
-# Constrained-RAM threshold (<= 12 GB enables LCP + 8-bit KV quantization by default)
-CONSTRAINED_RAM_GB_THRESHOLD = 12
+# Constrained-RAM threshold (<= 10 GB enables LCP + 8-bit KV quantization by default)
+# Matches core/detect.sh detect_hw_tier() CONSTRAINED cutoff (<= 10240 MB)
+CONSTRAINED_RAM_GB_THRESHOLD = 10
 
 
 @dataclasses.dataclass(frozen=True)
@@ -57,8 +57,7 @@ class AdaptiveInferenceProfile:
 
 
 class LcpSlotCache:
-    """
-    Tracks Longest Common Prefix (LCP) KV-cache slot assignments across turns so
+    """Tracks Longest Common Prefix (LCP) KV-cache slot assignments across turns so
     repeated system-prompt + domain-tool prefixes reuse warm KV slots instead of
     re-evaluating thousands of prompt tokens.
     """
@@ -112,15 +111,14 @@ def get_lcp_slot_cache() -> LcpSlotCache:
 def build_adaptive_inference_profile(
     *,
     prompt_prefix: str = "",
-    base_num_ctx: Optional[int] = None,
+    base_num_ctx: int | None = None,
     base_num_predict: int = 512,
-    ram_gb: Optional[int] = None,
-    avail_ram_mb: Optional[int] = None,
-    slot_cache: Optional[LcpSlotCache] = None,
-    psi_full_avg10: Optional[float] = None,
+    ram_gb: int | None = None,
+    avail_ram_mb: int | None = None,
+    slot_cache: LcpSlotCache | None = None,
+    psi_full_avg10: float | None = None,
 ) -> AdaptiveInferenceProfile:
-    """
-    Computes hardware-adaptive inference settings automatically (default ON for <= 12 GB RAM).
+    """Computes hardware-adaptive inference settings automatically (default ON for <= 12 GB RAM).
     Dynamically scales `num_ctx` and `num_predict` from live RAM and kernel PSI
     (`/proc/pressure/memory`) to avoid OOM/thrashing in long tool loops.
     """
@@ -133,12 +131,18 @@ def build_adaptive_inference_profile(
     target_ctx = int(base_num_ctx if base_num_ctx is not None else config.OLLAMA_NUM_CTX)
     target_pred = max(64, int(base_num_predict))
 
+    # Tier-based num_ctx caps from model_selector (CONSTRAINED=2048, BALANCED=4096, HEADROOM=16384)
+    from .model_selector import get_ram_tier, tier_num_ctx
+    _tier = get_ram_tier(tot_ram * 1024)
+    tier_ctx_cap = tier_num_ctx(_tier)
     if avail_mb < 1200:
-        target_ctx = min(target_ctx, 2048)
+        target_ctx = min(target_ctx, min(2048, tier_ctx_cap))
         target_pred = min(target_pred, 256)
-    elif avail_mb < 2200 or tot_ram <= 8:
-        target_ctx = min(target_ctx, 4096)
+    elif avail_mb < 2200 or tot_ram <= CONSTRAINED_RAM_GB_THRESHOLD:
+        target_ctx = min(target_ctx, min(4096, tier_ctx_cap))
         target_pred = min(target_pred, 512)
+    else:
+        target_ctx = min(target_ctx, tier_ctx_cap)
 
     # Layer 3: Kernel PSI (`kv-psi`) — trim KV cache context by 25% when full avg10 > 10.0
     if psi_full_avg10 is not None:
@@ -172,28 +176,28 @@ _GREETING_RE = re.compile(
     r"^\s*(?:hi|hello|hey|yo|hola|namaste|namaskaram|good\s+(?:morning|afternoon|evening)|"
     r"hi\s+\w+|hello\s+\w+|hey\s+\w+|thanks|thank\s+you|thx|ok|okay|cool|got\s+it|bye|goodbye|"
     r"హాయ్|నమస్కారం|ధన్యవాదాలు|नमस्ते|धन्यवाद)\s*[!?.]*\s*$",
-    re.I,
+    re.IGNORECASE,
 )
 
 _STATUS_LOOKUP_RE = re.compile(
     r"^\s*(?:status|system\s+status|are\s+you\s+(?:online|there|ready)|ping|health|health\s+check|"
     r"what\s+model(?:\s+are\s+you\s+using)?|which\s+model|ram\s+status|memory\s+status)\s*[?]*\s*$",
-    re.I,
+    re.IGNORECASE,
 )
 
 _CODE_ENG_RE = re.compile(
     r"\b(?:code|refactor|debug|traceback|pytest|compile|python|rust|c\+\+|bash|script|sql|regex|algorithm|patch|diff|git)\b",
-    re.I,
+    re.IGNORECASE,
 )
 
 _DEEP_ARCH_RE = re.compile(
     r"\b(?:architect|design|compare|tradeoff|trade-off|audit|security|root\s+cause|multi-step|plan|strategy|migrate|proof)\b",
-    re.I,
+    re.IGNORECASE,
 )
 
 _VISION_RE = re.compile(
     r"\b(?:screenshot|image|photo|picture|diagram|what\s+is\s+on\s+(?:my\s+)?screen|see\s+my\s+screen)\b",
-    re.I,
+    re.IGNORECASE,
 )
 
 
@@ -217,13 +221,12 @@ class ModelRouteSelection:
 def classify_intent_fast_bypass(
     prompt: str,
     *,
-    assistant_name: Optional[str] = None,
-    active_model: Optional[str] = None,
-    ram_gb: Optional[int] = None,
-    avail_ram_mb: Optional[int] = None,
+    assistant_name: str | None = None,
+    active_model: str | None = None,
+    ram_gb: int | None = None,
+    avail_ram_mb: int | None = None,
 ) -> BypassResult:
-    """
-    <0.5 ms Intent Fast-Bypass Classifier:
+    """<0.5 ms Intent Fast-Bypass Classifier:
     Short-circuits greetings, acknowledgements, and trivial status lookups so 0 LLM
     reasoning tokens are wasted on inputs that need no model inference.
     """
@@ -236,7 +239,7 @@ def classify_intent_fast_bypass(
 
     if _GREETING_RE.match(text):
         if any(w in low for w in ("thanks", "thank", "thx", "ధన్యవాదాలు", "धन्यवाद")):
-            reply = f"You're welcome! Let me know if you need anything else."
+            reply = "You're welcome! Let me know if you need anything else."
         elif any(w in low for w in ("bye", "goodbye")):
             reply = "Goodbye! I'm here offline whenever you need me."
         elif low in {"ok", "okay", "cool", "got it", "ok.", "okay."}:
@@ -278,17 +281,17 @@ def classify_task_archetype(prompt: str) -> str:
 def select_archetype_model(
     prompt: str,
     *,
-    installed_models: Optional[list[str]] = None,
-    ram_gb: Optional[int] = None,
-    default_model: Optional[str] = None,
+    installed_models: list[str] | None = None,
+    ram_gb: int | None = None,
+    default_model: str | None = None,
 ) -> ModelRouteSelection:
-    """
-    Archetype-Aware Dynamic Model Router:
+    """Archetype-Aware Dynamic Model Router:
     Maps task complexity + available quantized models + host RAM to the lightest
     accurate quantized model (avoiding oversized model swaps on trivial turns).
     """
     archetype = classify_task_archetype(prompt)
     tot_ram = int(ram_gb) if ram_gb is not None else int(config.detect_system_ram_gb())
+    from .model_selector import get_ram_tier
     fallback = default_model or config.LOCAL_MODEL
     avail = [m.strip() for m in (installed_models or []) if m.strip()]
 
@@ -342,16 +345,17 @@ def select_archetype_model(
         if not m:
             return True
         b = float(m.group(1))
-        if tot_ram <= 8:
+        _tier = get_ram_tier(tot_ram * 1024)
+        if _tier == "CONSTRAINED":
             return b <= 4.5
-        if tot_ram <= 16:
+        if _tier == "BALANCED":
             return b <= 10.0
         return b <= 40.0
 
     chosen = fallback
     if avail:
         fitting = [m for m in avail if _fits_ram(m)]
-        pool = fitting if fitting else avail
+        pool = fitting or avail
         matched_cand = None
         for cand in ladder:
             clow = cand.lower()
@@ -410,15 +414,14 @@ class ModelRamFitReport:
 def estimate_model_ram_fit(
     model_tag: str,
     *,
-    ram_gb: Optional[int] = None,
+    ram_gb: int | None = None,
     num_ctx: int = 4096,
     kv_quant: str = "q8_0",
 ) -> ModelRamFitReport:
-    """
-    Octuma-style pre-download memory check:
-      - Estimates FP16 (~2.0 GB/B) vs INT4 GGUF (~0.75–0.8 GB/B, e.g. 3B: ~6.0 GB -> ~2.4 GB)
-        plus AdapTQ KV-cache overhead.
-      - Warns BEFORE pulling if the model exceeds safe host RAM headroom (~70% of RAM).
+    """Octuma-style pre-download memory check:
+    - Estimates FP16 (~2.0 GB/B) vs INT4 GGUF (~0.75–0.8 GB/B, e.g. 3B: ~6.0 GB -> ~2.4 GB)
+      plus AdapTQ KV-cache overhead.
+    - Warns BEFORE pulling if the model exceeds safe host RAM headroom (~70% of RAM).
     """
     tot_ram = int(ram_gb) if ram_gb is not None else int(config.detect_system_ram_gb())
     m = re.search(r"(\d+(?:\.\d+)?)\s*b\b", (model_tag or "").lower())
@@ -484,9 +487,9 @@ class AdapTQConfig:
         }
 
 
-def build_adaptq_config(*, ram_gb: Optional[int] = None, avail_ram_mb: Optional[int] = None) -> AdapTQConfig:
+def build_adaptq_config(*, ram_gb: int | None = None, avail_ram_mb: int | None = None) -> AdapTQConfig:
     tot_ram = int(ram_gb) if ram_gb is not None else int(config.detect_system_ram_gb())
-    avail_mb = int(avail_ram_mb) if avail_ram_mb is not None else _detect_available_ram_mb()
+    avail_mb = int(avail_ram_mb) if avail_ram_mb is not None else config.detect_available_ram_mb()
     cpus = max(2, min(8, (os.cpu_count() or 4)))
     if avail_mb < 2200 or tot_ram <= 6:
         k_q, v_q = "q4_0", "q4_0"
@@ -535,23 +538,23 @@ def autotune_ollama_request(
     *,
     max_output_tokens: int = 512,
     baseline_ctx: int = 4096,
-    ram_gb: Optional[int] = None,
-    avail_ram_mb: Optional[int] = None,
+    ram_gb: int | None = None,
+    avail_ram_mb: int | None = None,
     pin_in_ram: bool = True,
-    psi_full_avg10: Optional[float] = None,
+    psi_full_avg10: float | None = None,
 ) -> AutotuneResult:
-    """
-    `autotune` middleware for 8 GB Ollama hosts:
-      1. Computes exact per-request `num_ctx` (rounded to 256-token boundary with
-         safety buffer), saving 4-8x KV-cache RAM on short/medium prompts vs fixed 4096+.
-      2. Pins the system prompt token count via `num_keep` so multi-turn chats
-         never evict persona/tool instructions from the KV slot.
-      3. Uses `keep_alive="-1m"` when RAM headroom permits (eliminating reload latency),
-         falling back safely to `"15s"` when MemAvailable < 1800 MiB.
-      4. Always pairs `OLLAMA_FLASH_ATTENTION=1` + `OLLAMA_KV_CACHE_TYPE=q8_0`
-         so Ollama never silently falls back to f16 KV cache.
+    """`autotune` middleware for 8 GB Ollama hosts:
+    1. Computes exact per-request `num_ctx` (rounded to 256-token boundary with
+       safety buffer), saving 4-8x KV-cache RAM on short/medium prompts vs fixed 4096+.
+    2. Pins the system prompt token count via `num_keep` so multi-turn chats
+       never evict persona/tool instructions from the KV slot.
+    3. Uses `keep_alive="-1m"` when RAM headroom permits (eliminating reload latency),
+       falling back safely to `"15s"` when MemAvailable < 1800 MiB.
+    4. Always pairs `OLLAMA_FLASH_ATTENTION=1` + `OLLAMA_KV_CACHE_TYPE=q8_0`
+       so Ollama never silently falls back to f16 KV cache.
     """
     from . import os_hardening
+    from .model_selector import get_ram_tier, tier_num_ctx
 
     tot_ram = int(ram_gb) if ram_gb is not None else int(config.detect_system_ram_gb())
     avail_mb = int(avail_ram_mb) if avail_ram_mb is not None else int(config.detect_available_ram_mb())
@@ -565,8 +568,12 @@ def autotune_ollama_request(
             sys_tokens += t
 
     needed = total_prompt_tokens + max(64, int(max_output_tokens)) + 128
-    # Snap up to clean 256-token block, bounded by [512, max_cap]
-    max_cap = 2048 if avail_mb < 1200 else (4096 if tot_ram <= 8 else 8192)
+    # Tier-based num_ctx cap (CONSTRAINED=2048, BALANCED=4096, HEADROOM=16384)
+    _tier = get_ram_tier(tot_ram * 1024)
+    max_cap = tier_num_ctx(_tier)
+    # In lite mode, further cap ctx to save KV-cache RAM
+    if config.is_lite_mode():
+        max_cap = min(max_cap, 2048)
     snapped = ((needed + 255) // 256) * 256
     exact_ctx = max(512, min(max_cap, snapped))
 

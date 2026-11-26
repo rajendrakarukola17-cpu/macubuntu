@@ -3,6 +3,13 @@
 # macubuntu — Unified Ubuntu 26.04 -> macOS OS Project (with Built-In Celina)
 # Security-Hardened Orchestrator (Run as normal user, NEVER root).
 #
+# Exit Code Contract (P5-D4):
+#   0  Success — --help, --list, dry-run clean, or full pipeline passed
+#   1  General error — root invocation, missing paths, pipeline stage failures
+#   2  Misuse — invalid arguments / unknown options
+#   3  Rollback completed — --rollback finished (reboot to restore)
+#   N  Stage exit code propagated — Stage 00 hard-abort or --fail-fast abort
+#
 # Examples:
 #   ./install.sh --dry-run                       # 100% side-effect-free preview
 #   ./install.sh --profile default-8gb           # Full macOS + built-in Celina (Celly)
@@ -23,6 +30,46 @@ fi
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export REPO_DIR
+
+# --- Single version source (P1) ---
+# Read canonical versions from version.toml. All version fields across the
+# repository (manifest celina_version/manifest_version, neural-schema
+# schema_version, ARCHITECTURE.md doc version) must agree with this file.
+# Single-pass version.toml loader — passes file path via sys.argv, no shell interpolation
+load_toml_versions() {
+    local toml_file="${REPO_DIR}/version.toml"
+    [[ -f "$toml_file" ]] || return 0
+    if command -v python3 >/dev/null 2>&1; then
+        local out
+        out="$(python3 - "$toml_file" <<'PY' 2>/dev/null || true
+import sys
+try:
+    import tomllib
+except ImportError:
+    try:
+        import tomli as tomllib
+    except ImportError:
+        sys.exit(0)
+with open(sys.argv[1], "rb") as fh:
+    data = tomllib.load(fh)
+def get_v(sec, key="version"):
+    val = data.get(sec, {}).get(key, "")
+    return str(val) if isinstance(val, (str, int, float)) else ""
+print("	".join([
+    get_v("celina"),
+    get_v("manifest"),
+    get_v("schema"),
+    get_v("doc"),
+    get_v("release", "semver"),
+]))
+PY
+)"
+        IFS=$'	' read -r CELINA_VERSION MANIFEST_VERSION SCHEMA_VERSION DOC_VERSION RELEASE_SEMVER <<< "$out"
+        export CELINA_VERSION MANIFEST_VERSION SCHEMA_VERSION DOC_VERSION RELEASE_SEMVER
+    fi
+}
+
+load_toml_versions
 
 ONLY_LIST=""
 SKIP_LIST=""
@@ -60,6 +107,7 @@ Options:
   --fail-fast              Abort immediately on the first failed stage (strict CI/debug mode)
   --macos-cmd-keys         Opt into Wayland-native terminal-aware macOS Cmd+C/V/Q remapping (via keyd)
   --silent-boot            Opt into flicker-free GRUB boot drop-in + active AMD/Intel CPU P-States
+  --rollback               Restore pre-change snapshots of /etc/fstab, GRUB, PAM (emergency rollback)
   --experimental-uinput    Opt into legacy /dev/uinput ydotoold fallback (NOT recommended; Portal/AT-SPI preferred)
   --doctor                 Run read-only fast-path health check with actionable fixes (zero sudo/writes)
   --locale                 Run read-only Stage 00 locale & AT-SPI2 .mo localization audit (zero sudo/writes)
@@ -83,27 +131,28 @@ EOF
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dry-run)              export DRY_RUN="1"; shift ;;
-        --profile)              export PROFILE="${2:?Missing profile name}"; shift 2 ;;
+        --profile)              if [[ $# -lt 2 ]]; then echo "❌ Missing profile name" >&2; exit 2; fi; export PROFILE="$2"; shift 2 ;;
         --no-celina)            export ENABLE_CELINA="false"; shift ;;
-        --name)                 export CELINA_NAME="${2:?Missing name}"; shift 2 ;;
-        --nickname)             export CELINA_NICKNAME="${2:?Missing nickname}"; shift 2 ;;
-        --only)                 ONLY_LIST="${2:?Missing stage list}"; shift 2 ;;
-        --skip)                 SKIP_LIST="${2:?Missing stage list}"; shift 2 ;;
-        --from)                 FROM_STAGE="${2:?Missing stage number}"; shift 2 ;;
-        --system-only)          ONLY_LIST="00,10,35,50,55,99"; shift ;;
-        --user-only)            ONLY_LIST="00,20,25,30,40,45,60,70,99"; shift ;;
-        --upgrade)              UPGRADE_MODE=1; shift ;;
+        --name)                 if [[ $# -lt 2 ]]; then echo "❌ Missing name" >&2; exit 2; fi; export CELINA_NAME="$2"; shift 2 ;;
+        --nickname)             if [[ $# -lt 2 ]]; then echo "❌ Missing nickname" >&2; exit 2; fi; export CELINA_NICKNAME="$2"; shift 2 ;;
+        --only)                 if [[ $# -lt 2 ]]; then echo "❌ Missing stage list" >&2; exit 2; fi; ONLY_LIST="$2"; shift 2 ;;
+        --skip)                 if [[ $# -lt 2 ]]; then echo "❌ Missing stage list" >&2; exit 2; fi; SKIP_LIST="$2"; shift 2 ;;
+        --from)                 if [[ $# -lt 2 ]]; then echo "❌ Missing stage number" >&2; exit 2; fi; FROM_STAGE="$2"; shift 2 ;;
+        --system-only)          ONLY_LIST="00,10,32,33,34,35,49,50,55,61,99"; shift ;;
+        --user-only)            ONLY_LIST="00,20,25,30,45,46,60,70,99"; shift ;;
+        --upgrade)              export UPGRADE_MODE=1; shift ;;
         --replace-swap)         export REPLACE_DISK_SWAP="true"; shift ;;
         --accessibility)        export ENABLE_ACCESSIBILITY="true"; shift ;;
         --thirdparty)           export INSTALL_THIRDPARTY="true"; shift ;;
         --rust-tools)           export INSTALL_RUST_TOOLS="true"; shift ;;
-        --top-panel)            export TOP_PANEL_STYLE="${2:?Missing top panel style (transparent|hidden|glass)}"; shift 2 ;;
-        --animation-speed)      export ANIMATION_SPEED="${2:?Missing animation speed (fast|normal|instant)}"; shift 2 ;;
-        --model)                export OLLAMA_MODEL="${2:?Missing Ollama model tag (e.g. auto, qwen3:4b, gemma4:26b)}"; shift 2 ;;
+        --top-panel)            if [[ $# -lt 2 ]]; then echo "❌ Missing top panel style" >&2; exit 2; fi; export TOP_PANEL_STYLE="$2"; shift 2 ;;
+        --animation-speed)      if [[ $# -lt 2 ]]; then echo "❌ Missing animation speed" >&2; exit 2; fi; export ANIMATION_SPEED="$2"; shift 2 ;;
+        --model)                if [[ $# -lt 2 ]]; then echo "❌ Missing Ollama model tag" >&2; exit 2; fi; export OLLAMA_MODEL="$2"; shift 2 ;;
         --continue-on-error)    export CONTINUE_ON_ERROR="true"; shift ;;
         --fail-fast)            export CONTINUE_ON_ERROR="false"; shift ;;
         --macos-cmd-keys)       export ENABLE_MACOS_CMD_KEYS="true"; shift ;;
         --silent-boot)          export ENABLE_SILENT_BOOT="true"; shift ;;
+        --rollback)             ROLLBACK_ONLY=1; shift ;;
         --experimental-uinput)  export ENABLE_EXPERIMENTAL_UINPUT="true"; shift ;;
         --doctor)               DOCTOR_ONLY=1; shift ;;
         --locale)               LOCALE_ONLY=1; shift ;;
@@ -111,12 +160,63 @@ while [[ $# -gt 0 ]]; do
         --verify)               VERIFY_ONLY=1; shift ;;
         --verify-models)        VERIFY_ONLY=1; export VERIFY_MODELS="1"; shift ;;
         -h|--help)              usage; exit 0 ;;
-        *)                      echo "❌ Unknown option: $1" >&2; usage; exit 1 ;;
+        *)                      echo "❌ Unknown option: $1" >&2; usage; exit 2 ;;
     esac
 done
 
+# Validate --from strictly as digits (prevents arithmetic injection & crash on non-numeric input)
+if [[ -n "$FROM_STAGE" ]]; then
+    if [[ ! "$FROM_STAGE" =~ ^[0-9]+$ ]]; then
+        echo "❌ Invalid --from value '$FROM_STAGE' (expected numeric stage prefix, e.g. 35)" >&2
+        exit 2
+    fi
+fi
+
+# Validate --top-panel value
+if [[ -n "${TOP_PANEL_STYLE:-}" ]]; then
+    case "$TOP_PANEL_STYLE" in
+        transparent|hidden|glass) ;;
+        *) echo "❌ Invalid --top-panel '$TOP_PANEL_STYLE' (expected: transparent|hidden|glass)" >&2; exit 2 ;;
+    esac
+fi
+
+# Validate --animation-speed value
+if [[ -n "${ANIMATION_SPEED:-}" ]]; then
+    case "$ANIMATION_SPEED" in
+        fast|normal|instant) ;;
+        *) echo "❌ Invalid --animation-speed '$ANIMATION_SPEED' (expected: fast|normal|instant)" >&2; exit 2 ;;
+    esac
+fi
+
+# Validate --profile value
+if [[ -n "${PROFILE:-}" ]]; then
+    case "$PROFILE" in
+        default-8gb|macos-only|power-user) ;;
+        *) echo "❌ Invalid --profile '$PROFILE' (expected: default-8gb|macos-only|power-user)" >&2; exit 2 ;;
+    esac
+fi
+
 # shellcheck source=core/common.sh
 source "$REPO_DIR/core/common.sh"
+
+# Execute rollback if requested (P0-2: init_defaults & init_runtime_state first)
+if [[ "${ROLLBACK_ONLY:-0}" == "1" ]]; then
+    init_defaults
+    init_runtime_state
+    echo "================================================================"
+    echo "  🔄 macubuntu Emergency Rollback"
+    echo "================================================================"
+    rc=0
+    rollback_all || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        echo "❌ Rollback encountered errors (exit ${rc})." >&2
+        exit "$rc"
+    fi
+    echo "================================================================"
+    echo "  Rollback complete. Reboot to restore system state."
+    echo "================================================================"
+    exit 3
+fi
 
 if [[ "$DOCTOR_ONLY" -eq 1 ]]; then
     exec bash "$REPO_DIR/tools/doctor.sh"
@@ -141,7 +241,7 @@ if [[ "$LIST_ONLY" -eq 1 ]]; then
     echo "macubuntu OS Pipeline Stages ($REPO_DIR/stages):"
     for st in "${ALL_STAGES[@]}"; do
         base="$(basename "$st")"
-        desc="$(awk 'NR<=5 && /^# Stage /{sub(/^# /,""); print; exit}' "$st")"
+        desc="$(sed -n 's/^# Stage //p' "$st" | head -n1)"
         printf "  %-30s %s\n" "$base" "$desc"
     done
     echo ""
@@ -152,7 +252,8 @@ if [[ "$LIST_ONLY" -eq 1 ]]; then
     exit 0
 fi
 
-if [[ "${DRY_RUN:-0}" != "1" ]]; then
+# Only chmod +x when REPO_DIR is writable by current user (never fail on /usr/share/macubuntu .deb install!)
+if [[ "${DRY_RUN:-0}" != "1" && -w "$REPO_DIR/stages" ]]; then
     chmod +x "$REPO_DIR"/stages/*.sh "$REPO_DIR"/core/*.sh "$REPO_DIR"/features/celina/install.sh
 fi
 
@@ -162,7 +263,8 @@ fi
 
 if [[ "${DRY_RUN:-0}" != "1" ]]; then
     # Concurrency guard (#5): prevent two simultaneous install.sh runs from racing on APT/gsettings
-    INSTALL_LOCK_PATH="${XDG_RUNTIME_DIR:-/tmp}/macubuntu-install-${UID}.lock"
+    mkdir -p -m 700 "$HOME/.local/state/macubuntu"
+    INSTALL_LOCK_PATH="${XDG_RUNTIME_DIR:-$HOME/.local/state/macubuntu}/macubuntu-install-${UID}.lock"
     if command -v flock >/dev/null 2>&1; then
         exec 9>"$INSTALL_LOCK_PATH"
         if ! flock -n 9; then
@@ -176,18 +278,37 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     LOG_FILE="$HOME/.local/state/macubuntu/install.log"
     touch "$LOG_FILE"
     chmod 600 "$LOG_FILE"
+    # Prompt for sudo BEFORE redirecting stdout to tee (so password prompt works cleanly)
+    sudo -v
+
+    # Keep sudo ticket alive (short sleep loop, killed in cleanup)
+    (
+        while true; do
+            sudo -n true
+            sleep 2
+            kill -0 "$$" 2>/dev/null || exit
+        done
+    ) 2>/dev/null &
+    SUDO_KEEPALIVE=$!
+
     exec > >(tee -a "$LOG_FILE") 2>&1
 else
     LOG_FILE="(disabled in --dry-run; zero disk writes)"
 fi
 
 init_runtime_state
-SUDO_PID=""
 cleanup() {
-    [[ -n "$SUDO_PID" ]] && kill "$SUDO_PID" 2>/dev/null || true
+    if [[ -n "${SUDO_KEEPALIVE:-}" ]]; then
+        kill "$SUDO_KEEPALIVE" 2>/dev/null || true
+        pkill -P "$SUDO_KEEPALIVE" 2>/dev/null || true
+    fi
     if [[ "${DRY_RUN:-0}" != "1" && -n "${WORKDIR:-}" && -d "${WORKDIR:-}" ]]; then
         rm -rf "$WORKDIR" || true
     fi
+    if [[ -n "${DIFF_TMP_HOME:-}" && -d "$DIFF_TMP_HOME" ]]; then
+        rm -rf "$DIFF_TMP_HOME" || true
+    fi
+    return 0
 }
 trap cleanup EXIT
 
@@ -209,6 +330,7 @@ if [[ "$UPGRADE_MODE" -eq 1 && "${DRY_RUN:-0}" == "1" ]]; then
     echo "================================================================"
     if command -v python3 >/dev/null 2>&1; then
         DIFF_TMP_HOME="$(mktemp -d)"
+        trap 'rm -rf "$DIFF_TMP_HOME"' RETURN
         REAL_HOME_VAL="$HOME" \
         HOME="$DIFF_TMP_HOME" XDG_CONFIG_HOME="$DIFF_TMP_HOME/.config" XDG_DATA_HOME="$DIFF_TMP_HOME/.local/share" \
         PYTHONDONTWRITEBYTECODE=1 REPO_DIR="$REPO_DIR" python3 - <<'PY' || true
@@ -242,7 +364,14 @@ if ext_lock.is_file():
         if not ln or ln.startswith("#"):
             continue
         parts = ln.split("|")
-        if len(parts) >= 6 and parts[1] == "50":
+        # Detect host GNOME Shell major version instead of hardcoding 50
+        import subprocess
+        try:
+            gnome_ver = subprocess.check_output(["gnome-shell", "--version"], text=True).strip()
+            gnome_major = "".join(ch for ch in gnome_ver if ch.isdigit()).split()[0] if gnome_ver else "50"
+        except Exception:
+            gnome_major = "50"
+        if len(parts) >= 6 and parts[1] == gnome_major:
             pins[parts[0]] = parts[2]
     print("\n🧩 GNOME Extension Pin Diff (GNOME 50 lockfile):")
     for uuid, target_ver in sorted(pins.items()):
@@ -323,7 +452,7 @@ SELECTED=()
 for st in "${ALL_STAGES[@]}"; do
     base="$(basename "$st")"
     num="${base%%-*}"
-    if [[ -n "$FROM_STAGE" ]] && (( 10#$num < 10#$FROM_STAGE )); then
+    if [[ -n "$FROM_STAGE" ]] && [[ "$num" =~ ^[0-9]+$ ]] && (( 10#$num < 10#$FROM_STAGE )); then
         continue
     fi
     if [[ -n "$ONLY_LIST" ]] && ! matches_csv "$base" "$ONLY_LIST"; then
@@ -383,3 +512,11 @@ if [[ ${#FAILED_STAGES[@]} -gt 0 ]]; then
     echo "================================================================"
     exit 1
 fi
+
+# Success banner when all selected stages pass
+echo ""
+echo "================================================================"
+echo "  ✅ macubuntu PIPELINE COMPLETE — all ${#PASSED_STAGES[@]} stage(s) passed"
+echo "  Passed stages: ${PASSED_STAGES[*]}"
+echo "================================================================"
+exit 0

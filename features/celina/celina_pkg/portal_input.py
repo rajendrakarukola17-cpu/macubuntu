@@ -1,5 +1,4 @@
-"""
-Celina AI — Native GNOME xdg-desktop-portal RemoteDesktop Client (Tier-1 Wayland Input)
+"""Celina AI — Native GNOME xdg-desktop-portal RemoteDesktop Client (Tier-1 Wayland Input)
 Eliminates the need for `input` group membership or unrestricted `/dev/uinput` (`ydotool`)
 on GNOME Wayland by speaking the official `org.freedesktop.portal.RemoteDesktop` D-Bus API.
 
@@ -14,7 +13,7 @@ from __future__ import annotations
 import secrets
 import threading
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 PORTAL_BUS = "org.freedesktop.portal.Desktop"
 PORTAL_PATH = "/org/freedesktop/portal/desktop"
@@ -43,15 +42,14 @@ class PortalActionResult:
 
 
 class RemoteDesktopPortalClient:
-    """
-    Lazy, user-consented GNOME RemoteDesktop Portal session manager.
+    """Lazy, user-consented GNOME RemoteDesktop Portal session manager.
     Only activates when an approved Wayland input action requests it and GNOME's
     portal service is available.
     """
 
     def __init__(self, bus: Any = None):
         self._bus = bus
-        self._session_handle: Optional[str] = None
+        self._session_handle: str | None = None
         self._stream_node_id: int = 0
         self._lock = threading.Lock()
 
@@ -304,11 +302,10 @@ class RemoteDesktopPortalClient:
         dx: float,
         dy: float,
         *,
-        x: Optional[int] = None,
-        y: Optional[int] = None,
+        x: int | None = None,
+        y: int | None = None,
     ) -> PortalActionResult:
-        """
-        Wayland/libinput axis convention: +dy scrolls DOWN, -dy scrolls UP; +dx scrolls RIGHT, -dx scrolls LEFT.
+        """Wayland/libinput axis convention: +dy scrolls DOWN, -dy scrolls UP; +dx scrolls RIGHT, -dx scrolls LEFT.
         Optionally moves the pointer to (x, y) first when a ScreenCast stream node is attached.
         """
         ok, handle_or_err = self.ensure_session()
@@ -355,6 +352,7 @@ class RemoteDesktopPortalClient:
         bus = self._get_bus()
         try:
             import time as _time
+
             from gi.repository import Gio, GLib
 
             def _move(px: float, py: float) -> None:
@@ -439,7 +437,7 @@ class RemoteDesktopPortalClient:
                     pass
 
 
-_DEFAULT_PORTAL: Optional[RemoteDesktopPortalClient] = None
+_DEFAULT_PORTAL: RemoteDesktopPortalClient | None = None
 
 
 def get_portal_client() -> RemoteDesktopPortalClient:

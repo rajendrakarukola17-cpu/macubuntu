@@ -182,18 +182,28 @@ resolve_ollama_model() {
 # Secure Boot & UEFI MOK helpers (Ubuntu 26.04 ships Secure Boot enabled by default)
 detect_secure_boot_enabled() {
     local efivars_dir="${1:-${MACUBUNTU_EFIVARS_DIR:-/sys/firmware/efi/efivars}}"
-    # When testing with an explicit mock efivars dir, read EFI variable directly
-    if [[ "$efivars_dir" == "/sys/firmware/efi/efivars" ]] && command -v mokutil >/dev/null 2>&1; then
-        mokutil --sb-state 2>/dev/null | grep -qi "SecureBoot enabled" && return 0
-        mokutil --sb-state 2>/dev/null | grep -qi "SecureBoot disabled" && return 1
+    # Primary: query via mokutil (single invocation, parse once).
+    if command -v mokutil >/dev/null 2>&1; then
+        local sb_state
+        sb_state="$(mokutil --sb-state 2>/dev/null || true)"
+        if echo "$sb_state" | grep -qi "SecureBoot enabled"; then
+            return 0
+        elif echo "$sb_state" | grep -qi "SecureBoot disabled"; then
+            return 1
+        fi
     fi
+    # Fallback: read the UEFI variable file directly.
+    # UEFI variable file layout: 4-byte little-endian attributes + variable data.
+    # SecureBoot data is a single UINT8 byte: 0x01 = enabled, 0x00 = disabled.
+    # Read all hex bytes sequentially (no lseek dependency) and inspect the final data byte.
     local sb_var
     sb_var="$(find "$efivars_dir" -maxdepth 1 -name 'SecureBoot-*' 2>/dev/null | head -n1 || true)"
     if [[ -n "$sb_var" && -r "$sb_var" ]]; then
-        # Last byte of UEFI SecureBoot variable is 0x01 when enabled, 0x00 when disabled
-        local last_hex
-        last_hex="$(tail -c 1 "$sb_var" 2>/dev/null | od -An -tx1 | tr -d ' \n' || true)"
-        [[ "$last_hex" == "01" ]] && return 0
+        local hex_bytes data_hex
+        hex_bytes="$(od -An -tx1 "$sb_var" 2>/dev/null | tr -d ' \n' || true)"
+        # Drop the first 4 bytes (8 hex chars) = attributes; last 2 hex chars = data byte.
+        data_hex="${hex_bytes: -2}"
+        [[ "$data_hex" == "01" ]] && return 0
     fi
     return 1
 }
@@ -223,3 +233,131 @@ detect_mok_enrolled() {
     mokutil --test-key "$mok_der" >/dev/null 2>&1
 }
 
+detect_mglru_supported() {
+    [[ -f /sys/kernel/mm/lru_gen/enabled ]] && return 0 || return 1
+}
+
+detect_is_ssd() {
+    local root_dev dev
+    root_dev="$(findmnt -no SOURCE / 2>/dev/null | sed 's/\[.*\]//')"
+    dev="$(lsblk -no PKNAME "$root_dev" 2>/dev/null | head -1)"
+    [[ -n "$dev" ]] && [[ "$(cat /sys/block/$dev/queue/rotational 2>/dev/null)" == "0" ]]
+}
+
+detect_is_btrfs_root() {
+    [[ "$(detect_root_fstype)" == "btrfs" ]]
+}
+
+detect_sleep_mode() {
+    cat /sys/power/mem_sleep 2>/dev/null
+}
+
+detect_supports_s2idle() {
+    detect_is_laptop && grep -q "s2idle" /sys/power/mem_sleep 2>/dev/null
+}
+
+# ============================================================================
+# Apple-Style Hardware Tier & Capability Profiling (read-only, zero side effects)
+# ============================================================================
+
+detect_ram_total_mb() {
+    awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo 0
+}
+
+detect_hw_tier() {
+    local ram_mb
+    ram_mb="$(detect_ram_total_mb)"
+    if (( ram_mb <= 10240 )); then
+        echo "CONSTRAINED"   # <= 10 GB / 8 GB class
+    elif (( ram_mb <= 22528 )); then
+        echo "BALANCED"      # 10-22 GB / 16 GB class
+    else
+        echo "HEADROOM"      # >= 23 GB / 32 GB+ class
+    fi
+}
+
+detect_psi_supported() {
+    [[ -r /proc/pressure/memory && -r /proc/pressure/cpu && -r /proc/pressure/io ]]
+}
+
+detect_gpu_vaapi_driver() {
+    # Returns the exact VA-API driver or empty if unsupported/unknown (never blind-sets radeonsi)
+    local pci_vga
+    pci_vga="$(lspci -nn 2>/dev/null | grep -iE 'vga|3d|display' || true)"
+    if grep -qiE 'AMD|ATI' <<<"$pci_vga"; then
+        echo "radeonsi"
+    elif grep -qi 'Intel' <<<"$pci_vga"; then
+        # Gen8+ uses iHD (intel-media-driver); fallback checked at runtime
+        if [[ -f /usr/lib/x86_64-linux-gnu/dri/iHD_drv_video.so ]]; then
+            echo "iHD"
+        elif [[ -f /usr/lib/x86_64-linux-gnu/dri/i965_drv_video.so ]]; then
+            echo "i965"
+        fi
+    else
+        echo ""
+    fi
+}
+
+detect_scaling_driver() {
+    cat /sys/devices/system/cpu/cpufreq/policy0/scaling_driver 2>/dev/null || echo "unknown"
+}
+
+detect_epp_supported() {
+    [[ -f /sys/devices/system/cpu/cpufreq/policy0/energy_performance_preference ]]
+}
+
+detect_s0ix_supported() {
+    # Verify s2idle is listed AND platform power controller exists (prevents battery drain bug)
+    grep -qw "s2idle" /sys/power/mem_sleep 2>/dev/null &&         { [[ -d /sys/kernel/debug/amd_pmc ]] || [[ -d /sys/kernel/debug/pmc_core ]] || lsmod 2>/dev/null | grep -qE '^(amd_pmc|intel_pmc_core)'; }
+}
+
+detect_vmtouch_budget_mb() {
+    local ram_mb tier pct
+    ram_mb="$(detect_ram_total_mb)"
+    tier="$(detect_hw_tier)"
+    case "$tier" in
+        CONSTRAINED) pct=10 ;;  # ~800 MB max on 8 GB (leaves room for Ollama + GNOME)
+        BALANCED)    pct=15 ;;
+        HEADROOM)    pct=20 ;;
+    esac
+    echo $(( ram_mb * pct / 100 ))
+}
+
+detect_psd_safe() {
+    local tier ff_kb=0
+    tier="$(detect_hw_tier)"
+    if [[ "$tier" == "CONSTRAINED" ]]; then
+        return 1  # Too risky on 8 GB with Ollama unless explicitly forced
+    fi
+    if [[ -d "$HOME/.mozilla/firefox" ]]; then
+        ff_kb="$(du -sk "$HOME/.mozilla/firefox" 2>/dev/null | awk '{print $1}' || echo 0)"
+        (( ff_kb < 716800 )) && return 0 || return 1  # Keep under 700 MB
+    fi
+    return 0
+}
+
+detect_p5_rollback_ready() {
+    # Gate for R0 edits (fstab, GRUB): verifies snapshot_file is defined and real
+    declare -F snapshot_file >/dev/null 2>&1 && declare -F rollback_all >/dev/null 2>&1
+}
+
+
+# ============================================================================
+# Perceptual Choreography & SCX sched_ext Probes (read-only, zero side effects)
+# ============================================================================
+
+detect_sched_ext_supported() {
+    # Returns 0 if kernel exposes sched_ext (/sys/kernel/sched_ext present)
+    [[ -d /sys/kernel/sched_ext ]] && return 0 || return 1
+}
+
+detect_gnome_shell_major() {
+    # Returns GNOME Shell major version as integer, or 0 if unavailable/undetectable
+    local ver
+    ver="$(gnome-shell --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)"
+    if [[ -n "$ver" ]]; then
+        echo "$ver"
+    else
+        echo "0"
+    fi
+}

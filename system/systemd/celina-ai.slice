@@ -1,0 +1,12 @@
+[Unit]
+Description=Dedicated cgroup slice for Celina AI workloads (Ollama/llama.cpp + Celina daemon)
+Documentation=file:///usr/share/macubuntu/ARCHITECTURE.md
+
+[Slice]
+CPUWeight=50
+IOWeight=50
+CPUQuota=200%
+MemoryHigh=4G
+MemoryMax=6G
+MemorySwapMax=2G
+ManagedOOMMemoryPressure=kill

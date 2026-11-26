@@ -1,0 +1,10 @@
+[Unit]
+Description=Clamped QoS slice for Celina zero-trust bwrap sandboxes
+
+[Slice]
+CPUWeight=25
+IOWeight=20
+CPUQuota=75%
+MemoryHigh=1024M
+MemoryMax=1536M
+ManagedOOMMemoryPressure=kill

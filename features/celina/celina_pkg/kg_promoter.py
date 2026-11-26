@@ -1,5 +1,4 @@
-"""
-Celina AI — Kicker Two-Layer Knowledge-Graph Promotion Pipeline (`kg.db`)
+"""Celina AI — Kicker Two-Layer Knowledge-Graph Promotion Pipeline (`kg.db`)
 
 Architecture:
   - Layer 1 (`raw_events` in SQLite WAL): absorbs high-frequency OS/eBPF/user
@@ -14,13 +13,14 @@ Architecture:
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config
 
@@ -30,7 +30,7 @@ KG_SCHEMA_VERSION = "4.4.0"
 class KnowledgeGraphPromoter:
     """Thread-safe SQLite WAL two-layer event -> property-graph promoter."""
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         self.db_path = Path(db_path) if db_path is not None else (config.BASE_DIR / "kg.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -76,7 +76,7 @@ class KnowledgeGraphPromoter:
                 );
                 CREATE INDEX IF NOT EXISTS idx_kg_triples_subj ON kg_triples (subject);
                 CREATE INDEX IF NOT EXISTS idx_kg_triples_obj ON kg_triples (object);
-                """
+                """,
             )
             self._conn.execute(
                 """
@@ -93,8 +93,8 @@ class KnowledgeGraphPromoter:
         kind: str,
         entity: str,
         *,
-        meta: Optional[dict[str, Any]] = None,
-        ts: Optional[float] = None,
+        meta: dict[str, Any] | None = None,
+        ts: float | None = None,
     ) -> int:
         now = float(time.time() if ts is None else ts)
         payload = json.dumps(meta or {}, sort_keys=True)
@@ -131,14 +131,14 @@ class KnowledgeGraphPromoter:
         promoted_triples = 0
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, ts, kind, entity, meta_json FROM raw_events WHERE promoted = 0 ORDER BY ts ASC, id ASC"
+                "SELECT id, ts, kind, entity, meta_json FROM raw_events WHERE promoted = 0 ORDER BY ts ASC, id ASC",
             ).fetchall()
             if not rows:
                 return {"events_scanned": 0, "triples_promoted": 0}
 
-            last_meeting: Optional[tuple[float, str]] = None
+            last_meeting: tuple[float, str] | None = None
             app_transitions: dict[tuple[str, str], int] = {}
-            prev_app: Optional[tuple[float, str]] = None
+            prev_app: tuple[float, str] | None = None
 
             for r in rows:
                 ts = float(r["ts"])
@@ -196,6 +196,232 @@ class KnowledgeGraphPromoter:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def consolidate_memory(
+        self,
+        db_path: Path | None = None,
+        *,
+        stale_days: int = 30,
+        decay_step: float = 0.15,
+        prune_threshold: float = 0.30,
+        dry_run: bool = False,
+    ) -> dict[str, int]:
+        """Transactional Merge → Decay → Soft-Prune consolidator (Memory v2).
+
+        Executes inside a single SQLite `BEGIN IMMEDIATE` transaction (or read-only
+        counts when `dry_run=True`). Never hard-DELETEs rows — soft-prunes via
+        `valid_until` so history stays auditable.
+
+        Steps:
+          1. Merge: deduplicate active kg_triples sharing normalized
+             (lower(trim(subject)), lower(trim(predicate)), lower(trim(object)))
+             — keep highest confidence + earliest valid_from, soft-invalidate dups.
+          2. Decay: reduce confidence = max(0, confidence - decay_step) on active
+             kg_triples/facts older than `stale_days`, NEVER decaying
+             source_trust == 'user_direct' rows with category in ('preference','decision').
+          3. Soft-Prune: set valid_until = now_utc on active non-pinned rows whose
+             confidence < prune_threshold.
+
+        Returns {"merged": int, "decayed": int, "soft_pruned": int}.
+        """
+        target = Path(db_path) if db_path is not None else config.DB_PATH
+        now_iso = datetime.datetime.now(datetime.UTC).isoformat()
+        now_ts = datetime.datetime.now(datetime.UTC).timestamp()
+        stale_cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=stale_days)
+        stale_cutoff_iso = stale_cutoff.isoformat()
+        stale_cutoff_ts = stale_cutoff.timestamp()
+
+        merged = 0
+        decayed = 0
+        soft_pruned = 0
+
+        # Use the promoter's existing connection when operating on its own db_path
+        # to avoid WAL visibility issues between separate connections.
+        _owns_conn = False
+        if db_path is None:
+            conn = self._conn
+        else:
+            conn = sqlite3.connect(str(target), timeout=10.0, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA busy_timeout=5000;")
+            _owns_conn = True
+        try:
+            if dry_run:
+                # Read-only counts — no writes
+                # Merge count: duplicates beyond the canonical survivor
+                dup_rows = conn.execute(
+                    """
+                    SELECT COUNT(*) AS dup_cnt FROM (
+                        SELECT subject, predicate, object, COUNT(*) AS cnt
+                        FROM kg_triples
+                        WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                        GROUP BY lower(trim(subject)), lower(trim(predicate)), lower(trim(object))
+                        HAVING cnt > 1
+                    )
+                    """,
+                    (now_iso,),
+                ).fetchone()
+                merged = int(dup_rows["dup_cnt"]) if dup_rows else 0
+
+                # Decay count: stale non-pinned rows that would be decayed
+                decay_rows = conn.execute(
+                    """
+                    SELECT COUNT(*) AS dec_cnt FROM (
+                        SELECT rowid FROM kg_triples
+                        WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                          AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                          AND (updated_at < ? OR datetime(valid_from) < ?)
+                          AND confidence > 0.0
+                    UNION ALL
+                        SELECT rowid FROM facts
+                        WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                          AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                          AND (updated_at < ? OR datetime(valid_from) < ?)
+                          AND confidence > 0.0
+                    )
+                    """,
+                    (now_iso, stale_cutoff_ts, stale_cutoff_iso,
+                     now_iso, stale_cutoff_ts, stale_cutoff_iso),
+                ).fetchone()
+                decayed = int(decay_rows["dec_cnt"]) if decay_rows else 0
+
+                # Soft-prune count: active non-pinned rows below threshold
+                prune_rows = conn.execute(
+                    """
+                    SELECT COUNT(*) AS prune_cnt FROM (
+                        SELECT rowid FROM kg_triples
+                        WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                          AND confidence < ?
+                          AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                    UNION ALL
+                        SELECT rowid FROM facts
+                        WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                          AND confidence < ?
+                          AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                    )
+                    """,
+                    (now_iso, prune_threshold, now_iso, prune_threshold),
+                ).fetchone()
+                soft_pruned = int(prune_rows["prune_cnt"]) if prune_rows else 0
+
+                return {"merged": merged, "decayed": decayed, "soft_pruned": soft_pruned}
+
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                # --- Step 1: Merge duplicates ---
+                # Find canonical survivor per normalized (subject, predicate, object)
+                dup_groups = conn.execute(
+                    """
+                    SELECT lower(trim(subject)) AS ns, lower(trim(predicate)) AS np,
+                           lower(trim(object)) AS no, COUNT(*) AS cnt
+                    FROM kg_triples
+                    WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                    GROUP BY ns, np, no
+                    HAVING cnt > 1
+                    """,
+                    (now_iso,),
+                ).fetchall()
+                for grp in dup_groups:
+                    # All active dups for this normalized group
+                    dups = conn.execute(
+                        """
+                        SELECT rowid, subject, predicate, object, confidence, valid_from, updated_at
+                        FROM kg_triples
+                        WHERE lower(trim(subject)) = ? AND lower(trim(predicate)) = ?
+                          AND lower(trim(object)) = ?
+                          AND (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                        ORDER BY confidence DESC, valid_from ASC, updated_at ASC
+                        """,
+                        (grp["ns"], grp["np"], grp["no"], now_iso),
+                    ).fetchall()
+                    if len(dups) <= 1:
+                        continue
+                    survivor = dups[0]
+                    for dup in dups[1:]:
+                        conn.execute(
+                            "UPDATE kg_triples SET valid_until = ? WHERE rowid = ?",
+                            (now_iso, dup["rowid"]),
+                        )
+                        merged += 1
+
+                # --- Step 2: Decay ---
+                # Decay kg_triples (updated_at is a Unix REAL timestamp; compare numerically)
+                decay_rows = conn.execute(
+                    """
+                    SELECT rowid, confidence FROM kg_triples
+                    WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                      AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                      AND (updated_at < ? OR datetime(valid_from) < ?)
+                      AND confidence > 0.0
+                    """,
+                    (now_iso, stale_cutoff_ts, stale_cutoff_iso),
+                ).fetchall()
+                for r in decay_rows:
+                    new_conf = max(0.0, float(r["confidence"]) - decay_step)
+                    conn.execute(
+                        "UPDATE kg_triples SET confidence = ? WHERE rowid = ?",
+                        (new_conf, r["rowid"]),
+                    )
+                    decayed += 1
+
+                # Decay facts (updated_at is a Unix REAL timestamp; compare numerically)
+                decay_rows = conn.execute(
+                    """
+                    SELECT rowid, confidence FROM facts
+                    WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                      AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                      AND (updated_at < ? OR datetime(valid_from) < ?)
+                      AND confidence > 0.0
+                    """,
+                    (now_iso, stale_cutoff_ts, stale_cutoff_iso),
+                ).fetchall()
+                for r in decay_rows:
+                    new_conf = max(0.0, float(r["confidence"]) - decay_step)
+                    conn.execute(
+                        "UPDATE facts SET confidence = ? WHERE rowid = ?",
+                        (new_conf, r["rowid"]),
+                    )
+                    decayed += 1
+
+                # --- Step 3: Soft-Prune ---
+                prune_rows = conn.execute(
+                    """
+                    SELECT rowid FROM kg_triples
+                    WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                      AND confidence < ?
+                      AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                    """,
+                    (now_iso, prune_threshold),
+                ).fetchall()
+                for r in prune_rows:
+                    conn.execute(
+                        "UPDATE kg_triples SET valid_until = ? WHERE rowid = ?",
+                        (now_iso, r["rowid"]),
+                    )
+                    soft_pruned += 1
+
+                prune_rows = conn.execute(
+                    """
+                    SELECT rowid FROM facts
+                    WHERE (valid_until IS NULL OR valid_until = '' OR valid_until > ?)
+                      AND confidence < ?
+                      AND NOT (source_trust = 'user_direct' AND category IN ('preference', 'decision'))
+                    """,
+                    (now_iso, prune_threshold),
+                ).fetchall()
+                for r in prune_rows:
+                    conn.execute(
+                        "UPDATE facts SET valid_until = ? WHERE rowid = ?",
+                        (now_iso, r["rowid"]),
+                    )
+                    soft_pruned += 1
+
+                conn.commit()
+            return {"merged": merged, "decayed": decayed, "soft_pruned": soft_pruned}
+        finally:
+            if _owns_conn:
+                conn.close()
+
     def get_schema_version(self) -> str:
         with self._lock:
             row = self._conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()
@@ -209,6 +435,7 @@ class KnowledgeGraphPromoter:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Celina Kicker Knowledge-Graph Promoter (kg.db)")
     parser.add_argument("--promote-once", action="store_true", help="Run a single promotion pass and exit")
+    parser.add_argument("--consolidate-once", action="store_true", help="Run a single Memory v2 consolidation pass and exit")
     parser.add_argument("--daemon", action="store_true", help="Run periodic background promotion loop")
     parser.add_argument("--interval", type=float, default=30.0, help="Promotion interval seconds in daemon mode")
     args = parser.parse_args()
@@ -218,10 +445,16 @@ def main() -> int:
         print(json.dumps(promoter.promote_pending_events()))
         promoter.close()
         return 0
+    if args.consolidate_once:
+        print(json.dumps(promoter.consolidate_memory()))
+        promoter.close()
+        return 0
     if args.daemon:
         try:
             while True:
                 promoter.promote_pending_events()
+                # Memory v2: Merge → Decay → Soft-Prune each cycle
+                promoter.consolidate_memory()
                 time.sleep(max(5.0, float(args.interval)))
         except KeyboardInterrupt:
             pass

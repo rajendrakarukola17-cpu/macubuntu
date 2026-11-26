@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - GitHub Connector (Update 23)
+"""Celina AI (Celly) - GitHub Connector (Update 23)
 
 Adapted from MausBot concepts (Apache-2.0, github.com/milind-soni/OpenMausBot)
 to Python. Connects to GitHub via its REST API using a personal access token.
@@ -15,15 +14,16 @@ Hard refusals:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from celina_pkg.approval import RiskLevel
+
 from .base import (
+    ActionResult,
     BaseConnector,
+    ConnectorAction,
     ConnectorConfig,
     ConnectorStatus,
-    ConnectorAction,
-    ActionResult,
 )
 
 GITHUB_API_URL = "https://api.github.com"
@@ -155,7 +155,7 @@ class GitHubConnector(BaseConnector):
             read_only_actions=GITHUB_READ_ONLY_ACTIONS,
         )
         super().__init__(cfg, approval_cb)
-        self._token: Optional[str] = None
+        self._token: str | None = None
 
     def is_configured(self) -> bool:
         creds = self._load_credentials()
@@ -215,25 +215,24 @@ class GitHubConnector(BaseConnector):
             try:
                 if action_name == "list_repos":
                     return self._list_repos(params)
-                elif action_name == "get_repo":
+                if action_name == "get_repo":
                     return self._get_repo(params)
-                elif action_name == "list_issues":
+                if action_name == "list_issues":
                     return self._list_issues(params)
-                elif action_name == "get_issue":
+                if action_name == "get_issue":
                     return self._get_issue(params)
-                elif action_name == "create_issue":
+                if action_name == "create_issue":
                     return self._create_issue(params)
-                elif action_name == "list_pull_requests":
+                if action_name == "list_pull_requests":
                     return self._list_pull_requests(params)
-                elif action_name == "get_user":
+                if action_name == "get_user":
                     return self._get_user(params)
-                else:
-                    return ActionResult(
-                        success=False,
-                        error=f"Action not implemented: {action_name}",
-                        action=action_name,
-                        connector=self.name,
-                    )
+                return ActionResult(
+                    success=False,
+                    error=f"Action not implemented: {action_name}",
+                    action=action_name,
+                    connector=self.name,
+                )
             except Exception as exc:
                 return ActionResult(
                     success=False,
@@ -286,7 +285,7 @@ class GitHubConnector(BaseConnector):
     def _get_repo(self, params: dict[str, Any]) -> ActionResult:
         owner = params["owner"]
         repo = params["repo"]
-        body = self._get(f"/repos/{owner}/{repo}")
+        body = self._get(self._build_path("repos", owner, repo))
         return ActionResult(success=True, data={"repo": body}, action="get_repo", connector=self.name)
 
     def _list_issues(self, params: dict[str, Any]) -> ActionResult:
@@ -294,7 +293,10 @@ class GitHubConnector(BaseConnector):
         repo = params["repo"]
         state = params.get("state", "open")
         limit = min(int(params.get("limit", 50)), 100)
-        body = self._get(f"/repos/{owner}/{repo}/issues?state={state}&per_page={limit}")
+        body = self._get(
+            self._build_path("repos", owner, repo, "issues")
+            + f"?state={state}&per_page={limit}",
+        )
         issues = [
             {
                 "number": i.get("number"),
@@ -312,7 +314,7 @@ class GitHubConnector(BaseConnector):
         owner = params["owner"]
         repo = params["repo"]
         issue_number = params["issue_number"]
-        body = self._get(f"/repos/{owner}/{repo}/issues/{issue_number}")
+        body = self._get(self._build_path("repos", owner, repo, "issues", issue_number))
         return ActionResult(success=True, data={"issue": body}, action="get_issue", connector=self.name)
 
     def _create_issue(self, params: dict[str, Any]) -> ActionResult:
@@ -325,7 +327,7 @@ class GitHubConnector(BaseConnector):
             payload["body"] = params["body"]
         if params.get("labels"):
             payload["labels"] = params["labels"]
-        body = self._post(f"/repos/{owner}/{repo}/issues", payload)
+        body = self._post(self._build_path("repos", owner, repo, "issues"), payload)
         return ActionResult(success=True, data={"issue": body}, action="create_issue", connector=self.name)
 
     def _list_pull_requests(self, params: dict[str, Any]) -> ActionResult:
@@ -333,7 +335,10 @@ class GitHubConnector(BaseConnector):
         repo = params["repo"]
         state = params.get("state", "open")
         limit = min(int(params.get("limit", 50)), 100)
-        body = self._get(f"/repos/{owner}/{repo}/pulls?state={state}&per_page={limit}")
+        body = self._get(
+            self._build_path("repos", owner, repo, "pulls")
+            + f"?state={state}&per_page={limit}",
+        )
         prs = [
             {
                 "number": p.get("number"),
@@ -348,5 +353,5 @@ class GitHubConnector(BaseConnector):
 
     def _get_user(self, params: dict[str, Any]) -> ActionResult:
         username = params["username"]
-        body = self._get(f"/users/{username}")
+        body = self._get(self._build_path("users", username))
         return ActionResult(success=True, data={"user": body}, action="get_user", connector=self.name)

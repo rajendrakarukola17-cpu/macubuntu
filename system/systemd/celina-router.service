@@ -17,7 +17,7 @@ RestartSec=3s
 # Hardened userns-free unprivileged directives (Ubuntu 26.04 --user safe)
 NoNewPrivileges=yes
 UMask=0077
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_INET
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes

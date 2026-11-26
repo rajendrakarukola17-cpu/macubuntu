@@ -1,0 +1,28 @@
+# macubuntu / Celina v4.4 — Audit Tool Dependencies (Pinned with SHA-256 hashes)
+# Hashes generated via: pip download <pkg>==<ver> && pip hash <file>
+#
+# pip-audit (2026-11-14): clean — no known vulnerabilities in pinned set.
+#   tornado 6.6 → 6.6.1 (CVE-2026-126347)
+#   filelock 3.32.7 → 4.2.1 (13x CVE-2026-1129xx)
+# Note: safety omitted (deprecated; conflicts with filelock>=4.2.1; pip-audit is primary scanner)
+
+ruff==0.17.6 \
+    --hash=sha256:aa3b08254a732acba246891089a152c47c5733dc36b8ecb76ce8602f8326e5e4
+mypy==2.4.1 \
+    --hash=sha256:1fb70621535c22fd4b1a0450d37ed1d6c5eb39656a1cebfb189084c12de54ba7
+bandit==1.9.4 \
+    --hash=sha256:f89ffa663767f5a0585ea075f01020207e966a9c0f2b9ef56a57c7963a3f6f8e
+pip-audit==2.10.1 \
+    --hash=sha256:99ef3f600a317c1945f1e89e227ef26e1c2d618429b8bd3fa6f4f7c440c4611a
+pytest-cov==7.1.0 \
+    --hash=sha256:a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678
+pytest-asyncio==1.5.0 \
+    --hash=sha256:557f255ee03cc84f84a8d5f438bc9c6e0f714bf86970ae743c7ecb5a38d7e07d
+filelock==4.2.1 \
+    --hash=sha256:7be2662e9e826b9bba28afc0f843a123280d799a2ea44bb5d35ccec67905ae44
+tornado==6.6.1 \
+    --hash=sha256:1b6ff57cc69b339f8feb9e7b567b0e0eacb16bfaf234159496623ef7a67ba640
+types-requests==2.33.0.20261030 \
+    --hash=sha256:06cfc2e92399bf46eda78a65cd0e2203d29ebbeede78b4ab0a5922f749ce1492
+types-defusedxml==0.7.0.20260504 \
+    --hash=sha256:a959e3a0a43b93e464bd625d91ec9193a2703ddc10443bdd627792485fae0b10

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Always-Resident Core (Update 19)
+"""Celina AI (Celly) - Gear 0 Always-Resident Core (Update 19)
 
 Guarantees Gear 0 stays in RAM — never offloaded, never swapped.
 Provides the resident intent classifier (FastText/spaCy with regex fallback).
@@ -8,13 +7,11 @@ Zero LLM tokens, sub-20ms classification, 100% local.
 
 from __future__ import annotations
 
-import json
 import os
-import re
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 # Resident flag — Gear 0 is never offloaded
 GEAR0_RESIDENT = True
@@ -60,8 +57,7 @@ class IntentResult:
 
 
 class Gear0NLURouter:
-    """
-    Tiny ML intent router — the "semantic bridge" between messy human language
+    """Tiny ML intent router — the "semantic bridge" between messy human language
     and Gear 0's deterministic execution.
 
     Tiers:
@@ -70,7 +66,7 @@ class Gear0NLURouter:
       3. Regex fallback: pre-compiled patterns, <1ms
     """
 
-    def __init__(self, model_path: Optional[Path] = None):
+    def __init__(self, model_path: Path | None = None):
         self.model_path = model_path or Path.home() / ".celina" / "models"
         self._fasttext_model = None
         self._spacy_nlp = None
@@ -110,8 +106,7 @@ class Gear0NLURouter:
                 self._spacy_nlp = None
 
     def classify(self, query: str) -> IntentResult:
-        """
-        Classify query into intent + slots.
+        """Classify query into intent + slots.
 
         Priority: FastText → spaCy → Regex → unknown
         """
@@ -151,7 +146,16 @@ class Gear0NLURouter:
                 pass
 
         # Tier 3: Regex fallback
-        from . import gear0_intent, gear0_graph, gear0_iot, gear0_context, gear0_audit, gear0_media, gear0_focus, gear0_clipboard, gear0_brain
+        from . import (
+            gear0_audit,
+            gear0_clipboard,
+            gear0_context,
+            gear0_focus,
+            gear0_graph,
+            gear0_intent,
+            gear0_iot,
+            gear0_media,
+        )
 
         intent_name = (
             gear0_intent.gear0_intent_classify(query)
@@ -248,9 +252,7 @@ class Gear0NLURouter:
                 slots["message"] = m2.group(1).strip()
         elif intent == "theme":
             slots["mode"] = "dark" if "dark" in query.lower() else "light"
-        elif intent == "dnd":
-            slots["enabled"] = "off" not in query.lower() and "disable" not in query.lower()
-        elif intent == "night_light":
+        elif intent == "dnd" or intent == "night_light":
             slots["enabled"] = "off" not in query.lower() and "disable" not in query.lower()
         elif intent == "volume":
             m = _re.search(r"(\d{1,3})\s*%", query)
@@ -323,7 +325,7 @@ class Gear0NLURouter:
 
 
 # Global NLU router instance (lazy-initialized)
-_nlu_router: Optional[Gear0NLURouter] = None
+_nlu_router: Gear0NLURouter | None = None
 
 
 def get_nlu_router() -> Gear0NLURouter:
@@ -343,7 +345,7 @@ __all__ = [
     "Gear0NLURouter",
     "IntentResult",
     "ensure_gear0_resident",
-    "is_gear0_resident",
-    "get_nlu_router",
     "gear0_nlu_classify",
+    "get_nlu_router",
+    "is_gear0_resident",
 ]

@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Plugin #1: Active Context Sniffer (Update 19)
+"""Celina AI (Celly) - Plugin #1: Active Context Sniffer (Update 19)
 
 Zero-LLM situational awareness plugin. Uses native OS Accessibility APIs to
 instantly grab the Active Window Title and Currently Highlighted/Selected Text.
@@ -16,12 +15,11 @@ Supported platforms:
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
 
 # ---------------------------------------------------------------------------
 # Sniffer security hardening (Update 20 Truth & Safety)
@@ -37,6 +35,15 @@ SNIFFER_APP_DENYLIST: frozenset[str] = frozenset({
 # RAM-only TTL: snapshots expire after this many seconds and are never persisted
 SNIFFER_TTL_SECONDS: int = 30
 
+# Window title patterns whose context must never be sniffed (banking, login, etc.)
+SNIFFER_WINDOW_DENYLIST: frozenset[str] = frozenset({
+    "banking", "bank", "paypal", "credit card", "payment",
+    "login", "sign in", "password", "2fa", "two-factor",
+})
+
+# Minimum cooldown between sniffs to prevent continuous surveillance (keylogger-like)
+SNIFFER_MIN_COOLDOWN_SEC: float = 2.0
+
 
 @dataclass
 class ContextSnapshot:
@@ -45,6 +52,7 @@ class ContextSnapshot:
     Snapshots are RAM-only, never persisted to disk, and expire after
     SNIFFER_TTL_SECONDS.
     """
+
     window_title: str
     app_name: str
     highlighted_text: str
@@ -61,13 +69,19 @@ class ContextSnapshot:
         return time.time() > self._expiry
 
     def is_allowed(self) -> bool:
-        """Return True if the captured app is not in the denylist."""
-        return (self.app_name or "").lower() not in SNIFFER_APP_DENYLIST
+        """Return True if the captured app/window is not in any denylist."""
+        app = (self.app_name or "").lower()
+        title = (self.window_title or "").lower()
+        if app in SNIFFER_APP_DENYLIST:
+            return False
+        for pattern in SNIFFER_WINDOW_DENYLIST:
+            if pattern in title:
+                return False
+        return True
 
 
 class ContextSniffer:
-    """
-    Sniffs the active OS window for title and highlighted text.
+    """Sniffs the active OS window for title and highlighted text.
 
     All methods are lazy and gracefully degrade if accessibility tools
     are not installed or permissions are not granted.
@@ -75,7 +89,8 @@ class ContextSniffer:
 
     def __init__(self):
         self._platform = self._detect_platform()
-        self._last_snapshot: Optional[ContextSnapshot] = None
+        self._last_snapshot: ContextSnapshot | None = None
+        self._last_sniff_time: float = 0.0
 
     # ------------------------------------------------------------------
     # Platform detection
@@ -97,16 +112,28 @@ class ContextSniffer:
     # ------------------------------------------------------------------
 
     def sniff(self) -> ContextSnapshot:
-        """
-        Capture the current active window context.
+        """Capture the current active window context.
 
         Returns a ContextSnapshot with window_title, app_name, highlighted_text,
         timestamp, platform, and source. Never raises — returns empty strings
         on any failure.
-        """
-        import time
 
+        Enforces a minimum cooldown (SNIFFER_MIN_COOLDOWN_SEC) between sniffs
+        to prevent continuous surveillance (keylogger-like behavior).
+        """
         ts = time.time()
+
+        # Enforce cooldown — reject sniffs too close together
+        if self._last_sniff_time > 0 and (ts - self._last_sniff_time) < SNIFFER_MIN_COOLDOWN_SEC:
+            remaining = SNIFFER_MIN_COOLDOWN_SEC - (ts - self._last_sniff_time)
+            return ContextSnapshot(
+                window_title="",
+                app_name="",
+                highlighted_text="",
+                timestamp=ts,
+                platform=self._platform,
+                source="cooldown",
+            )
         window_title = ""
         app_name = ""
         highlighted = ""
@@ -141,9 +168,11 @@ class ContextSniffer:
                 source=source,
             )
         self._last_snapshot = snapshot
+        if snapshot.source != "cooldown":
+            self._last_sniff_time = ts
         return snapshot
 
-    def last_snapshot(self) -> Optional[ContextSnapshot]:
+    def last_snapshot(self) -> ContextSnapshot | None:
         """Return the most recent snapshot, or None if never sniffed."""
         return self._last_snapshot
 
@@ -222,9 +251,16 @@ class ContextSniffer:
     # ------------------------------------------------------------------
 
     def _sniff_macos(self) -> tuple[str, str, str, str]:
-        """Use AppleScript (System Events) for window title + clipboard for text."""
+        """Use AppleScript (System Events) for window title only.
+
+        Highlighted text is NOT captured on macOS because AppleScript cannot
+        access the actual text selection. Reading the clipboard (pbpaste)
+        would expose potentially sensitive clipboard contents (passwords,
+        credit cards, etc.) without user consent — that is deliberately
+        avoided here.
+        """
         try:
-            script = '''
+            script = """
             tell application "System Events"
                 set frontApp to name of first application process whose frontmost is true
                 try
@@ -236,7 +272,7 @@ class ContextSniffer:
                 end try
                 return frontApp & "|" & winTitle
             end tell
-            '''
+            """
             result = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True, text=True, timeout=3,
@@ -247,13 +283,10 @@ class ContextSniffer:
             else:
                 app_name, window_title = output, ""
 
-            # Highlighted text via clipboard (pbpaste) — note: this reads clipboard,
-            # not selection. True selection access requires AXUIElement API.
+            # Highlighted text is intentionally empty on macOS:
+            # AppleScript cannot access the actual text selection, and reading
+            # the clipboard would expose sensitive data without consent.
             highlighted = ""
-            if shutil.which("pbpaste"):
-                highlighted = subprocess.run(
-                    ["pbpaste"], capture_output=True, text=True, timeout=2,
-                ).stdout.strip()
 
             return window_title, app_name, highlighted, "ax"
         except Exception:
@@ -264,7 +297,14 @@ class ContextSniffer:
     # ------------------------------------------------------------------
 
     def _sniff_windows(self) -> tuple[str, str, str, str]:
-        """Use pywinauto or PowerShell for window title + text."""
+        """Use PowerShell for window title only.
+
+        Highlighted text is NOT captured on Windows because PowerShell cannot
+        reliably access the actual text selection. Reading the clipboard
+        (Get-Clipboard) would expose potentially sensitive clipboard contents
+        (passwords, credit cards, etc.) without user consent — that is
+        deliberately avoided here.
+        """
         try:
             # PowerShell fallback (always available on Windows)
             ps_script = (
@@ -289,14 +329,10 @@ class ContextSniffer:
             )
             app_name = result_app.stdout.strip()
 
-            # Clipboard for highlighted text
+            # Highlighted text is intentionally empty on Windows:
+            # PowerShell cannot reliably access the actual text selection, and
+            # reading the clipboard would expose sensitive data without consent.
             highlighted = ""
-            ps_clip = "Get-Clipboard"
-            result_clip = subprocess.run(
-                ["powershell", "-Command", ps_clip],
-                capture_output=True, text=True, timeout=2,
-            )
-            highlighted = result_clip.stdout.strip()
 
             return window_title, app_name, highlighted, "uia"
         except Exception:
@@ -307,7 +343,7 @@ class ContextSniffer:
 # Global singleton
 # ---------------------------------------------------------------------------
 
-_sniffer: Optional[ContextSniffer] = None
+_sniffer: ContextSniffer | None = None
 
 
 def get_sniffer() -> ContextSniffer:
@@ -324,12 +360,12 @@ def sniff_context() -> ContextSnapshot:
 
 
 __all__ = [
-    "ContextSniffer",
     "ContextSnapshot",
-    "get_sniffer",
-    "sniff_context",
+    "ContextSniffer",
     "gear0_sniffer_classify",
     "gear0_sniffer_execute",
+    "get_sniffer",
+    "sniff_context",
 ]
 
 
@@ -337,17 +373,17 @@ __all__ = [
 # Gear 0 Plugin #1 dispatch: Active Context Sniffer
 # ---------------------------------------------------------------------------
 
-_SNIFFER_QUERY_RE = __import__("re").compile(
+_SNIFFER_QUERY_RE = re.compile(
     r"^(?:please\s+)?(?:what'?s|what is)\s+(?:my\s+)?(?:active\s+window|current\s+app|highlighted|selected\s+text|screen\s+context)\??$",
-    __import__("re").IGNORECASE,
+    re.IGNORECASE,
 )
-_SNIFFER_SNIFF_RE = __import__("re").compile(
+_SNIFFER_SNIFF_RE = re.compile(
     r"^(?:please\s+)?(?:sniff|capture|grab)\s+(?:context|window|screen|text)\??$",
-    __import__("re").IGNORECASE,
+    re.IGNORECASE,
 )
 
 
-def gear0_sniffer_classify(query: str) -> Optional[str]:
+def gear0_sniffer_classify(query: str) -> str | None:
     """Classify query into a sniffer handler name, or None."""
     low = query.strip().lower()
     if _SNIFFER_QUERY_RE.match(low) or _SNIFFER_SNIFF_RE.match(low):
@@ -355,7 +391,7 @@ def gear0_sniffer_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_sniffer_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_sniffer_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0 Plugin #1 sniffer handler.
 
     Snapshots are RAM-only with a 30-second TTL and are never persisted.
@@ -364,6 +400,12 @@ def gear0_sniffer_execute(handler: str, query: str, dry_run: bool = False) -> Op
     try:
         if handler == "sniff_context":
             snapshot = sniff_context()
+            # Enforce cooldown — sniff() already enforces it, but double-check here
+            if snapshot.source == "cooldown":
+                return (
+                    "👁 Context Sniffer: cooldown active. Wait a moment before "
+                    "sniffing again."
+                )
             # Enforce RAM-only TTL — expired snapshots are treated as empty
             if snapshot.is_expired():
                 return (

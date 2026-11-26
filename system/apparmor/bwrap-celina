@@ -1,0 +1,25 @@
+# Celina bwrap AppArmor profile (minimal stub)
+# This is a placeholder profile for the bwrap sandbox used by Celina.
+# Deployed by stages/55-security-biometrics.sh.
+
+abi <unused>,
+
+#include <tunables/global>
+
+profile bwrap-celina flags=(attach_disconnected) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+
+  deny @{PROC}/* w,
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/mem rwklx,
+  deny @{PROC}/kmem rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  /usr/bin/bwrap mr,
+  /usr/bin/true mr,
+}

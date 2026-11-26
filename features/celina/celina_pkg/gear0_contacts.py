@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0 Contacts & Communication (Update 19)
+"""Celina AI (Celly) - Gear 0 Contacts & Communication (Update 19)
 
 Siri-style personal context — local address book, communication routing.
 Zero LLM tokens, sub-5ms contact lookup, 100% local.
@@ -10,7 +9,6 @@ from __future__ import annotations
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional
 
 _CONTACTS_DB_PATH = Path.home() / ".celina" / "storage" / "shared" / "contacts.db"
 
@@ -70,7 +68,7 @@ def contact_save(name: str, phone: str = "", email: str = "", address: str = "")
         return f"Failed to save contact: {exc}"
 
 
-def contact_lookup(name: str) -> Optional[dict[str, str]]:
+def contact_lookup(name: str) -> dict[str, str] | None:
     """Look up a contact by name."""
     try:
         conn = _get_conn()
@@ -126,7 +124,8 @@ def handle_text(alias: str, message: str, dry_run: bool = False) -> str:
     if dry_run:
         return f"🧪 Dry-Run [Gear 0-Contacts]: Would text {alias} ({phone}): {message}."
     try:
-        import subprocess, urllib.parse
+        import subprocess
+        import urllib.parse
         encoded = urllib.parse.quote(message)
         subprocess.Popen(["xdg-open", f"sms:{phone}?body={encoded}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return f"💬 Texting {alias} ({phone}): {message}."
@@ -145,7 +144,8 @@ def handle_email(alias: str, subject: str = "", dry_run: bool = False) -> str:
     if dry_run:
         return f"🧪 Dry-Run [Gear 0-Contacts]: Would email {alias} ({email_addr}) about {subject or 'no subject'}."
     try:
-        import subprocess, urllib.parse
+        import subprocess
+        import urllib.parse
         subject_encoded = urllib.parse.quote(subject or "No Subject")
         subprocess.Popen(["xdg-open", f"mailto:{email_addr}?subject={subject_encoded}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return f"✉️ Emailing {alias} ({email_addr})."
@@ -157,7 +157,7 @@ def handle_email(alias: str, subject: str = "", dry_run: bool = False) -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_contacts_classify(query: str) -> Optional[str]:
+def gear0_contacts_classify(query: str) -> str | None:
     """Classify query into a contact handler name, or None."""
     low = query.strip().lower()
 
@@ -173,7 +173,7 @@ def gear0_contacts_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_contacts_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_contacts_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Contacts handler."""
     try:
         if handler == "call":
@@ -198,12 +198,12 @@ def gear0_contacts_execute(handler: str, query: str, dry_run: bool = False) -> O
 
 
 __all__ = [
-    "contact_save",
-    "contact_lookup",
     "contact_list",
-    "handle_call",
-    "handle_text",
-    "handle_email",
+    "contact_lookup",
+    "contact_save",
     "gear0_contacts_classify",
     "gear0_contacts_execute",
+    "handle_call",
+    "handle_email",
+    "handle_text",
 ]

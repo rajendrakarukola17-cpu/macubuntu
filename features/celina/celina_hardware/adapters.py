@@ -10,9 +10,11 @@ Every mutating hardware action strictly follows:
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence
@@ -81,9 +83,9 @@ class UPowerAdapter:
                 if bats:
                     info = self._run(["upower", "-i", bats[0]], 3.0)
                     if info.ok:
-                        pct_m = re.search(r"percentage:\s*(\d+)%", info.stdout)
+                        pct_m = re.search(r"percentage:\s*([0-9]+(?:\.[0-9]+)?)%", info.stdout)
                         st_m = re.search(r"state:\s*([A-Za-z0-9_-]+)", info.stdout)
-                        pct = int(pct_m.group(1)) if pct_m else None
+                        pct = int(round(float(pct_m.group(1)))) if pct_m else None
                         st = st_m.group(1).lower() if st_m else "unknown"
                         return PowerState(
                             status=CapabilityStatus.HEALTHY,
@@ -190,8 +192,11 @@ class PipeWireAdapter:
         mute: Optional[bool] = None,
     ) -> HardwareActionResult:
         before = self.get_state()
-        if before.status == CapabilityStatus.NOT_INSTALLED:
-            return HardwareActionResult(False, False, "Error: No PipeWire/PulseAudio mixer found (wpctl/pactl).", returncode=127)
+        if before.status not in (CapabilityStatus.HEALTHY,):
+            return HardwareActionResult(
+                False, False, f"Error: No PipeWire/PulseAudio mixer found (wpctl/pactl) — status={before.status.value}.",
+                returncode=127,
+            )
 
         backend = before.backend
         requested: dict[str, object] = {}
@@ -231,13 +236,14 @@ class PipeWireAdapter:
             requested["delta"] = step
             if before.volume_percent is not None:
                 expected_level = max(0, min(100, before.volume_percent + step))
-            sign = "+" if step >= 0 else "-"
-            mag = abs(step)
-            cmd = (
-                ["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{mag}%{sign}"]
-                if backend == "wpctl"
-                else ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{sign}{mag}%"]
-            )
+            # For pactl, use absolute clamped volume so it cannot overshoot >100%
+            # and fail read-after-write verification.
+            if backend == "wpctl":
+                sign = "+" if step >= 0 else "-"
+                mag = abs(step)
+                cmd = ["wpctl", "set-volume", "-l", "1.0", "@DEFAULT_AUDIO_SINK@", f"{mag}%{sign}"]
+            else:
+                cmd = ["pactl", "set-sink-volume", "@DEFAULT_SINK@", f"{expected_level}%"]
             res = self._run(cmd, 3.0)
             if not res.ok:
                 return HardwareActionResult(
@@ -296,11 +302,16 @@ class NetworkManagerAdapter:
         enabled = low == "enabled"
         ssid = ""
         if enabled:
-            act = self._run(["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi"], 3.0)
+            # --rescan no avoids triggering an active Wi-Fi scan on every probe (2-5s UI lag)
+            act = self._run(
+                ["nmcli", "-t", "-f", "ACTIVE,SSID", "dev", "wifi", "list", "--rescan", "no"], 3.0
+            )
             if act.ok:
                 for line in act.stdout.splitlines():
                     if line.startswith("yes:"):
-                        ssid = line.split(":", 1)[1].strip()
+                        raw_ssid = line.split(":", 1)[1].strip()
+                        # nmcli escapes colons as \: — unescape them
+                        ssid = raw_ssid.replace("\\:", ":")
                         break
         return NetworkState(
             status=CapabilityStatus.HEALTHY,
@@ -319,8 +330,16 @@ class NetworkManagerAdapter:
                 False, False, f"Error: nmcli failed to set Wi-Fi {val}: {res.stderr or res.returncode}",
                 requested={"wifi_enabled": enabled}, returncode=res.returncode,
             )
+        # Bounded retry poll: state may lag after nmcli radio change
         after = self.get_state()
         observed = {"wifi_enabled": after.wifi_enabled}
+        if after.status != CapabilityStatus.HEALTHY or after.wifi_enabled != enabled:
+            for _ in range(2):
+                time.sleep(0.2)
+                after = self.get_state()
+                observed = {"wifi_enabled": after.wifi_enabled}
+                if after.status == CapabilityStatus.HEALTHY and after.wifi_enabled == enabled:
+                    break
         if after.status != CapabilityStatus.HEALTHY or after.wifi_enabled != enabled:
             return HardwareActionResult(
                 False, False,
@@ -369,8 +388,16 @@ class BlueZAdapter:
                 False, False, f"Error: bluetoothctl failed to turn Bluetooth {val}: {res.stderr or res.returncode}",
                 requested={"powered": enabled}, returncode=res.returncode,
             )
+        # Bounded retry poll: state may lag after bluetoothctl power change
         after = self.get_state()
         observed = {"powered": after.powered}
+        if after.status != CapabilityStatus.HEALTHY or after.powered != enabled:
+            for _ in range(2):
+                time.sleep(0.2)
+                after = self.get_state()
+                observed = {"powered": after.powered}
+                if after.status == CapabilityStatus.HEALTHY and after.powered == enabled:
+                    break
         if after.status != CapabilityStatus.HEALTHY or after.powered != enabled:
             return HardwareActionResult(
                 False, False,
@@ -416,10 +443,14 @@ class GnomePortalAdapter:
         except Exception:
             atspi_ok = False
 
-        if rd_ok or sc_ok or atspi_ok:
+        # Only HEALTHY when at least one portal is actually available; AT-SPI2
+        # importability alone doesn't mean the portals are up.
+        if rd_ok or sc_ok:
             status = CapabilityStatus.HEALTHY
+        elif self._which("gdbus"):
+            status = CapabilityStatus.INSTALLED_INACTIVE
         else:
-            status = CapabilityStatus.INSTALLED_INACTIVE if self._which("gdbus") else CapabilityStatus.NOT_INSTALLED
+            status = CapabilityStatus.NOT_INSTALLED
         return PortalState(
             status=status,
             remote_desktop_portal=rd_ok,
@@ -455,7 +486,12 @@ class SystemdUserAdapter:
         act = action.strip().lower()
         if act not in {"start", "stop", "restart"}:
             return HardwareActionResult(False, False, f"Error: Invalid service action '{action}'.", returncode=2)
-        res = self._run(["systemctl", "--user", act, unit], 6.0)
+        # Validate unit name: reject leading '-' (option injection) and invalid chars
+        if not unit or not re.match(r"^[A-Za-z0-9_.@-]+$", unit) or unit.startswith("-"):
+            return HardwareActionResult(
+                False, False, f"Error: Invalid unit name '{unit}'.", returncode=2
+            )
+        res = self._run(["systemctl", "--user", act, "--", unit], 6.0)
         if not res.ok:
             return HardwareActionResult(
                 False, False, f"Error: systemctl --user {act} {unit} failed: {res.stderr or res.returncode}",
@@ -514,6 +550,12 @@ class BatteryChargeLimitAdapter:
                 battery=bat_name,
                 threshold_percent=val,
                 detail=f"{bat_name} charge limit = {val}%",
+            )
+        except PermissionError:
+            return BatteryLimitState(
+                status=CapabilityStatus.PERMISSION_DENIED,
+                battery=bat_name,
+                detail=f"Permission denied reading {tf}.",
             )
         except (OSError, ValueError) as exc:
             return BatteryLimitState(status=CapabilityStatus.FAILED, battery=bat_name, detail=str(exc))
@@ -586,9 +628,7 @@ class PrivacyIndicatorAdapter:
                 detail=res.stderr or f"pw-dump exited {res.returncode}",
             )
         try:
-            import json as _json
-
-            nodes = _json.loads(res.stdout)
+            nodes = json.loads(res.stdout)
         except Exception as exc:
             return PrivacyIndicatorState(status=CapabilityStatus.FAILED, detail=f"pw-dump parse error: {exc}")
 
@@ -662,8 +702,16 @@ class PipeWireRoutingAdapter:
     def route_app_audio(self, app_query: str, sink_query: str) -> HardwareActionResult:
         if not self._which("pactl"):
             return HardwareActionResult(False, False, "Error: pactl is required for per-app audio routing.", returncode=127)
-        sinks = self.list_sinks()
+
         sq = sink_query.strip().lower()
+        if not sq:
+            return HardwareActionResult(False, False, "Error: sink_query must not be empty.", returncode=2)
+
+        aq = app_query.strip().lower()
+        if not aq:
+            return HardwareActionResult(False, False, "Error: app_query must not be empty.", returncode=2)
+
+        sinks = self.list_sinks()
         target_sink = next((s for s in sinks if sq in s["name"].lower() or sq == s["id"]), None)
         if not target_sink:
             return HardwareActionResult(
@@ -692,21 +740,56 @@ class PipeWireRoutingAdapter:
         if not matched_ids:
             return HardwareActionResult(False, False, f"Error: No active audio stream found matching '{app_query}'.", returncode=1)
 
+        # Move every matched stream
         moved: list[str] = []
         for sid in matched_ids:
             mv = self._run(["pactl", "move-sink-input", sid, target_sink["id"]], 3.0)
             if mv.ok:
                 moved.append(sid)
 
-        if not moved:
-            return HardwareActionResult(False, False, f"Error: Could not move stream(s) {matched_ids}.", returncode=1)
+        if len(moved) != len(matched_ids):
+            still = [s for s in matched_ids if s not in moved]
+            return HardwareActionResult(
+                False,
+                False,
+                f"Error: Only {len(moved)}/{len(matched_ids)} streams moved; {still} still on old sink (WirePlumber policy may have reverted).",
+                requested={"app": app_query, "sink": target_sink["name"]},
+                observed={"moved_stream_ids": moved, "sink_id": target_sink["id"], "unmoved": still},
+                returncode=1,
+            )
+
+        # Read-after-write verification: confirm each stream is actually on the target sink now.
+        # All move commands already returned 0, so the routing is applied. Placement parsing is
+        # best-effort: only fail when we CAN parse "Sink:" lines and they disagree with the target.
+        verify_res = self._run(["pactl", "list", "sink-inputs"], 3.0)
+        placement: dict[str, str] = {}
+        if verify_res.ok:
+            cur_id = None
+            for ln in verify_res.stdout.splitlines():
+                s = ln.strip()
+                if s.startswith("Sink Input #"):
+                    cur_id = s.split("#", 1)[1].strip()
+                elif cur_id and s.startswith("Sink:"):
+                    placement[cur_id] = s.split(":", 1)[1].strip()
+
+            valid_targets = {target_sink["id"], target_sink["name"]}
+            bad = [s for s in moved if s in placement and placement[s] not in valid_targets]
+            if bad:
+                return HardwareActionResult(
+                    False,
+                    False,
+                    f"Error: stream(s) {bad} not on target sink '{target_sink['name']}' after move (WirePlumber stream-restore reverted it).",
+                    requested={"app": app_query, "sink": target_sink["name"]},
+                    observed={"placement": placement, "sink_id": target_sink["id"]},
+                    returncode=1,
+                )
 
         return HardwareActionResult(
             True,
             True,
-            f"Verified: Routed '{app_query}' stream(s) {moved} -> sink '{target_sink['name']}'.",
+            f"Routed '{app_query}' stream(s) {moved} -> sink '{target_sink['name']}'.",
             requested={"app": app_query, "sink": target_sink["name"]},
-            observed={"moved_stream_ids": moved, "sink_id": target_sink["id"]},
+            observed={"moved_stream_ids": moved, "sink_id": target_sink["id"], "placement": placement},
             returncode=0,
         )
 
@@ -715,6 +798,11 @@ class HardwareManager:
     """Unified entry point for structured OS hardware capabilities & verified actions."""
 
     def __init__(self, runner: RunnerFn = default_runner, which: WhichFn = shutil.which):
+        # Lazy import to avoid circular dependency: biometrics imports from adapters
+        from .biometrics import FIDO2Adapter, FingerprintAdapter, IRFaceAdapter
+
+        self._run = runner
+        self._which = which
         self.power = UPowerAdapter(runner=runner, which=which)
         self.audio = PipeWireAdapter(runner=runner, which=which)
         self.network = NetworkManagerAdapter(runner=runner, which=which)
@@ -724,6 +812,9 @@ class HardwareManager:
         self.battery_limit = BatteryChargeLimitAdapter()
         self.privacy = PrivacyIndicatorAdapter(runner=runner, which=which)
         self.routing = PipeWireRoutingAdapter(runner=runner, which=which)
+        self.fingerprint = FingerprintAdapter(runner=runner, which=which)
+        self.ir_face = IRFaceAdapter(runner=runner, which=which)
+        self.fido2 = FIDO2Adapter(runner=runner, which=which)
 
     def set_brightness(self, level: int) -> HardwareActionResult:
         if not self.audio._which("brightnessctl"):
@@ -771,8 +862,6 @@ class HardwareManager:
         )
 
     def describe_capabilities(self) -> dict[str, dict[str, object]]:
-        from .biometrics import FIDO2Adapter, FingerprintAdapter, IRFaceAdapter
-
         p = self.power.get_state()
         a = self.audio.get_state()
         n = self.network.get_state()
@@ -780,9 +869,9 @@ class HardwareManager:
         pt = self.portals.get_state()
         bl = self.battery_limit.get_state()
         priv = self.privacy.get_state()
-        fp = FingerprintAdapter(runner=self.audio._run, which=self.audio._which).probe()
-        ir = IRFaceAdapter(runner=self.audio._run, which=self.audio._which).probe()
-        fido = FIDO2Adapter(runner=self.audio._run, which=self.audio._which).probe()
+        fp = self.fingerprint.probe()
+        ir = self.ir_face.probe()
+        fido = self.fido2.probe()
         return {
             "power": {"status": p.status.value, "battery_percent": p.battery_percent, "profile": p.power_profile, "detail": p.detail},
             "battery_charge_limit": {"status": bl.status.value, "battery": bl.battery, "threshold_percent": bl.threshold_percent},

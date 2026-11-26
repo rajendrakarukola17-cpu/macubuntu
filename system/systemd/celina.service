@@ -7,7 +7,7 @@ PartOf=graphical-session.target
 [Service]
 Type=simple
 UMask=0077
-Environment=PYTHONPATH=%h/.local/share/celina/app:/usr/share/macubuntu/celina
+Environment=PYTHONPATH=%h/.local/share/celina/app:/usr/share/macubuntu/features/celina
 ExecStart=%h/.local/share/celina/venv/bin/python3 -m celina_pkg.dbus_service --daemon
 Restart=on-failure
 RestartSec=3

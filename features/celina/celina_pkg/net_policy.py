@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Centralized Network, URL & SSRF Security Policy (Phase 3)
+"""Celina AI (Celly) - Centralized Network, URL & SSRF Security Policy (Phase 3)
 Single authoritative egress policy used by:
   - fetch_webpage
   - web_search
@@ -23,9 +22,10 @@ from __future__ import annotations
 import ipaddress
 import json
 import socket
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Optional
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -101,7 +101,7 @@ def is_web_comms_tool(tool_name: str) -> bool:
     return (tool_name or "").strip() in dom_tools
 
 
-def validate_web_comms_host(url: str, allowed_hosts: Optional[Iterable[str]] = None) -> None:
+def validate_web_comms_host(url: str, allowed_hosts: Iterable[str] | None = None) -> None:
     """Enforces optional web_comms.allowed_hosts when configured (non-empty list)."""
     from . import config
 
@@ -118,21 +118,20 @@ def validate_web_comms_host(url: str, allowed_hosts: Optional[Iterable[str]] = N
         raise URLPolicyError("URL missing hostname for web_comms.allowed_hosts check.")
     if not any(host == a or host.endswith(f".{a}") for a in allow):
         raise URLPolicyError(
-            f"Host '{host}' is not in web_comms.allowed_hosts ({allow})."
+            f"Host '{host}' is not in web_comms.allowed_hosts ({allow}).",
         )
 
 
 def check_web_comms_allowed(
     tool_name: str,
-    url: Optional[str] = None,
+    url: str | None = None,
     *,
-    online_probe: Optional[Callable[[], bool]] = None,
+    online_probe: Callable[[], bool] | None = None,
 ) -> None:
-    """
-    Fail-closed offline & opt-in guard for web_comms tools:
-      1. Requires web_comms.enabled == True (default off).
-      2. Requires active internet connectivity (is_online()).
-      3. Enforces web_comms.allowed_hosts when non-empty and a URL is supplied.
+    """Fail-closed offline & opt-in guard for web_comms tools:
+    1. Requires web_comms.enabled == True (default off).
+    2. Requires active internet connectivity (is_online()).
+    3. Enforces web_comms.allowed_hosts when non-empty and a URL is supplied.
     """
     from . import config
 
@@ -141,13 +140,13 @@ def check_web_comms_allowed(
     if not config.is_web_comms_enabled():
         raise OfflineError(
             f"Live web_comms tool '{tool_name}' is disabled (web_comms.enabled=false). "
-            "Enable opt-in web_comms to fetch live data."
+            "Enable opt-in web_comms to fetch live data.",
         )
     probe = online_probe if online_probe is not None else is_online
     if not probe():
         raise OfflineError(
             f"Device is offline; cannot run web_comms tool '{tool_name}'. "
-            "Local offline tools and local LLM remain available."
+            "Local offline tools and local LLM remain available.",
         )
     if url:
         validate_web_comms_host(url)
@@ -156,17 +155,16 @@ def check_web_comms_allowed(
 def guarded_call(
     tool_name: str,
     *args: Any,
-    online_probe: Optional[Callable[[], bool]] = None,
+    online_probe: Callable[[], bool] | None = None,
     **kwargs: Any,
 ) -> Any:
-    """
-    Executes a tool call under the offline & opt-in web_comms guard.
+    """Executes a tool call under the offline & opt-in web_comms guard.
     Raises OfflineError for web_comms tools when web_comms.enabled is False or offline.
     Accepts either:
       - guarded_call("get_weather", callable_fn, *fn_args, **fn_kwargs)
       - guarded_call("get_weather", *fn_args, **fn_kwargs)  (resolves tool from celina_pkg.tools)
     """
-    target_fn: Optional[Callable[..., Any]] = None
+    target_fn: Callable[..., Any] | None = None
     call_args = list(args)
     if call_args and callable(call_args[0]):
         target_fn = call_args.pop(0)
@@ -215,8 +213,7 @@ class SafeHTTPResponse:
 
 
 def is_forbidden_public_ip(ip_str: str) -> tuple[bool, str]:
-    """
-    Returns (True, reason) if ip_str is loopback, private, link-local, multicast,
+    """Returns (True, reason) if ip_str is loopback, private, link-local, multicast,
     reserved, unspecified, CGNAT, cloud metadata, or an IPv4-mapped IPv6 wrapper
     around any forbidden address.
     """
@@ -275,14 +272,13 @@ def default_dns_resolver(host: str, port: int) -> list[str]:
 def validate_public_url(
     raw_url: str,
     *,
-    resolver: Optional[ResolverFn] = None,
+    resolver: ResolverFn | None = None,
 ) -> ValidatedURL:
-    """
-    Validates a public web URL:
-      - https:// ONLY
-      - NO embedded credentials (user:pass@host)
-      - NO localhost / .local / .internal / metadata hostnames
-      - DNS resolved upfront and EVERY IP verified public/global
+    """Validates a public web URL:
+    - https:// ONLY
+    - NO embedded credentials (user:pass@host)
+    - NO localhost / .local / .internal / metadata hostnames
+    - DNS resolved upfront and EVERY IP verified public/global
     """
     url = (raw_url or "").strip()
     if not url:
@@ -359,14 +355,13 @@ def validate_iot_url(
     method: str,
     allowlist: dict[str, Any],
     *,
-    resolver: Optional[ResolverFn] = None,
+    resolver: ResolverFn | None = None,
 ) -> ValidatedURL:
-    """
-    Validates an IoT / smart-home webhook strictly against the explicit allowlist:
-      - host must match allowed_hosts
-      - port must match allowed_ports
-      - method must match allowed_methods
-      - no URL credentials, no metadata IPs, no Ollama port 11434
+    """Validates an IoT / smart-home webhook strictly against the explicit allowlist:
+    - host must match allowed_hosts
+    - port must match allowed_ports
+    - method must match allowed_methods
+    - no URL credentials, no metadata IPs, no Ollama port 11434
     """
     url = (raw_url or "").strip()
     parsed = urlparse(url)
@@ -393,19 +388,19 @@ def validate_iot_url(
     allowed_methods = {str(m).upper() for m in (allowlist.get("allowed_methods") or ["POST"])}
     if http_method not in allowed_methods:
         raise URLPolicyError(
-            f"HTTP method '{http_method}' not in IoT allowlist ({sorted(allowed_methods)})."
+            f"HTTP method '{http_method}' not in IoT allowlist ({sorted(allowed_methods)}).",
         )
 
     allowed_hosts = {str(h).strip().lower().rstrip(".") for h in (allowlist.get("allowed_hosts") or [])}
     if not allowed_hosts or host not in allowed_hosts:
         raise URLPolicyError(
-            f"Host '{host}' is not in ~/.config/celina/iot-allowlist.json allowed_hosts."
+            f"Host '{host}' is not in ~/.config/celina/iot-allowlist.json allowed_hosts.",
         )
 
     allowed_ports = {int(p) for p in (allowlist.get("allowed_ports") or [])}
     if port not in allowed_ports:
         raise URLPolicyError(
-            f"Port {port} is not in IoT allowlist ({sorted(allowed_ports)})."
+            f"Port {port} is not in IoT allowlist ({sorted(allowed_ports)}).",
         )
 
     # Resolve & verify no metadata/multicast/unspecified/IPv4-mapped metadata address
@@ -419,8 +414,8 @@ def validate_iot_url(
     for ip_s in resolved:
         try:
             ip_obj = ipaddress.ip_address(ip_s.split("%", 1)[0])
-        except ValueError:
-            raise URLPolicyError(f"Invalid resolved IP '{ip_s}'.")
+        except ValueError as err:
+            raise URLPolicyError(f"Invalid resolved IP '{ip_s}'.") from err
         inner = ip_obj.ipv4_mapped if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped else ip_obj
         if inner in _METADATA_IPS or inner.is_multicast or inner.is_unspecified:
             raise URLPolicyError(f"Resolved IoT IP '{ip_s}' is forbidden.")
@@ -441,17 +436,16 @@ def enforce_sensitive_egress(
     *,
     payload_text: str = "",
     classification: str = "PUBLIC",
-    allowed_destinations: Optional[Iterable[str]] = None,
+    allowed_destinations: Iterable[str] | None = None,
 ) -> None:
-    """
-    Capability #15: Fail-closed destination-scoped & sensitive-data egress control.
+    """Capability #15: Fail-closed destination-scoped & sensitive-data egress control.
     Blocks CONFIDENTIAL/SECRET payloads or detected secret tokens from leaving the host
     to any destination not explicitly permitted.
     """
     cls_upper = (classification or "PUBLIC").strip().upper()
     if cls_upper in {"CONFIDENTIAL", "SECRET"}:
         raise URLPolicyError(
-            f"Fail-closed egress block: classification={cls_upper} payload cannot be sent to '{url}'."
+            f"Fail-closed egress block: classification={cls_upper} payload cannot be sent to '{url}'.",
         )
     if payload_text:
         from . import privacy
@@ -459,7 +453,7 @@ def enforce_sensitive_egress(
         _redacted, report = privacy.RedactionVault().redact(payload_text)
         if report.has_secrets or report.has_pii:
             raise URLPolicyError(
-                f"Fail-closed sensitive-data egress block: detected sensitive data ({report.summary}) in outbound payload."
+                f"Fail-closed sensitive-data egress block: detected sensitive data ({report.summary}) in outbound payload.",
             )
     if allowed_destinations is not None:
         validate_web_comms_host(url, allowed_hosts=allowed_destinations)
@@ -472,8 +466,7 @@ def _check_peer_ip(
     *,
     fail_closed: bool = False,
 ) -> None:
-    """
-    Defense against DNS rebinding: verifies the actual connected socket peer IP
+    """Defense against DNS rebinding: verifies the actual connected socket peer IP
     matches the validated pre-resolution IP set and public-IP policy.
     When `fail_closed=True`, inability to inspect peer socket raises URLPolicyError.
     """
@@ -499,10 +492,10 @@ def _check_peer_ip(
             p_obj = ipaddress.ip_address(peer_ip.split("%", 1)[0])
             if all(ipaddress.ip_address(a.split("%", 1)[0]) != p_obj for a in allowed_ips):
                 raise URLPolicyError(
-                    f"DNS rebinding detected: connected IP {peer_ip} not in pre-validated set {allowed_ips}."
+                    f"DNS rebinding detected: connected IP {peer_ip} not in pre-validated set {allowed_ips}.",
                 )
-        except ValueError:
-            raise URLPolicyError(f"Invalid peer IP '{peer_ip}'.")
+        except ValueError as err:
+            raise URLPolicyError(f"Invalid peer IP '{peer_ip}'.") from err
 
 
 def safe_request(
@@ -510,23 +503,22 @@ def safe_request(
     url: str,
     *,
     policy: str = "public",
-    iot_allowlist: Optional[dict[str, Any]] = None,
+    iot_allowlist: dict[str, Any] | None = None,
     allow_redirects: bool = False,
     max_redirects: int = 0,
     max_bytes: int = 2 * 1024 * 1024,
     timeout: tuple[float, float] | float = (5.0, 10.0),
-    allowed_content_types: Optional[Iterable[str]] = DEFAULT_ALLOWED_CONTENT_TYPES,
-    headers: Optional[dict[str, str]] = None,
-    params: Optional[dict[str, Any]] = None,
-    json_body: Optional[dict[str, Any]] = None,
-    resolver: Optional[ResolverFn] = None,
-    session: Optional[requests.Session] = None,
-    fail_closed_peer_ip: Optional[bool] = None,
+    allowed_content_types: Iterable[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+    resolver: ResolverFn | None = None,
+    session: requests.Session | None = None,
+    fail_closed_peer_ip: bool | None = None,
     classification: str = "PUBLIC",
-    allowed_destinations: Optional[Iterable[str]] = None,
+    allowed_destinations: Iterable[str] | None = None,
 ) -> SafeHTTPResponse:
-    """
-    Executes an HTTP request under strict SSRF, DNS-rebinding, redirect, size,
+    """Executes an HTTP request under strict SSRF, DNS-rebinding, redirect, size,
     timeout, sensitive-data egress, and Content-Type controls.
     """
     payload_preview = json.dumps(json_body, sort_keys=True, default=str) if json_body is not None else ""
@@ -579,7 +571,7 @@ def safe_request(
                     raise URLPolicyError(f"Redirect response ({resp.status_code}) missing Location header.")
                 if hops >= redirects_cap:
                     raise URLPolicyError(
-                        f"Redirects are blocked (status {resp.status_code} -> {location[:120]})."
+                        f"Redirects are blocked (status {resp.status_code} -> {location[:120]}).",
                     )
                 next_url = urljoin(validated.url, location)
                 hops += 1
@@ -599,7 +591,7 @@ def safe_request(
             cl_hdr = resp.headers.get("Content-Length")
             if cl_hdr and cl_hdr.isdigit() and int(cl_hdr) > max_bytes:
                 raise URLPolicyError(
-                    f"Response too large ({int(cl_hdr)} bytes exceeds limit {max_bytes})."
+                    f"Response too large ({int(cl_hdr)} bytes exceeds limit {max_bytes}).",
                 )
 
             buf = bytearray()
@@ -628,11 +620,11 @@ def safe_get(
     max_redirects: int = 0,
     max_bytes: int = 2 * 1024 * 1024,
     timeout: tuple[float, float] | float = (5.0, 10.0),
-    allowed_content_types: Optional[Iterable[str]] = DEFAULT_ALLOWED_CONTENT_TYPES,
-    headers: Optional[dict[str, str]] = None,
-    params: Optional[dict[str, Any]] = None,
-    resolver: Optional[ResolverFn] = None,
-    session: Optional[requests.Session] = None,
+    allowed_content_types: Iterable[str] | None = DEFAULT_ALLOWED_CONTENT_TYPES,
+    headers: dict[str, str] | None = None,
+    params: dict[str, Any] | None = None,
+    resolver: ResolverFn | None = None,
+    session: requests.Session | None = None,
 ) -> SafeHTTPResponse:
     return safe_request(
         "GET",

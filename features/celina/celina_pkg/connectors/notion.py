@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Notion Connector (Update 23)
+"""Celina AI (Celly) - Notion Connector (Update 23)
 
 Adapted from MausBot concepts (Apache-2.0, github.com/milind-soni/OpenMausBot)
 to Python. Connects to Notion via the Notion API using an integration token.
@@ -15,15 +14,16 @@ Hard refusals:
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from celina_pkg.approval import RiskLevel
+
 from .base import (
+    ActionResult,
     BaseConnector,
+    ConnectorAction,
     ConnectorConfig,
     ConnectorStatus,
-    ConnectorAction,
-    ActionResult,
 )
 
 NOTION_API_URL = "https://api.notion.com/v1"
@@ -134,7 +134,7 @@ class NotionConnector(BaseConnector):
             read_only_actions=NOTION_READ_ONLY_ACTIONS,
         )
         super().__init__(cfg, approval_cb)
-        self._integration_token: Optional[str] = None
+        self._integration_token: str | None = None
 
     def is_configured(self) -> bool:
         creds = self._load_credentials()
@@ -194,23 +194,22 @@ class NotionConnector(BaseConnector):
             try:
                 if action_name == "search":
                     return self._search(params)
-                elif action_name == "get_page":
+                if action_name == "get_page":
                     return self._get_page(params)
-                elif action_name == "get_database":
+                if action_name == "get_database":
                     return self._get_database(params)
-                elif action_name == "query_database":
+                if action_name == "query_database":
                     return self._query_database(params)
-                elif action_name == "create_page":
+                if action_name == "create_page":
                     return self._create_page(params)
-                elif action_name == "list_users":
+                if action_name == "list_users":
                     return self._list_users(params)
-                else:
-                    return ActionResult(
-                        success=False,
-                        error=f"Action not implemented: {action_name}",
-                        action=action_name,
-                        connector=self.name,
-                    )
+                return ActionResult(
+                    success=False,
+                    error=f"Action not implemented: {action_name}",
+                    action=action_name,
+                    connector=self.name,
+                )
             except Exception as exc:
                 return ActionResult(
                     success=False,
@@ -235,6 +234,13 @@ class NotionConnector(BaseConnector):
             raise RuntimeError(f"Notion API returned HTTP {status} for POST {path}")
         return body
 
+    def _get(self, path: str) -> dict[str, Any]:
+        url = f"{NOTION_API_URL}{path}"
+        status, body = self._http_get(url, self._headers(), timeout=15)
+        if status != 200 or body is None:
+            raise RuntimeError(f"Notion API returned HTTP {status} for GET {path}")
+        return body
+
     def _search(self, params: dict[str, Any]) -> ActionResult:
         query = params.get("query", "")
         limit = min(int(params.get("limit", 50)), 100)
@@ -252,12 +258,12 @@ class NotionConnector(BaseConnector):
 
     def _get_page(self, params: dict[str, Any]) -> ActionResult:
         page_id = params["page_id"]
-        body = self._post(f"/pages/{page_id}", {})
+        body = self._get(self._build_path("pages", page_id))
         return ActionResult(success=True, data={"page": body}, action="get_page", connector=self.name)
 
     def _get_database(self, params: dict[str, Any]) -> ActionResult:
         database_id = params["database_id"]
-        body = self._post(f"/databases/{database_id}", {})
+        body = self._get(self._build_path("databases", database_id))
         return ActionResult(success=True, data={"database": body}, action="get_database", connector=self.name)
 
     def _query_database(self, params: dict[str, Any]) -> ActionResult:
@@ -266,7 +272,7 @@ class NotionConnector(BaseConnector):
         payload: dict[str, Any] = {"page_size": limit}
         if params.get("filter"):
             payload["filter"] = params["filter"]
-        body = self._post(f"/databases/{database_id}/query", payload)
+        body = self._post(self._build_path("databases", database_id, "query"), payload)
         results = body.get("results", [])
         return ActionResult(
             success=True,
@@ -294,7 +300,11 @@ class NotionConnector(BaseConnector):
 
     def _list_users(self, params: dict[str, Any]) -> ActionResult:
         limit = min(int(params.get("limit", 50)), 100)
-        body = self._post("/users", {"page_size": limit})
+        import urllib.parse
+        url = f"{NOTION_API_URL}/users?{urllib.parse.urlencode({'page_size': str(limit)})}"
+        status, body = self._http_get(url, self._headers(), timeout=15)
+        if status != 200 or body is None:
+            raise RuntimeError(f"Notion API returned HTTP {status} for GET /users")
         users = body.get("results", [])
         return ActionResult(
             success=True,

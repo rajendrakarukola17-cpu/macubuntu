@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic PSI-guarded cache warm (timer-coalesced)
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=15min
+AccuracySec=3min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,16 +1,48 @@
-"""
-Celina AI (Celly) - Configuration & Neural Schema Loader (v4.2)
+"""Celina AI (Celly) - Configuration & Neural Schema Loader (v4.2)
 Precedence: process environment > ~/.config/celina/env > ~/.config/celina/neural-schema.json > defaults.
 Assistant display name & nickname default to Celina / Celly and can be updated anytime via
 /name, set_assistant_identity, ~/.config/celina/env, or neural-schema.json.
 """
 
+import ctypes
+import fcntl
 import json
 import os
 import re
+import sys
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+
+from . import model_selector
+
+
+def set_process_name(name: str) -> None:
+    """Set the visible process name via prctl(PR_SET_NAME) on Linux.
+
+    Used so ananicy-cpp rules (which match on comm name like `celina-daemon`,
+    `celina-search`) actually match Celina processes — otherwise they run
+    as `python3` and the ananicy rules never fire.
+    Zero new dependencies: uses stdlib `ctypes` only.
+    """
+    if sys.platform != "linux":
+        return
+    try:
+        libc = ctypes.CDLL("libc.so.6", use_errno=True)
+        PR_SET_NAME = 15
+        buf = ctypes.create_string_buffer(name.encode("utf-8")[:15])
+        result = libc.prctl(PR_SET_NAME, ctypes.byref(buf), 0, 0, 0)
+        if result != 0:
+            import errno
+            err = ctypes.get_errno()
+            if err != errno.EPERM:
+                raise OSError(err, f"prctl(PR_SET_NAME={name!r}) failed")
+    except (OSError, AttributeError):
+        # Fails open — process naming is a nice-to-have for ananicy matching.
+        # EPERM is expected if we lack permission; AttributeError if ctypes lacks prctl.
+        pass
 
 try:
     os.umask(0o077)
@@ -43,8 +75,7 @@ def ensure_private_file(path: Path) -> Path:
 
 
 def atomic_write_private_text(target: Path, content: str) -> None:
-    """
-    Atomically writes text to target with fsync + mode 0600.
+    """Atomically writes text to target with fsync + mode 0600.
     Raises OSError on any failure without corrupting the existing target file.
     """
     ensure_private_dir(target.parent)
@@ -67,9 +98,34 @@ def atomic_write_private_text(target: Path, content: str) -> None:
 
 
 # --- Core Paths ---
-HOME = Path.home()
+# P2-04: Resolve target user identity (not root when running under sudo).
+# Use TARGET_HOME instead of Path.home() so all Celina paths point to the
+# actual desktop user's home, even if the process is running as root.
+def _resolve_target_home() -> Path:
+    """Resolve the actual target user's home directory.
+
+    Reads TARGET_HOME from env (set by core/common.sh when sourced), falls back
+    to SUDO_USER home, then to current user's home. Never returns /root when
+    running under sudo.
+    """
+    import pwd
+    target_home = os.environ.get("TARGET_HOME", "").strip()
+    if target_home:
+        return Path(target_home)
+    sudo_user = os.environ.get("SUDO_USER", "").strip()
+    if sudo_user:
+        try:
+            return Path(pwd.getpwnam(sudo_user).pw_dir)
+        except KeyError:
+            pass
+    return Path.home()
+
+
+HOME = _resolve_target_home()
 BASE_DIR = HOME / ".local" / "share" / "celina"
-SHARED_STORAGE_DIR = HOME / ".celina" / "storage" / "shared"
+# P0-09: Canonical storage root — same as BASE_DIR (~/.local/share/celina/),
+# matching ARCHITECTURE.md and mcp-servers.json. Not ~/.celina/storage/shared/.
+SHARED_STORAGE_DIR = BASE_DIR
 CONFIG_DIR = HOME / ".config" / "celina"
 VOICES_DIR = BASE_DIR / "voices"
 WAKEWORD_DIR = BASE_DIR / "wakeword"
@@ -91,25 +147,34 @@ LEGACY_GRAPH_FILE = BASE_DIR / "semantic_memory.json"
 STOP_AUTOMATION_FILE = BASE_DIR / "STOP_AUTOMATION"
 
 # User-scoped IPC & Wayland ydotool socket paths
-_RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "/tmp")
+# P0-08: Never fall back to /tmp for IPC sockets. Use a private 0700 dir
+# under the user's home when XDG_RUNTIME_DIR is unavailable (ssh, cron, early boot).
+_RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR") or "")
+if not _RUNTIME_DIR.is_dir() and os.environ.get("DRY_RUN") != "1":
+    _RUNTIME_DIR = HOME / ".local" / "run" / "celina"
+    _RUNTIME_DIR.mkdir(parents=True, mode=0o700, exist_ok=True)
+elif not _RUNTIME_DIR.is_dir():
+    _RUNTIME_DIR = HOME / ".local" / "run" / "celina"
 SOCKET_PATH = str(_RUNTIME_DIR / f"celina_island_{os.getuid()}.sock")
 DEFAULT_YDOTOOL_SOCKET = str(_RUNTIME_DIR / ".ydotool_socket")
 
 # Ensure private runtime directories exist with 0700 permissions
-for _d in (
-    BASE_DIR,
-    CONFIG_DIR,
-    VOICES_DIR,
-    WAKEWORD_DIR,
-    BACKUPS_DIR,
-    UNDO_DIR,
-    CHECKPOINTS_DIR,
-    SKILLS_DIR,
-    SKILLS_TRUSTED_DIR,
-    SKILLS_QUARANTINE_DIR,
-    LOGS_DIR,
-):
-    ensure_private_dir(_d)
+# Skip during DRY_RUN to keep HOME side-effect-free (P0-11)
+if os.environ.get("DRY_RUN") != "1":
+    for _d in (
+        BASE_DIR,
+        CONFIG_DIR,
+        VOICES_DIR,
+        WAKEWORD_DIR,
+        BACKUPS_DIR,
+        UNDO_DIR,
+        CHECKPOINTS_DIR,
+        SKILLS_DIR,
+        SKILLS_TRUSTED_DIR,
+        SKILLS_QUARANTINE_DIR,
+        LOGS_DIR,
+    ):
+        ensure_private_dir(_d)
 
 # Harden existing config files to 0600 when present
 for _f in (ENV_FILE, SCHEMA_FILE, MCP_CONFIG_FILE, IOT_ALLOWLIST_FILE):
@@ -119,423 +184,41 @@ for _f in (ENV_FILE, SCHEMA_FILE, MCP_CONFIG_FILE, IOT_ALLOWLIST_FILE):
         except OSError:
             pass
 
-DEFAULT_NEURAL_SCHEMA: dict[str, Any] = {
-    "schema_version": "4.4",
-    "persona": {
-        "name": "Celina",
-        "nickname": "Celly",
-        "auto_match_user_language": True,
-        "default_language": "auto",
-        "supported_languages": ["en", "te", "hi"],
-        "system_instructions": (
-            "You are {name} (also affectionately called {nickname} by the user), an ultra-intelligent, decisive personal OS assistant running on Ubuntu 26.04 Wayland (8GB RAM). "
-            "Lead with your clearest verdict or action, avoid filler, and offer at most ONE high-leverage proactive suggestion. "
-            "Match the language of the user's latest message strictly (reply in English when the user writes in English; reply in Telugu or Hindi only when the user writes in Telugu/Tenglish or Hindi/Hinglish). "
-            "When the user asks to rename you or change your nickname, call set_assistant_identity immediately. "
-            "You can read the screen via offline OCR, click/type/press hotkeys on Wayland, manage knowledge graphs & goals, and learn/record/replay multi-step skills."
-        ),
-    },
-    "swarm_roles": {
-        "architect": {
-            "name": "The Architect",
-            "triggers": ["plan", "architect", "architecture", "design", "roadmap", "break down", "project", "migrate", "goal", "milestone"],
-            "directive": "SWARM ROLE — THE ARCHITECT: Decompose the objective into a numbered DAG of concrete sub-tasks, identify dependencies and failure modes, and log or update multi-step objectives via manage_goal when appropriate.",
+def _load_default_neural_schema() -> dict[str, Any]:
+    """Load DEFAULT_NEURAL_SCHEMA from the shipped JSON template (single source of truth).
+
+    Reads features/celina/config/neural-schema.json from the repo. Falls back to
+    a minimal built-in dict if the file is missing (defensive only).
+    """
+    import json as _json
+
+    _repo_cfg = Path(__file__).resolve().parents[3] / "features" / "celina" / "config" / "neural-schema.json"
+    if _repo_cfg.is_file():
+        try:
+            return _json.loads(_repo_cfg.read_text(encoding="utf-8"))  # type: ignore[no-any-return]  # json.loads returns Any; schema validated by caller
+        except (OSError, _json.JSONDecodeError):
+            pass
+    # Minimal defensive fallback (never used in practice)
+    return {
+        "schema_version": "4.4",
+        "persona": {
+            "name": "Celina",
+            "nickname": "Celly",
+            "auto_match_user_language": True,
+            "default_language": "auto",
+            "supported_languages": ["en", "te", "hi"],
+            "system_instructions": (
+                "You are {name} (also affectionately called {nickname} by the user), an ultra-intelligent, decisive personal OS assistant running on Ubuntu 26.04 Wayland. "
+                "Lead with your clearest verdict or action, avoid filler, and offer at most ONE high-leverage proactive suggestion. "
+                "Match the language of the user's latest message strictly (reply in English when the user writes in English; reply in Telugu or Hindi only when the user writes in Telugu/Tenglish or Hindi/Hinglish). "
+                "When the user asks to rename you or change your nickname, call set_assistant_identity immediately. "
+                "You can read the screen via offline OCR, click/type/press hotkeys on Wayland, manage knowledge graphs & goals, and learn/record/replay multi-step skills."
+            ),
         },
-        "engineer": {
-            "name": "The Coder / Engineer",
-            "triggers": ["code", "debug", "traceback", "script", "python", "bash", "fix", "refactor", "compile", "git", "sql", "bug", "test"],
-            "directive": "SWARM ROLE — THE ENGINEER: Inspect actual files/logs first, isolate the single root cause, write clean modular code, and prefer sandboxed verification before declaring success.",
-        },
-        "researcher": {
-            "name": "The Researcher",
-            "triggers": ["research", "search", "latest", "compare", "news", "paper", "specs", "fact check", "summarize", "benchmark"],
-            "directive": "SWARM ROLE — THE RESEARCHER: Cross-verify live sources via web_search/fetch_webpage or local documents, synthesize a verdict-first brief, and cite concrete dates or numbers.",
-        },
-        "critic": {
-            "name": "The Critic / Verifier",
-            "directive": "SWARM ROLE — THE CRITIC: Audit proposed Tier-2 actions and outputs for security risks, data loss, privacy leaks, or hallucinated paths before final execution.",
-        },
-    },
-    "cognition": {
-        "adaptive_thinking": True,
-        "tree_of_thought_on_deep": True,
-        "critic_audit_on_tier2": True,
-        "gears": {
-            "gear0_5": {
-                "reasoning_effort": "none",
-                "max_tokens": 128,
-                "temperature": 0.3,
-                "max_steps": 1,
-                "instruction": "GEAR 0.5 (smolLM QUANTIZED): Answer briefly in 1-2 sentences using local smolLM. Be concise and direct.",
-            },
-            "fast": {
-                "reasoning_effort": "none",
-                "max_tokens": 220,
-                "temperature": 0.35,
-                "max_steps": 2,
-                "instruction": "GEAR 1 (FAST INSTINCT): Do NOT overthink. Answer immediately in 1–2 crisp sentences.",
-            },
-            "tactical": {
-                "reasoning_effort": "low",
-                "max_tokens": 600,
-                "temperature": 0.45,
-                "max_steps": 5,
-                "instruction": "GEAR 2 (TACTICAL ADVISOR): Lead with ONE clear decision/action, brief core reason, and at most ONE practical next step.",
-            },
-            "deep": {
-                "reasoning_effort": "high",
-                "max_tokens": 1500,
-                "temperature": 0.3,
-                "max_steps": 6,
-                "instruction": "GEAR 3 (DEEP STRATEGIST): Think rigorously—verify facts/files/screen via tools, surface risks/trade-offs, then commit to a clear plan.",
-            },
-        },
-        "fast_overrides": ["quick:", "fast:", "brief:", "short:", "tldr"],
-        "deep_overrides": ["deep:", "think deeply", "think hard", "analyze carefully", "step by step"],
-        "deep_triggers": [
-            "architect", "architecture", "debug", "compare", "tradeoff", "trade-off",
-            "strategy", "financial", "invest", "career", "legal", "medical",
-            "optimize", "refactor", "migrate", "prove", "why does", "root cause",
-            "plan my", "pros and cons", "security audit", "automate complex",
-        ],
-        "tactical_triggers": [
-            "slow", "lag", "fix", "error", "recommend", "suggest", "which should i",
-            "best way", "how to", "summarize", "edit", "update", "create",
-            "document", "libreoffice", "search", "find", "send", "organize",
-            "automate", "script", "install", "battery", "ram", "click", "screen",
-            "ocr", "learn", "skill", "record", "workflow", "macro", "type", "press",
-        ],
-    },
-    "edge_lighting": {
-        "enabled": True,
-        "fullscreen_on_task": True,
-        "island_on_response": True,
-    },
-    "cache": {
-        "enabled": True,
-        "ram_hot_max_items": 32,
-        "ram_idle_offload_sec": 300,
-        "disk_offload_interval_sec": 600,
-        "max_entries": 300,
-        "max_size_mb": 10,
-        "ttl_seconds": {
-            "llm_fast": 21600,
-            "llm_tactical": 7200,
-            "llm_deep": 3600,
-            "web_search": 900,
-            "fetch_webpage": 1800,
-            "document": 43200,
-        },
-    },
-    "automation": {
-        "enabled": True,
-        "ocr_languages": "eng+tel+hin",
-        "default_step_delay_sec": 0.4,
-        "max_workflow_steps": 25,
-        "require_approval_for_gui_actions": True,
-        "require_approval_for_skill_replay": True,
-    },
-    "privacy": {
-        "strict_mode": True,
-        "auto_redact_pii": True,
-        "require_consent_for_cloud_local_data": True,
-        "require_consent_for_cloud_pii": True,
-        "prefer_local_for_private_files": True,
-        "hard_blocked_paths": [
-            ".ssh", ".gnupg", ".aws", ".kube", ".netrc", ".git-credentials",
-            "keyrings", "Login Data", "cookies.sqlite",
-        ],
-        "local_sensitive_tools": [
-            "read_file", "read_document", "search_in_files", "get_clipboard",
-            "get_highlighted_text", "run_shell_command", "read_screen",
-            "find_text_on_screen", "inspect_ui_elements", "mcp_call_tool",
-            "get_upcoming_events", "search_contacts", "search_browser_bookmarks",
-            "prepare_meeting_context", "transcribe_system_audio",
-            "get_secret_vault_status", "mount_ios_device", "respond_ios_notification",
-            "writing_tool_transform", "live_text_ocr", "audit_app_permissions",
-        ],
-    },
-    "routing": {
-        "default_mode": "auto",
-        "max_agent_steps": 5,
-        "cloud_model": "openrouter/free",
-        "local_model": "qwen3:1.7b",
-        "ollama_num_ctx": 4096,
-        "request_timeout_sec": 20,
-        "local_timeout_sec": 180,
-    },
-    "languages": {
-        "en": {
-            "name": "English",
-            "native_name": "English",
-            "badge": "EN",
-            "piper_voice": "en_US-amy-medium",
-            "espeak_voice": "en-us+f3",
-        },
-        "te": {
-            "name": "Telugu",
-            "native_name": "తెలుగు",
-            "badge": "తె",
-            "unicode_range": ["0C00", "0C7F"],
-            "piper_voice": "te_IN-maya-medium",
-            "espeak_voice": "te+f3",
-        },
-        "hi": {
-            "name": "Hindi",
-            "native_name": "हिन्दी",
-            "badge": "हिं",
-            "unicode_range": ["0900", "097F"],
-            "piper_voice": "hi_IN-priyamvada-medium",
-            "espeak_voice": "hi+f3",
-        },
-    },
-    "stt": {
-        "whisper_model": "base",
-        "whisper_idle_offload_seconds": 180,
-        "auto_detect_language": True,
-        "silence_stop_seconds": 1.2,
-        "start_timeout_seconds": 5.0,
-        "max_duration_seconds": 15.0,
-    },
-    "security_policy": {
-        "max_file_backups": 20,
-        "tier1_auto_tools": [
-            "get_system_stats", "set_volume", "set_brightness", "control_media",
-            "control_connectivity", "open_application", "toggle_app_nap", "open_document",
-            "list_running_apps", "search_files", "search_in_files", "read_file",
-            "read_document", "get_clipboard", "get_highlighted_text", "set_clipboard", "set_timer",
-            "web_search", "fetch_webpage", "fetch_url_text",
-            "get_weather", "get_news_headlines", "get_current_time_zone",
-            "remember_fact", "search_memory",
-            "link_knowledge", "manage_goal", "save_workspace_snapshot",
-            "set_assistant_identity", "get_hardware_capabilities",
-            "set_focus_mode", "diagnose_systemd_service", "get_secret_vault_status",
-            "spotlight_query", "route_app_audio",
-            "get_continuity_status", "audit_app_permissions", "search_active_app_menus",
-            "writing_tool_transform", "live_text_ocr", "get_upcoming_events",
-            "search_contacts", "search_browser_bookmarks", "prepare_meeting_context",
-            "read_screen", "find_text_on_screen", "inspect_ui_elements", "learn_skill",
-            "save_last_actions_as_skill", "list_skills", "list_quarantined_skills",
-            "reject_quarantined_skill", "update_skill",
-            "forget_skill", "start_recording", "stop_recording",
-            "mcp_list_servers", "mcp_list_tools", "cache_status", "clear_cache",
-        ],
-        "tier2_approval_tools": [
-            "write_file", "edit_file", "edit_document", "create_document",
-            "convert_document", "libreoffice_edit", "move_file", "trash_file", "close_application",
-            "compose_message", "run_shell_command", "run_python_sandbox",
-            "code_sandbox",
-            "transcribe_system_audio", "manage_default_apps",
-            "click_on_text", "click_position", "scroll_screen", "drag_and_drop",
-            "type_text", "press_hotkey", "run_skill", "autonomous_gui_task",
-            "mcp_call_tool", "install_community_skill", "approve_quarantined_skill",
-            "trigger_iot_webhook", "launch_android_mirror", "control_airplay_mirror",
-            "mount_ios_device", "start_ios_continuity_camera", "start_ipad_sidecar_weylus",
-            "respond_ios_notification", "create_calendar_event", "submit_goal",
-            "computer_click", "computer_type", "vision_ocr", "vision_analyze", "ghostdesk_click",
-            "ponytail_evaluate", "skilspector_scan",
-        ],
-        "protected_paths": [".ssh", ".gnupg", ".aws", ".kube", ".netrc", ".git-credentials"],
-    },
-    "tool_domains": {
-        "os_hardware": {
-            "always_active": True,
-            "core_fast_tools": [
-                "get_system_stats", "set_volume", "set_brightness", "control_media",
-                "control_connectivity", "open_application", "toggle_app_nap",
-                "set_timer", "get_highlighted_text", "get_clipboard",
-            ],
-            "tools": [
-                "get_system_stats", "set_volume", "set_brightness", "control_media",
-                "control_connectivity", "open_application", "toggle_app_nap",
-                "close_application", "list_running_apps", "set_timer",
-                "get_clipboard", "get_highlighted_text", "set_clipboard",
-                "diagnose_systemd_service", "manage_default_apps",
-            ],
-        },
-        "files_office": {
-            "triggers": ["file", "folder", "doc", "docx", "odt", "pdf", "xlsx", "pptx", "sheet", "slide", "libreoffice", "read", "write", "edit", "trash", "move", "resume", "report", "convert", "export"],
-            "window_hints": ["libreoffice", "writer", "calc", "impress", "nautilus", "files", "code"],
-            "tools": [
-                "search_files", "search_in_files", "read_file", "write_file",
-                "edit_file", "move_file", "trash_file", "open_document",
-                "read_document", "create_document", "edit_document", "convert_document",
-                "libreoffice_edit",
-            ],
-        },
-        "web_comms": {
-            "triggers": ["web", "search", "news", "headlines", "latest", "weather", "forecast", "time zone", "timezone", "url", "http", "website", "whatsapp", "telegram", "email", "message", "send"],
-            "window_hints": ["firefox", "chrome", "chromium", "brave", "thunderbird"],
-            "tools": [
-                "web_search", "fetch_webpage", "fetch_url_text",
-                "get_weather", "get_news_headlines", "get_current_time_zone",
-                "compose_message",
-            ],
-        },
-        "wayland_gui": {
-            "triggers": ["screen", "click", "type", "scroll", "drag", "hotkey", "button", "window", "ocr", "astra", "fill", "form"],
-            "tools": [
-                "read_screen", "find_text_on_screen", "inspect_ui_elements",
-                "click_on_text", "click_position", "scroll_screen", "drag_and_drop",
-                "type_text", "press_hotkey", "autonomous_gui_task",
-            ],
-        },
-        "apple_pim_writing": {
-            "triggers": [
-                "calendar", "meeting", "meetings", "brief", "prepare", "prep", "schedule", "appointment", "event", "events",
-                "upcoming", "tomorrow", "contact", "contacts", "phone number", "email address",
-                "bookmark", "bookmarks", "proofread", "rewrite", "rephrase", "tone", "grammar",
-                "polish", "key points", "bullet points", "writing tool", "live text", "snip",
-                "extract text", "spotlight", "convert units", "menu", "menus", "command palette",
-                "క్యాలెండర్", "మీటింగ్", "కాంటాక్ట్", "कैलेंडर", "मीटिंग", "कॉन्टैक्ट",
-            ],
-            "window_hints": ["calendar", "contacts", "thunderbird", "firefox", "libreoffice", "gedit"],
-            "tools": [
-                "writing_tool_transform", "live_text_ocr", "get_upcoming_events",
-                "create_calendar_event", "search_contacts", "search_browser_bookmarks",
-                "prepare_meeting_context", "spotlight_query", "search_active_app_menus",
-            ],
-        },
-        "continuity_audio_privacy": {
-            "triggers": [
-                "continuity", "iphone", "ipad", "airpods", "airplay", "uxplay", "shairport",
-                "ifuse", "mount iphone", "sidecar", "weylus", "apple pencil", "continuity camera",
-                "ancs", "answer call", "decline call", "dismiss notification",
-                "transcribe", "meeting audio", "loopback", "summarize meeting", "what was just said",
-                "keyring", "keepass", "keepassxc", "vault", "secret service", "unlock vault",
-                "android", "scrcpy", "mirror", "localsend", "airdrop", "deskflow", "syncthing",
-                "focus", "focus mode", "dnd", "do not disturb", "night light", "sleep mode",
-                "coding mode", "work mode", "presentation mode",
-                "route audio", "audio sink", "headphone", "headphones", "speaker", "speakers",
-                "bluetooth", "pipewire", "output device", "mic", "microphone", "camera", "webcam",
-                "permission", "permissions", "privacy", "audit", "flatseal", "tcc",
-                "hardware", "biometric", "biometrics", "fingerprint", "touch id", "face id", "charge limit",
-                "ఫోకస్", "బ్యాటరీ", "హెడ్‌ఫోన్", "फोकस", "बैटरी", "हेडफोन",
-            ],
-            "window_hints": ["scrcpy", "uxplay", "localsend", "flatseal", "helvum", "settings", "keepassxc", "zoom"],
-            "tools": [
-                "get_continuity_status", "set_focus_mode", "route_app_audio",
-                "audit_app_permissions", "get_hardware_capabilities",
-                "get_secret_vault_status", "transcribe_system_audio",
-                "launch_android_mirror", "control_airplay_mirror",
-                "mount_ios_device", "start_ios_continuity_camera",
-                "start_ipad_sidecar_weylus", "respond_ios_notification",
-            ],
-        },
-        "skills_memory": {
-            "triggers": [
-                "remember", "memory", "fact", "forgot", "recall", "history", "skill",
-                "routine", "workflow", "macro", "learn", "record", "recording", "replay",
-                "save last", "heal", "update skill", "forget skill", "install skill",
-                "quarantine", "goal", "goals", "project", "roadmap", "deadline", "milestone", "subtask",
-                "knowledge", "graph", "link", "relationship", "plan",
-                "workspace", "snapshot", "session", "name", "nickname", "rename", "call yourself", "identity",
-                "గుర్తుంచుకో", "యాద్", "याद रखो",
-            ],
-            "tools": [
-                "remember_fact", "search_memory", "link_knowledge", "manage_goal",
-                "save_workspace_snapshot", "set_assistant_identity",
-                "learn_skill", "save_last_actions_as_skill",
-                "start_recording", "stop_recording", "list_skills", "list_quarantined_skills",
-                "approve_quarantined_skill", "reject_quarantined_skill", "run_skill",
-                "update_skill", "forget_skill", "install_community_skill",
-            ],
-        },
-        "mcp_system": {
-            "triggers": [
-                "mcp", "github", "linear", "notion", "git", "sqlite", "playwright",
-                "context7", "shell", "bash", "terminal", "command", "python", "sandbox",
-                "execute", "run code", "verify code", "systemd", "journalctl", "service",
-                "default app", "mime", "cache",
-                "iot", "smart home", "home assistant", "webhook", "mqtt", "lights", "switch",
-            ],
-            "window_hints": ["terminal", "ptyxis", "console", "code"],
-            "tools": [
-                "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
-                "run_shell_command", "run_python_sandbox",
-                "trigger_iot_webhook", "cache_status", "clear_cache", "submit_goal",
-            ],
-        },
-        "mcp_perception_actuation": {
-            "tier": 2,
-            "servers": ["computer-use-linux", "shadow-vision", "ghostdesk"],
-            "triggers": [
-                "computer-use", "shadow-vision", "ghostdesk", "eye2byte", "uacc", "deskwright",
-                "semantic click", "vision ocr", "vision analyze", "virtual desktop", "isolated desktop",
-                "ui map", "mcp click", "mcp type",
-            ],
-            "tools": [
-                "computer_click", "computer_type", "vision_ocr", "vision_analyze", "ghostdesk_click",
-            ],
-        },
-        "code_exec": {
-            "triggers": [
-                "code", "script", "python", "bash", "shell script", "run code",
-                "execute python", "run bash", "calculate", "compute", "sandbox",
-                "verify code", "debug", "compile", "interpreter", "spreadsheet calc",
-                "data analysis", "automate task", "python sandbox", "bash sandbox"
-            ],
-            "window_hints": ["terminal", "ptyxis", "console", "code", "vim", "gedit", "code"],
-            "tools": [
-                "code_sandbox", "run_python_sandbox", "run_shell_command"
-            ],
-        },
-        "skill_security": {
-            "triggers": [
-                "skill", "scan", "security", "vulnerability", "mcp", "install skill",
-                "skilspector", "ponytail", "risk", "audit", "supply chain",
-                "prompt injection", "data exfiltration", "skill inspector"
-            ],
-            "window_hints": ["terminal", "code", "console", "editor"],
-            "tools": [
-                "ponytail_evaluate",
-                "skilspector_scan",
-            ],
-        },
-    },
-    "world_model": {
-        "track_active_window": True,
-        "proactive_triggers": {
-            "ram_pressure_pct": 88,
-            "battery_low_pct": 18,
-        },
-    },
-    "confidence_policy": {
-        "act_immediately_min_confidence": 0.75,
-        "clarify_if_ambiguous_destructive": True,
-        "clarification_instruction": "If a destructive or irreversible request is ambiguous about the target file or recipient, ask ONE brief clarifying question first.",
-    },
-    "reflection_policy": {
-        "enable_preflight_micro_plan": True,
-        "enable_error_self_correction": True,
-        "max_identical_tool_failures": 2,
-        "verify_astra_done_state": True,
-        "enable_implicit_correction_learning": True,
-        "enable_habit_mining": True,
-        "habit_suggestion_threshold": 3,
-    },
-    "embeddings": {
-        "engine": "auto",
-        "model": "embeddinggemma",
-        "model2vec_model": "minishlab/potion-multilingual-128M",
-        "dim": 256,
-        "keep_alive": "30s",
-        "rrf_k": 60,
-        "semantic_cache_enabled": True,
-        "semantic_cache_threshold": 0.92,
-        "tool_router_min_sim": 0.38,
-    },
-    "web_comms": {
-        "enabled": False,
-        "allowed_hosts": [],
-    },
-    "libreoffice": {
-        "uno_port": 2002,
-    },
-    "autonomy": {
-        "observe_only": True,
-    },
-}
+    }
+
+
+DEFAULT_NEURAL_SCHEMA: dict[str, Any] = _load_default_neural_schema()
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -548,8 +231,11 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
     return merged
 
 
+
+
 def _parse_schema_ver(ver: Any) -> tuple[int, int]:
-    m = re.match(r"^\s*(\d+)(?:\.(\d+))?", str(ver or "0.0"))
+    import re as _re
+    m = _re.match(r"^\s*(\d+)(?:\.(\d+))?", str(ver or "0.0"))
     if not m:
         return (0, 0)
     return (int(m.group(1)), int(m.group(2) or 0))
@@ -566,7 +252,6 @@ def _union_list(base_list: Any, user_list: Any) -> list[str]:
                     seen.add(s)
                     out.append(s)
     return out
-
 
 def load_neural_schema(schema_path: Path = SCHEMA_FILE) -> dict[str, Any]:
     if schema_path.exists():
@@ -639,6 +324,52 @@ def _get_setting(key: str, default: str = "") -> str:
     if val is not None and val != "":
         return val.strip()
     return ENV.get(key, default).strip()
+
+
+# --- File locking for env file (P0-07: prevent concurrent write races) ---
+@contextmanager
+def _env_file_lock(env_path: Path) -> Iterator[None]:
+    """Exclusive flock on the env file so concurrent writers don't clobber each other."""
+    lock_path = env_path.parent / (env_path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+    lock_fd = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+        lock_fd.close()
+
+
+# --- Safe coercion helpers (P0-06: never crash at import on bad config) ---
+_CONFIG_LOAD_WARNINGS: list[str] = []
+
+
+def _safe_int(value: Any, default: int, key: str = "") -> int:
+    """Coerce to int, falling back to default with a warning on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        msg = f"config: invalid int for {key or value!r}: {exc}; using default {default}"
+        if msg not in _CONFIG_LOAD_WARNINGS:
+            _CONFIG_LOAD_WARNINGS.append(msg)
+        return default
+
+
+def _safe_float(value: Any, default: float, key: str = "") -> float:
+    """Coerce to float, falling back to default with a warning on failure."""
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        msg = f"config: invalid float for {key or value!r}: {exc}; using default {default}"
+        if msg not in _CONFIG_LOAD_WARNINGS:
+            _CONFIG_LOAD_WARNINGS.append(msg)
+        return default
+
+
+def config_load_warnings() -> list[str]:
+    """Return all warnings collected during config load (non-fatal degradations)."""
+    return list(_CONFIG_LOAD_WARNINGS)
 
 
 # --- Load Schema & Environment ---
@@ -729,23 +460,45 @@ SMOLLM_MODEL = _get_setting(
 )
 SMOLLM_BIN = _get_setting(
     "CELINA_SMOLLM_BIN",
-    str(Path.home() / ".celina" / "models" / "smolLM" / "llama.cpp" / "llama-cli"),
+    str(HOME / ".celina" / "models" / "smolLM" / "llama.cpp" / "llama-cli"),
 )
 SMOLLM_MODEL_PATH = _get_setting(
     "CELINA_SMOLLM_MODEL_PATH",
-    str(Path.home() / ".celina" / "models" / "smolLM" / f"{SMOLLM_MODEL}.gguf"),
+    str(HOME / ".celina" / "models" / "smolLM" / f"{SMOLLM_MODEL}.gguf"),
 )
-SMOLLM_NUM_THREADS = int(
-    _get_setting("CELINA_SMOLLM_NUM_THREADS", str(_ROUTING.get("smolllm_num_threads", 2)))
+SMOLLM_NUM_THREADS = _safe_int(
+    _get_setting("CELINA_SMOLLM_NUM_THREADS", str(_ROUTING.get("smolllm_num_threads", 2))),
+    2, "CELINA_SMOLLM_NUM_THREADS",
 )
-SMOLLM_NUM_CTX = int(
-    _get_setting("CELINA_SMOLLM_NUM_CTX", str(_ROUTING.get("smolllm_num_ctx", 512)))
+SMOLLM_NUM_CTX = _safe_int(
+    _get_setting("CELINA_SMOLLM_NUM_CTX", str(_ROUTING.get("smolllm_num_ctx", 512))),
+    512, "CELINA_SMOLLM_NUM_CTX",
 )
-SMOLLM_MAX_TOKENS = int(
-    _get_setting("CELINA_SMOLLM_MAX_TOKENS", str(_ROUTING.get("smolllm_max_tokens", 128)))
+SMOLLM_MAX_TOKENS = _safe_int(
+    _get_setting("CELINA_SMOLLM_MAX_TOKENS", str(_ROUTING.get("smolllm_max_tokens", 128))),
+    128, "CELINA_SMOLLM_MAX_TOKENS",
 )
-SMOLLM_TEMPERATURE = float(
-    _get_setting("CELINA_SMOLLM_TEMPERATURE", str(_ROUTING.get("smolllm_temperature", 0.3)))
+SMOLLM_TEMPERATURE = _safe_float(
+    _get_setting("CELINA_SMOLLM_TEMPERATURE", str(_ROUTING.get("smolllm_temperature", 0.3))),
+    0.3, "CELINA_SMOLLM_TEMPERATURE",
+)
+
+
+# ---------------------------------------------------------------------------
+# Gear 0.5 micro-tier (intent + slot router) config
+# ---------------------------------------------------------------------------
+GEAR0_5_BACKEND = _get_setting(
+    "CELINA_GEAR0_5_BACKEND",
+    str(_ROUTING.get("gear0_5_backend", "auto")),
+).lower()
+# auto → try fasttext first, then smollm, then fall back to smolLM direct generation
+GEAR0_5_MIN_CONFIDENCE = _safe_float(
+    _get_setting("CELINA_GEAR0_5_MIN_CONFIDENCE", str(_ROUTING.get("gear0_5_min_confidence", 0.75))),
+    0.75, "CELINA_GEAR0_5_MIN_CONFIDENCE",
+)
+GEAR0_5_MODEL_PATH = _get_setting(
+    "CELINA_GEAR0_5_MODEL_PATH",
+    str(_ROUTING.get("gear0_5_model_path", "")),
 )
 
 
@@ -754,18 +507,21 @@ def get_smolLM_status() -> dict[str, Any]:
     try:
         from celina_pkg.gear0_5_smolLM import gear0_5_smolLM_status
 
-        return gear0_5_smolLM_status()
+        return gear0_5_smolLM_status()  # type: ignore[no-any-return]  # external function returns Any; validated at call site
     except Exception as exc:  # pragma: no cover - import guard
         return {"available": False, "error": str(exc)}
 
 
-def get_active_local_inference_route(prefer_npu: bool = True) -> dict:
+def get_active_local_inference_route(prefer_npu: bool = True) -> dict[str, Any]:
     """Resolve active local inference backend (decoupled NPU 11435 -> Ollama 11434 fallback)."""
     try:
-        from celina_hardware.compute import detect_compute_topology, resolve_inference_endpoint
+        from celina_hardware.compute import (
+            detect_compute_topology,
+            resolve_inference_endpoint,
+        )
 
         topo = detect_compute_topology(npu_endpoint=NPU_API_BASE, ollama_endpoint=OLLAMA_API_BASE)
-        return resolve_inference_endpoint(prefer_npu=prefer_npu, topology=topo)
+        return resolve_inference_endpoint(prefer_npu=prefer_npu, topology=topo)  # type: ignore[no-any-return]  # hardware function returns Any; schema validated at call site
     except Exception:
         return {
             "endpoint": OLLAMA_API_BASE,
@@ -773,7 +529,7 @@ def get_active_local_inference_route(prefer_npu: bool = True) -> dict:
             "fallback_used": False,
             "service": "ollama.service",
         }
-OLLAMA_NUM_CTX = int(_get_setting("CELINA_OLLAMA_NUM_CTX", str(_ROUTING.get("ollama_num_ctx", 4096))))
+OLLAMA_NUM_CTX = _safe_int(_get_setting("CELINA_OLLAMA_NUM_CTX", str(_ROUTING.get("ollama_num_ctx", 4096))), 4096, "CELINA_OLLAMA_NUM_CTX")
 OLLAMA_KEEP_ALIVE = _get_setting("CELINA_OLLAMA_KEEP_ALIVE", str(_ROUTING.get("ollama_keep_alive", "45s")))
 LITE_MODE = _get_setting("CELINA_LITE_MODE", "0").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -786,32 +542,32 @@ def is_lite_mode() -> bool:
     if "CELINA_LITE_MODE" in ENV:
         return str(ENV["CELINA_LITE_MODE"]).strip().lower() in {"1", "true", "yes", "on"}
     return bool(LITE_MODE)
-OLLAMA_NUM_THREADS = int(_get_setting("CELINA_OLLAMA_NUM_THREADS", str(_ROUTING.get("ollama_num_threads", 0))))
+OLLAMA_NUM_THREADS = _safe_int(_get_setting("CELINA_OLLAMA_NUM_THREADS", str(_ROUTING.get("ollama_num_threads", 0))), 0, "CELINA_OLLAMA_NUM_THREADS")
 CLOUD_MODEL = _get_setting("CELINA_CLOUD_MODEL", str(_ROUTING.get("cloud_model", "openrouter/free")))
 VISION_MODEL = _get_setting("CELINA_VISION_MODEL", str(_ROUTING.get("vision_model", CLOUD_MODEL)))
 
 # Apple Intelligence Edge Lighting
 EDGE_LIGHTING_ENABLED = _get_setting(
-    "CELINA_EDGE_LIGHTING", "1" if EDGE_LIGHTING_CFG.get("enabled", True) else "0"
+    "CELINA_EDGE_LIGHTING", "1" if EDGE_LIGHTING_CFG.get("enabled", True) else "0",
 ).lower() in {"1", "true", "yes", "on"}
 FULLSCREEN_GLOW_ON_TASK = EDGE_LIGHTING_ENABLED and bool(EDGE_LIGHTING_CFG.get("fullscreen_on_task", True))
 ISLAND_GLOW_ON_RESPONSE = EDGE_LIGHTING_ENABLED and bool(EDGE_LIGHTING_CFG.get("island_on_response", True))
 
 # Smart Cache Settings
 CACHE_ENABLED = _get_setting(
-    "CELINA_CACHE_ENABLED", "1" if CACHE_CFG.get("enabled", True) else "0"
+    "CELINA_CACHE_ENABLED", "1" if CACHE_CFG.get("enabled", True) else "0",
 ).lower() in {"1", "true", "yes", "on"}
-CACHE_OFFLOAD_INTERVAL_SEC = int(CACHE_CFG.get("disk_offload_interval_sec", 600))
+CACHE_OFFLOAD_INTERVAL_SEC = _safe_int(CACHE_CFG.get("disk_offload_interval_sec", 600), 600, "cache.disk_offload_interval_sec")
 
 # Automation & OCR Settings
 OCR_LANGUAGES = _get_setting("CELINA_OCR_LANGUAGES", str(AUTOMATION_CFG.get("ocr_languages", "eng+tel+hin")))
 YDOTOOL_SOCKET = _get_setting("YDOTOOL_SOCKET", DEFAULT_YDOTOOL_SOCKET)
-MAX_WORKFLOW_STEPS = int(AUTOMATION_CFG.get("max_workflow_steps", 25))
-DEFAULT_STEP_DELAY = float(AUTOMATION_CFG.get("default_step_delay_sec", 0.4))
+MAX_WORKFLOW_STEPS = _safe_int(AUTOMATION_CFG.get("max_workflow_steps", 25), 25, "automation.max_workflow_steps")
+DEFAULT_STEP_DELAY = _safe_float(AUTOMATION_CFG.get("default_step_delay_sec", 0.4), 0.4, "automation.default_step_delay_sec")
 
 # Privacy Firewall Settings
 STRICT_PRIVACY = _get_setting(
-    "CELINA_STRICT_PRIVACY", "1" if PRIVACY_CFG.get("strict_mode", True) else "0"
+    "CELINA_STRICT_PRIVACY", "1" if PRIVACY_CFG.get("strict_mode", True) else "0",
 ).lower() in {"1", "true", "yes", "on"}
 HARD_BLOCKED_PATHS: set[str] = set(PRIVACY_CFG.get("hard_blocked_paths", []))
 LOCAL_SENSITIVE_TOOLS: set[str] = set(PRIVACY_CFG.get("local_sensitive_tools", []))
@@ -843,7 +599,7 @@ def is_hard_blocked_path(path: Path | str) -> bool:
 
 # Multilingual & Voice Settings
 DEFAULT_LANGUAGE = _get_setting(
-    "CELINA_LANGUAGE", str(_PERSONA.get("default_language", "auto"))
+    "CELINA_LANGUAGE", str(_PERSONA.get("default_language", "auto")),
 ).lower()
 SUPPORTED_LANGUAGES: list[str] = list(_PERSONA.get("supported_languages", ["en", "te", "hi"]))
 
@@ -856,28 +612,29 @@ VOICE_MODEL = _get_setting(
     ),
 )
 WHISPER_MODEL = _get_setting("CELINA_WHISPER_MODEL", str(_STT.get("whisper_model", "base")))
-WHISPER_IDLE_OFFLOAD_SEC = float(
-    _get_setting("CELINA_WHISPER_IDLE_OFFLOAD", str(_STT.get("whisper_idle_offload_seconds", 180)))
+WHISPER_IDLE_OFFLOAD_SEC = _safe_float(
+    _get_setting("CELINA_WHISPER_IDLE_OFFLOAD", str(_STT.get("whisper_idle_offload_seconds", 180))),
+    180.0, "CELINA_WHISPER_IDLE_OFFLOAD",
 )
 WAKE_WORD_ENABLED = _get_setting("CELINA_WAKE_WORD", "0").lower() in {"1", "true", "yes", "on"}
 WAKE_WORD_MODEL = _get_setting("CELINA_WAKE_MODEL", "")
 
 # STT Timing & Voice Pipeline (Silero VAD v5 ONNX, PipeWire Audio Ducking, Optional Kokoro-82M)
-STT_SILENCE_SECONDS = float(_STT.get("silence_stop_seconds", 1.2))
-STT_START_TIMEOUT = float(_STT.get("start_timeout_seconds", 5.0))
-STT_MAX_DURATION = float(_STT.get("max_duration_seconds", 15.0))
+STT_SILENCE_SECONDS = _safe_float(_STT.get("silence_stop_seconds", 1.2), 1.2, "stt.silence_stop_seconds")
+STT_START_TIMEOUT = _safe_float(_STT.get("start_timeout_seconds", 5.0), 5.0, "stt.start_timeout_seconds")
+STT_MAX_DURATION = _safe_float(_STT.get("max_duration_seconds", 15.0), 15.0, "stt.max_duration_seconds")
 VAD_ENGINE = _get_setting("CELINA_VAD_ENGINE", str(_STT.get("vad_engine", "auto"))).lower()
 SILERO_VAD_MODEL = _get_setting("CELINA_SILERO_VAD_MODEL", str(VOICES_DIR / "silero_vad.onnx"))
-SILERO_VAD_THRESHOLD = float(_get_setting("CELINA_SILERO_VAD_THRESHOLD", str(_STT.get("silero_vad_threshold", 0.50))))
+SILERO_VAD_THRESHOLD = _safe_float(_get_setting("CELINA_SILERO_VAD_THRESHOLD", str(_STT.get("silero_vad_threshold", 0.50))), 0.50, "CELINA_SILERO_VAD_THRESHOLD")
 AUDIO_DUCKING_ENABLED = _get_setting(
-    "CELINA_AUDIO_DUCKING", "1" if _STT.get("audio_ducking", True) else "0"
+    "CELINA_AUDIO_DUCKING", "1" if _STT.get("audio_ducking", True) else "0",
 ).lower() in {"1", "true", "yes", "on"}
-AUDIO_DUCK_PCT = max(5, min(90, int(_get_setting("CELINA_AUDIO_DUCK_PCT", str(_STT.get("duck_volume_pct", 25))))))
+AUDIO_DUCK_PCT = max(5, min(90, _safe_int(_get_setting("CELINA_AUDIO_DUCK_PCT", str(_STT.get("duck_volume_pct", 25))), 25, "CELINA_AUDIO_DUCK_PCT")))
 TTS_ENGINE = _get_setting("CELINA_TTS_ENGINE", str(_STT.get("tts_engine", "auto"))).lower()
 KOKORO_VOICE_EN = _get_setting("CELINA_KOKORO_VOICE_EN", str(_STT.get("kokoro_voice_en", "af_bella")))
 KOKORO_VOICE_HI = _get_setting("CELINA_KOKORO_VOICE_HI", str(_STT.get("kokoro_voice_hi", "hf_alpha")))
 ACTION_GATE_ENABLED = _get_setting(
-    "CELINA_ACTION_GATE", "1" if CONFIDENCE_POLICY.get("enable_action_gate", True) else "0"
+    "CELINA_ACTION_GATE", "1" if CONFIDENCE_POLICY.get("enable_action_gate", True) else "0",
 ).lower() in {"1", "true", "yes", "on"}
 
 # Hybrid Semantic & Embedding Engine (zero-idle-RAM: Ollama embeddinggemma / Model2Vec + SQLite RRF)
@@ -885,32 +642,34 @@ EMBEDDINGS_CFG: dict[str, Any] = NEURAL_SCHEMA.get("embeddings", {})
 EMBED_ENGINE = _get_setting("CELINA_EMBED_ENGINE", str(EMBEDDINGS_CFG.get("engine", "auto"))).lower()
 EMBED_MODEL = _get_setting("CELINA_EMBED_MODEL", str(EMBEDDINGS_CFG.get("model", "embeddinggemma")))
 EMBED_MODEL2VEC_MODEL = _get_setting(
-    "CELINA_EMBED_MODEL2VEC", str(EMBEDDINGS_CFG.get("model2vec_model", "minishlab/potion-multilingual-128M"))
+    "CELINA_EMBED_MODEL2VEC", str(EMBEDDINGS_CFG.get("model2vec_model", "minishlab/potion-multilingual-128M")),
 )
-EMBED_DIM = max(32, int(_get_setting("CELINA_EMBED_DIM", str(EMBEDDINGS_CFG.get("dim", 256)))))
+EMBED_DIM = max(32, _safe_int(_get_setting("CELINA_EMBED_DIM", str(EMBEDDINGS_CFG.get("dim", 256))), 256, "CELINA_EMBED_DIM"))
 EMBED_KEEP_ALIVE = _get_setting("CELINA_EMBED_KEEP_ALIVE", str(EMBEDDINGS_CFG.get("keep_alive", "30s")))
-EMBED_RRF_K = max(1, int(_get_setting("CELINA_EMBED_RRF_K", str(EMBEDDINGS_CFG.get("rrf_k", 60)))))
+EMBED_RRF_K = max(1, _safe_int(_get_setting("CELINA_EMBED_RRF_K", str(EMBEDDINGS_CFG.get("rrf_k", 60))), 60, "CELINA_EMBED_RRF_K"))
 SEMANTIC_CACHE_ENABLED = _get_setting(
-    "CELINA_SEMANTIC_CACHE", "1" if EMBEDDINGS_CFG.get("semantic_cache_enabled", True) else "0"
+    "CELINA_SEMANTIC_CACHE", "1" if EMBEDDINGS_CFG.get("semantic_cache_enabled", True) else "0",
 ).lower() in {"1", "true", "yes", "on"}
-SEMANTIC_CACHE_THRESHOLD = float(
-    _get_setting("CELINA_SEMANTIC_CACHE_THRESHOLD", str(EMBEDDINGS_CFG.get("semantic_cache_threshold", 0.92)))
+SEMANTIC_CACHE_THRESHOLD = _safe_float(
+    _get_setting("CELINA_SEMANTIC_CACHE_THRESHOLD", str(EMBEDDINGS_CFG.get("semantic_cache_threshold", 0.92))),
+    0.92, "CELINA_SEMANTIC_CACHE_THRESHOLD",
 )
-TOOL_ROUTER_SEMANTIC_MIN_SIM = float(
-    _get_setting("CELINA_TOOL_SEMANTIC_MIN_SIM", str(EMBEDDINGS_CFG.get("tool_router_min_sim", 0.38)))
+TOOL_ROUTER_SEMANTIC_MIN_SIM = _safe_float(
+    _get_setting("CELINA_TOOL_SEMANTIC_MIN_SIM", str(EMBEDDINGS_CFG.get("tool_router_min_sim", 0.38))),
+    0.38, "CELINA_TOOL_SEMANTIC_MIN_SIM",
 )
 
 # Security Policy from Neural Schema
-MAX_FILE_BACKUPS = int(_SECURITY.get("max_file_backups", 20))
+MAX_FILE_BACKUPS = _safe_int(_SECURITY.get("max_file_backups", 20), 20, "security.max_file_backups")
 TIER1_AUTO_TOOLS: set[str] = set(_SECURITY.get("tier1_auto_tools", []))
 TIER2_APPROVAL_TOOLS: set[str] = set(_SECURITY.get("tier2_approval_tools", []))
 PROTECTED_PATHS: set[str] = set(_SECURITY.get("protected_paths", [])) | HARD_BLOCKED_PATHS
 
 # Performance & Agent Limits
 MEMORY_HISTORY_LIMIT = 10
-MAX_AGENT_STEPS = int(_ROUTING.get("max_agent_steps", 5))
-REQUEST_TIMEOUT = int(_get_setting("CELINA_REQUEST_TIMEOUT", str(_ROUTING.get("request_timeout_sec", 20))))
-LOCAL_TIMEOUT = int(_get_setting("CELINA_LOCAL_TIMEOUT", str(_ROUTING.get("local_timeout_sec", 180))))
+MAX_AGENT_STEPS = _safe_int(_ROUTING.get("max_agent_steps", 5), 5, "routing.max_agent_steps")
+REQUEST_TIMEOUT = _safe_int(_get_setting("CELINA_REQUEST_TIMEOUT", str(_ROUTING.get("request_timeout_sec", 20))), 20, "CELINA_REQUEST_TIMEOUT")
+LOCAL_TIMEOUT = _safe_int(_get_setting("CELINA_LOCAL_TIMEOUT", str(_ROUTING.get("local_timeout_sec", 180))), 180, "CELINA_LOCAL_TIMEOUT")
 LOCAL_THINK_ENABLED = _get_setting("CELINA_LOCAL_THINK", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 
@@ -941,7 +700,7 @@ def format_persona_instructions() -> str:
         NEURAL_SCHEMA.get("persona", {}).get(
             "system_instructions",
             DEFAULT_NEURAL_SCHEMA["persona"]["system_instructions"],
-        )
+        ),
     )
     return raw.replace("{name}", name).replace("{nickname}", nick)
 
@@ -953,12 +712,11 @@ def _sanitize_identity_token(val: str, max_len: int = 32) -> str:
 
 def set_assistant_identity(
     name: str,
-    nickname: Optional[str] = None,
-    schema_path: Optional[Path] = None,
-    env_path: Optional[Path] = None,
+    nickname: str | None = None,
+    schema_path: Path | None = None,
+    env_path: Path | None = None,
 ) -> tuple[str, str]:
-    """
-    Atomically updates assistant primary name & nickname with fsync + 0600 permissions.
+    """Atomically updates assistant primary name & nickname with fsync + 0600 permissions.
     On any OSError during persistence, restores previous in-memory values and raises
     PersistenceError so callers NEVER falsely claim 'Saved persistently'.
     """
@@ -1189,7 +947,7 @@ _MODEL_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,95}$")
 def detect_system_ram_gb() -> int:
     """Returns approximate physical RAM in GiB from /proc/meminfo."""
     try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
             for line in fh:
                 if line.startswith("MemTotal:"):
                     kb = int(line.split()[1])
@@ -1202,7 +960,7 @@ def detect_system_ram_gb() -> int:
 def detect_available_ram_mb() -> int:
     """Returns live MemAvailable in MiB from /proc/meminfo for dynamic RAM-pressure guards."""
     try:
-        with open("/proc/meminfo", "r", encoding="utf-8") as fh:
+        with open("/proc/meminfo", encoding="utf-8") as fh:
             for line in fh:
                 if line.startswith("MemAvailable:"):
                     kb = int(line.split()[1])
@@ -1212,7 +970,7 @@ def detect_available_ram_mb() -> int:
     return 2048
 
 
-def lookup_catalog_model(tag: str) -> Optional[dict[str, Any]]:
+def lookup_catalog_model(tag: str) -> dict[str, Any] | None:
     low = (tag or "").strip().lower()
     for item in LOCAL_MODEL_CATALOG:
         if item["tag"].lower() == low:
@@ -1220,7 +978,7 @@ def lookup_catalog_model(tag: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def format_model_catalog(ram_gb: Optional[int] = None) -> str:
+def format_model_catalog(ram_gb: int | None = None) -> str:
     """Formats RAM-matched Dense & Sparse MoE model guidance for `/model`."""
     ram = ram_gb if ram_gb is not None else detect_system_ram_gb()
     lines = [
@@ -1231,7 +989,7 @@ def format_model_catalog(ram_gb: Optional[int] = None) -> str:
         fit = "IN-RAM FAST" if ram >= int(m["min_ram_gb"]) else "NVMe mmap (slower swap)"
         lines.append(
             f"  • {m['tag']:<19} | {m['arch']:<17} | {m['total_params']} ({m['active_params']} active) "
-            f"| ~{m['size_gb']:.1f}GB | [{fit}] — {m['note']}"
+            f"| ~{m['size_gb']:.1f}GB | [{fit}] — {m['note']}",
         )
     lines.append("Switch anytime: /model <tag>   (then download once: ollama pull <tag>)")
     return "\n".join(lines)
@@ -1239,11 +997,10 @@ def format_model_catalog(ram_gb: Optional[int] = None) -> str:
 
 def set_local_model(
     model_tag: str,
-    env_path: Optional[Path] = None,
-    ram_gb: Optional[int] = None,
-) -> tuple[str, Optional[str]]:
-    """
-    Validates and atomically persists CELINA_LOCAL_MODEL (0600) while updating live config.LOCAL_MODEL.
+    env_path: Path | None = None,
+    ram_gb: int | None = None,
+) -> tuple[str, str | None]:
+    """Validates and atomically persists CELINA_LOCAL_MODEL (0600) while updating live config.LOCAL_MODEL.
     Returns (clean_tag, optional_ram_warning).
     """
     global LOCAL_MODEL
@@ -1253,28 +1010,30 @@ def set_local_model(
         raise ValueError(f"Invalid Ollama model tag: '{model_tag}'")
 
     e_path = env_path or ENV_FILE
-    if e_path.exists():
-        lines = e_path.read_text(encoding="utf-8", errors="replace").splitlines()
-        out: list[str] = []
-        found = False
-        for ln in lines:
-            if ln.strip().startswith("CELINA_LOCAL_MODEL="):
+    # P0-07: exclusive lock around read-modify-write to prevent lost updates
+    with _env_file_lock(e_path):
+        if e_path.exists():
+            lines = e_path.read_text(encoding="utf-8", errors="replace").splitlines()
+            out: list[str] = []
+            found = False
+            for ln in lines:
+                if ln.strip().startswith("CELINA_LOCAL_MODEL="):
+                    out.append(f'CELINA_LOCAL_MODEL="{clean}"')
+                    found = True
+                else:
+                    out.append(ln)
+            if not found:
                 out.append(f'CELINA_LOCAL_MODEL="{clean}"')
-                found = True
-            else:
-                out.append(ln)
-        if not found:
-            out.append(f'CELINA_LOCAL_MODEL="{clean}"')
-        atomic_write_private_text(e_path, "\n".join(out) + "\n")
-    elif env_path is not None:
-        atomic_write_private_text(e_path, f'CELINA_LOCAL_MODEL="{clean}"\n')
+            atomic_write_private_text(e_path, "\n".join(out) + "\n")
+        elif env_path is not None:
+            atomic_write_private_text(e_path, f'CELINA_LOCAL_MODEL="{clean}"\n')
 
     LOCAL_MODEL = clean
     ENV["CELINA_LOCAL_MODEL"] = clean
     if "CELINA_LOCAL_MODEL" in os.environ:
         os.environ["CELINA_LOCAL_MODEL"] = clean
 
-    warn: Optional[str] = None
+    warn: str | None = None
     ram = ram_gb if ram_gb is not None else detect_system_ram_gb()
     meta = lookup_catalog_model(clean)
     if meta is not None and ram < int(meta["min_ram_gb"]):
@@ -1288,10 +1047,9 @@ def set_local_model(
 
 def set_env_pairs(
     pairs: dict[str, str],
-    env_path: Optional[Path] = None,
+    env_path: Path | None = None,
 ) -> None:
-    """
-    Atomically persists key=value pairs into ~/.config/celina/env (mode 0600)
+    """Atomically persists key=value pairs into ~/.config/celina/env (mode 0600)
     and synchronizes live in-memory config flags (LITE_MODE, OLLAMA_KEEP_ALIVE).
     """
     global LITE_MODE, OLLAMA_KEEP_ALIVE
@@ -1308,26 +1066,28 @@ def set_env_pairs(
         return
 
     e_path = env_path or ENV_FILE
-    lines = e_path.read_text(encoding="utf-8", errors="replace").splitlines() if e_path.exists() else []
-    seen: set[str] = set()
-    out: list[str] = []
-    for ln in lines:
-        stripped = ln.strip()
-        replaced = False
+    # P0-07: exclusive lock around read-modify-write to prevent lost updates
+    with _env_file_lock(e_path):
+        lines = e_path.read_text(encoding="utf-8", errors="replace").splitlines() if e_path.exists() else []
+        seen: set[str] = set()
+        out: list[str] = []
+        for ln in lines:
+            stripped = ln.strip()
+            replaced = False
+            for ck, cv in clean_pairs.items():
+                if stripped.startswith(f"{ck}="):
+                    out.append(f'{ck}="{cv}"')
+                    seen.add(ck)
+                    replaced = True
+                    break
+            if not replaced:
+                out.append(ln)
         for ck, cv in clean_pairs.items():
-            if stripped.startswith(f"{ck}="):
+            if ck not in seen:
                 out.append(f'{ck}="{cv}"')
-                seen.add(ck)
-                replaced = True
-                break
-        if not replaced:
-            out.append(ln)
-    for ck, cv in clean_pairs.items():
-        if ck not in seen:
-            out.append(f'{ck}="{cv}"')
 
-    e_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_private_text(e_path, "\n".join(out) + "\n")
+        e_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_private_text(e_path, "\n".join(out) + "\n")
 
     for ck, cv in clean_pairs.items():
         ENV[ck] = cv
@@ -1337,4 +1097,115 @@ def set_env_pairs(
         LITE_MODE = clean_pairs["CELINA_LITE_MODE"].lower() in {"1", "true", "yes", "on"}
     if "CELINA_OLLAMA_KEEP_ALIVE" in clean_pairs:
         OLLAMA_KEEP_ALIVE = clean_pairs["CELINA_OLLAMA_KEEP_ALIVE"]
+
+
+# ---------------------------------------------------------------------------
+# Unified Model Selection Integration (Update 27)
+# ---------------------------------------------------------------------------
+
+
+def get_recommended_whisper_model(
+    prefer_language: str | None = None,
+    prefer_accuracy: str | None = None,
+) -> dict[str, Any]:
+    """Return the recommended Whisper STT model for this system.
+
+    Uses model_selector.select_whisper_model() with detected RAM.
+    Env var CELINA_WHISPER_MODEL takes priority if set.
+    """
+    return model_selector.select_whisper_model(  # type: ignore[no-any-return]  # model_selector returns Any; schema validated at call site
+        prefer_language=prefer_language,
+        prefer_accuracy=prefer_accuracy,
+    )
+
+
+def get_recommended_ollama_model(
+    prefer_vision: bool = False,
+    prefer_heavy: bool = False,
+) -> dict[str, Any]:
+    """Return the recommended Ollama LLM model for this system.
+
+    Uses model_selector.select_ollama_model() with detected RAM, GPU, NPU.
+    Env var CELINA_LOCAL_MODEL takes priority if set.
+    """
+    return model_selector.select_ollama_model(  # type: ignore[no-any-return]  # model_selector returns Any; schema validated at call site
+        prefer_vision=prefer_vision,
+        prefer_heavy=prefer_heavy,
+    )
+
+
+def get_recommended_edge0_model() -> dict[str, Any]:
+    """Return the recommended Edge0 GGUF model for this system.
+
+    Uses model_selector.select_edge0_model() with detected RAM and disk.
+    Env var CELINA_EDGE0_MODEL takes priority if set.
+    """
+    return model_selector.select_edge0_model()  # type: ignore[no-any-return]  # model_selector returns Any; schema validated at call site
+
+
+def get_full_model_decision(
+    goal: str | None = None,
+    configured_providers: list[str] | None = None,
+    prefer_language: str | None = None,
+    prefer_vision: bool = False,
+    prefer_heavy: bool = False,
+    prefer_parallel: bool = False,
+) -> model_selector.FullModelDecision:
+    """Return the complete model decision for all tiers.
+
+    This is the single entry point for all model selection decisions:
+    Whisper, Ollama, Edge0, Gear 0.5 smolLM, and cloud routing.
+    """
+    return model_selector.make_full_model_decision(
+        goal=goal,
+        configured_providers=configured_providers,
+        prefer_language=prefer_language,
+        prefer_vision=prefer_vision,
+        prefer_heavy=prefer_heavy,
+        prefer_parallel=prefer_parallel,
+    )
+
+
+def format_model_decision_summary(
+    decision: model_selector.FullModelDecision | None = None,
+) -> str:
+    """Return a human-readable summary of the full model decision.
+
+    If no decision is passed, computes one from current system resources.
+    """
+    if decision is None:
+        decision = model_selector.make_full_model_decision()
+    return model_selector.format_decision_summary(decision)  # type: ignore[no-any-return]  # model_selector returns Any; schema validated at call site
+
+
+def apply_recommended_models(
+    *,
+    apply_whisper: bool = False,
+    apply_ollama: bool = False,
+    env_path: Path | None = None,
+) -> dict[str, str]:
+    """Apply recommended models by writing them to ~/.config/celina/env.
+
+    Does NOT download models — only persists the model choice so that
+    the installer / stages can perform the actual `ollama pull` /
+    `pip install faster-whisper` / Edge0 download.
+
+    Returns dict of what was applied.
+    """
+    applied: dict[str, str] = {}
+    e_path = env_path or ENV_FILE
+
+    if apply_whisper:
+        rec = get_recommended_whisper_model()
+        model_name = rec["model"]
+        set_env_pairs({"CELINA_WHISPER_MODEL": model_name}, env_path=e_path)
+        applied["whisper"] = model_name
+
+    if apply_ollama:
+        rec = get_recommended_ollama_model()
+        model_tag = rec["model"]
+        set_local_model(model_tag, env_path=e_path)
+        applied["ollama"] = model_tag
+
+    return applied
 

@@ -1,30 +1,31 @@
-"""
-Celina AI (Celly) - Autonomous Skill Learning, Action Recording & Workflow Replay Engine (v4.2)
+"""Celina AI (Celly) - Autonomous Skill Learning, Action Recording & Workflow Replay Engine (v4.2)
 Allows Celina to:
   1. Learn named multi-step skills/macros from instructions (learn_skill)
   2. Save the exact actions it just performed as a reusable skill (save_last_actions_as_skill)
   3. Record interactive step-by-step teaching sessions (start_recording -> stop_recording)
   4. Adapt/update saved skills from user feedback (update_skill)
-  5. Replay any learned skill with dynamic {{variables}}, 1-click upfront workflow approval,
-     live step progress, automatic OCR retry, and instant Esc emergency stop!
+  5. Replay learned skills with dynamic {{variables}}, workflow review, per-step approvals,
+     live step progress, automatic OCR retry, and instant Esc emergency stop.
 """
 
 import datetime
 import hashlib
+import hmac
 import json
 import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 from . import approval, automation, config, memory, net_policy
 
 ApprovalCallback = Callable[[str, str], bool]
 StatusCallback = Callable[[str], None]
-ToolExecutor = Callable[[str, dict[str, Any], Optional[ApprovalCallback]], str]
+ToolExecutor = Callable[[str, dict[str, Any], ApprovalCallback | None], str]
 
 # Meta-tools excluded from recorded action traces so saved skills stay clean
 _META_EXCLUDED_TOOLS = {
@@ -47,6 +48,19 @@ _META_EXCLUDED_TOOLS = {
     "mcp_list_tools",
 }
 
+# Memory v2: T1 Taint Enforcement
+# Trusted source is ONLY user_direct — fail-closed default.
+TRUSTED_SOURCES: frozenset[str] = frozenset({"user_direct"})
+QUARANTINE_SOURCES: frozenset[str] = frozenset({"untrusted_web", "ocr_screen"})
+
+
+def is_trusted_source(source_trust: str) -> bool:
+    """T1 gate: returns True ONLY for user_direct. Everything else is untrusted.
+
+    Fail-closed: any unknown/invalid source_trust is treated as untrusted.
+    """
+    return source_trust == "user_direct"
+
 
 class ActionRecorder:
     """Tracks the current turn's executed steps and any active 'teach me' recording session."""
@@ -55,9 +69,9 @@ class ActionRecorder:
         self._lock = threading.Lock()
         self._current_turn: list[dict[str, Any]] = []
         self._last_completed_turn: list[dict[str, Any]] = []
-        self._recording_meta: Optional[dict[str, Any]] = None
+        self._recording_meta: dict[str, Any] | None = None
         self._recording_steps: list[dict[str, Any]] = []
-        self._last_failed_skill: Optional[dict[str, Any]] = None
+        self._last_failed_skill: dict[str, Any] | None = None
 
     def begin_turn(self) -> None:
         with self._lock:
@@ -77,7 +91,7 @@ class ActionRecorder:
                 "failed_at": time.time(),
             }
 
-    def pop_recent_failed_skill(self, max_age_sec: float = 300.0) -> Optional[dict[str, Any]]:
+    def pop_recent_failed_skill(self, max_age_sec: float = 300.0) -> dict[str, Any] | None:
         with self._lock:
             item = self._last_failed_skill
             if not item:
@@ -117,7 +131,7 @@ class ActionRecorder:
         with self._lock:
             return str(self._recording_meta["name"]) if self._recording_meta else ""
 
-    def start(self, name: str, triggers: Optional[list[str]] = None, description: str = "") -> str:
+    def start(self, name: str, triggers: list[str] | None = None, description: str = "") -> str:
         with self._lock:
             self._recording_meta = {
                 "name": name.strip(),
@@ -130,7 +144,7 @@ class ActionRecorder:
             "Guide me through the actions step-by-step, then say 'stop recording' to save!"
         )
 
-    def stop_and_save(self, db: Optional[memory.MemoryDB] = None) -> str:
+    def stop_and_save(self, db: memory.MemoryDB | None = None) -> str:
         with self._lock:
             if self._recording_meta is None:
                 return "No active learning/recording session."
@@ -157,7 +171,7 @@ class ActionRecorder:
 recorder = ActionRecorder()
 
 
-def _normalize_steps(raw_steps: Any) -> tuple[list[dict[str, Any]], Optional[str]]:
+def _normalize_steps(raw_steps: Any) -> tuple[list[dict[str, Any]], str | None]:
     """Validates and normalizes a list of skill steps."""
     if isinstance(raw_steps, str):
         try:
@@ -210,10 +224,26 @@ def _substitute_params(obj: Any, params: dict[str, str]) -> Any:
 def learn_skill(
     name: str,
     steps: list[dict[str, Any]],
-    triggers: Optional[list[str]] = None,
+    triggers: list[str] | None = None,
     description: str = "",
+    *,
+    source_trust: str = "user_direct",
 ) -> str:
-    """Teaches Celina a permanent named multi-step automation skill stored in SQLite."""
+    """Teaches Celina a permanent named multi-step automation skill stored in SQLite.
+
+    Memory v2 T1 containment: skills sourced from untrusted_web or ocr_screen are
+    routed to Quarantine and refused trusted activation.
+    """
+    # Memory v2: T1 taint enforcement — fail-closed
+    if source_trust not in TRUSTED_SOURCES:
+        if source_trust in QUARANTINE_SOURCES:
+            return (
+                f"[QUARANTINE] Skill '{name}' sourced from '{source_trust}' is untrusted. "
+                "It is routed to Quarantine and refused trusted activation. "
+                "Review and promote via approve_quarantined_skill() before use."
+            )
+        return f"[DENIED] Skill '{name}' has untrusted source '{source_trust}' — trusted activation refused."
+
     clean_steps, err = _normalize_steps(steps)
     if err:
         return f"Error learning skill: {err}"
@@ -231,7 +261,7 @@ def learn_skill(
 
 def save_last_actions_as_skill(
     name: str,
-    triggers: Optional[list[str]] = None,
+    triggers: list[str] | None = None,
     description: str = "",
 ) -> str:
     """Saves the exact action sequence Celina just executed as a reusable learned skill."""
@@ -248,7 +278,7 @@ def save_last_actions_as_skill(
 
 def start_recording(
     name: str,
-    triggers: Optional[list[str]] = None,
+    triggers: list[str] | None = None,
     description: str = "",
 ) -> str:
     """Starts interactive 'Watch & Learn' mode for a new skill."""
@@ -260,7 +290,7 @@ def stop_recording() -> str:
     return recorder.stop_and_save()
 
 
-def list_skills(db: Optional[memory.MemoryDB] = None) -> str:
+def list_skills(db: memory.MemoryDB | None = None) -> str:
     """Lists all learned executable skills AND installed open-source SKILL.md playbooks."""
     store = db if db is not None else memory.get_db()
     items = store.list_skills()
@@ -275,7 +305,7 @@ def list_skills(db: Optional[memory.MemoryDB] = None) -> str:
                 step_preview += " → ..."
             lines.append(
                 f"• {s['name']} ({len(s['steps'])} steps, runs={s['times_run']}): "
-                f"{s['description']}\n  Steps: {step_preview}"
+                f"{s['description']}\n  Steps: {step_preview}",
             )
         sections.append("\n".join(lines))
 
@@ -293,12 +323,12 @@ def list_skills(db: Optional[memory.MemoryDB] = None) -> str:
 
 def update_skill(
     name: str,
-    steps: Optional[list[dict[str, Any]]] = None,
-    append_step: Optional[dict[str, Any]] = None,
-    replace_index: Optional[int] = None,
-    new_step: Optional[dict[str, Any]] = None,
-    triggers: Optional[list[str]] = None,
-    description: Optional[str] = None,
+    steps: list[dict[str, Any]] | None = None,
+    append_step: dict[str, Any] | None = None,
+    replace_index: int | None = None,
+    new_step: dict[str, Any] | None = None,
+    triggers: list[str] | None = None,
+    description: str | None = None,
 ) -> str:
     """Refines/adapts an existing learned skill based on user feedback."""
     db = memory.get_db()
@@ -336,7 +366,7 @@ def update_skill(
     return f"✅ Updated skill '{saved['name']}' (now {len(saved['steps'])} steps)."
 
 
-def heal_skill_from_last_trace(name: str, db: Optional[memory.MemoryDB] = None) -> str:
+def heal_skill_from_last_trace(name: str, db: memory.MemoryDB | None = None) -> str:
     """Replaces a failed skill's steps with the most recent successful manual/agent action trace."""
     trace = recorder.get_last_trace()
     if not trace:
@@ -369,15 +399,30 @@ def forget_skill(name: str) -> str:
 def run_skill(
     name: str,
     executor: ToolExecutor,
-    params: Optional[dict[str, str]] = None,
-    approval_cb: Optional[ApprovalCallback] = None,
-    status_cb: Optional[StatusCallback] = None,
-    db: Optional[memory.MemoryDB] = None,
+    params: dict[str, str] | None = None,
+    approval_cb: ApprovalCallback | None = None,
+    status_cb: StatusCallback | None = None,
+    db: memory.MemoryDB | None = None,
+    *,
+    source_trust: str = "user_direct",
 ) -> str:
-    """
-    Replays a learned multi-step skill after ONE upfront workflow approval showing every step.
+    """Replays a learned multi-step skill after an upfront workflow review.
+    Individual executors must still obtain any required approval for each action.
     Supports {{param}} substitution, automatic retry on OCR click, and instant Esc abort.
+
+    Memory v2 T1 containment: skills sourced from untrusted_web or ocr_screen are
+    routed to Quarantine and refused trusted activation — they never run as trusted.
     """
+    # Memory v2: T1 taint enforcement — fail-closed
+    if source_trust not in TRUSTED_SOURCES:
+        if source_trust in QUARANTINE_SOURCES:
+            return (
+                f"[QUARANTINE] Skill '{name}' sourced from '{source_trust}' is untrusted. "
+                "It is routed to Quarantine and refused trusted activation. "
+                "Review and promote via approve_quarantined_skill() before use."
+            )
+        return f"[DENIED] Skill '{name}' has untrusted source '{source_trust}' — trusted activation refused."
+
     store = db if db is not None else memory.get_db()
     skill = store.get_skill(name)
     if not skill:
@@ -403,11 +448,9 @@ def run_skill(
         return f"Cancelled skill '{skill['title']}'."
 
     automation.clear_stop()
-    # Security Invariant (Phase 4): Single upfront workflow approval covers ONLY read-only
-    # steps. Any high-risk step (shell, messaging, file delete/move, webhooks, MCP,
-    # sensitive typing, security ops) MUST freshly re-confirm with the real user approval_cb!
-    approved_readonly: ApprovalCallback = lambda _title, _detail: not automation.is_stop_requested()
-
+    # Never manufacture approval for a child, even if the parent classifies it
+    # as read-only. A downstream executor may require confirmation of its own.
+    # This callback is not an authenticated broker or a security boundary.
     outputs: list[str] = []
     total = len(resolved_steps)
     for idx, step in enumerate(resolved_steps, 1):
@@ -431,17 +474,15 @@ def run_skill(
             outputs.append(f"{idx}. Waited {secs:.1f}s")
             continue
 
-        step_risk = approval.classify_risk(tname, targs)
-        if step_risk == approval.RiskLevel.READ_ONLY and not approval.requires_fresh_confirmation(tname, targs):
-            step_cb = approved_readonly
-        else:
-            step_cb = approval_cb
-
-        res = executor(tname, targs, step_cb)
+        res = executor(tname, targs, approval_cb)
         # Smart resilience: if OCR text wasn't visible yet right after launching an app, retry once!
         if tname == "click_on_text" and "Could not find" in res and not automation.is_stop_requested():
             time.sleep(1.0)
-            res = executor(tname, targs, approved_child)
+            if automation.is_stop_requested():
+                store.record_skill_run(skill["name"], "cancelled", f"Stopped before retry of step {idx}/{total}.")
+                outputs.append(f"Step {idx}/{total}: Stopped by user (Esc).")
+                return "\n".join(outputs)
+            res = executor(tname, targs, approval_cb)
 
         outputs.append(f"{idx}. {tname}: {res}")
         if res.startswith(("Error:", "Blocked:", "Denied:", "Could not find", "Automation stopped")):
@@ -548,7 +589,7 @@ BUILTIN_STARTER_SKILLS: list[dict[str, Any]] = [
 ]
 
 
-def seed_builtin_skills(db: Optional[memory.MemoryDB] = None) -> int:
+def seed_builtin_skills(db: memory.MemoryDB | None = None) -> int:
     """Seeds starter automation skills once per database (never overwrites user edits)."""
     store = db if db is not None else memory.get_db()
     facts = store.get_all_facts()
@@ -569,11 +610,11 @@ def seed_builtin_skills(db: Optional[memory.MemoryDB] = None) -> int:
     return added
 
 
-def _parse_skill_markdown(md_path: Path) -> Optional[dict[str, Any]]:
+def _parse_skill_markdown(md_path: Path) -> dict[str, Any] | None:
     """Parses agentskills.io / anthropics/skills SKILL.md YAML frontmatter + body."""
     try:
         raw = md_path.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
+    except (OSError, ValueError):
         return None
     if not raw:
         return None
@@ -613,8 +654,7 @@ def _parse_skill_markdown(md_path: Path) -> Optional[dict[str, Any]]:
 
 
 def load_markdown_skills(skills_dir: Path = config.SKILLS_DIR) -> list[dict[str, Any]]:
-    """
-    Loads ONLY trusted SKILL.md playbooks from skills/trusted/ (never from quarantine!).
+    """Loads ONLY trusted SKILL.md playbooks from skills/trusted/ (never from quarantine!).
     Also supports legacy root-level built-in *.md playbooks if trusted/ has not been populated yet.
     """
     trusted_dir = skills_dir / "trusted"
@@ -648,8 +688,7 @@ def load_markdown_skills(skills_dir: Path = config.SKILLS_DIR) -> list[dict[str,
 
 
 def format_skill_as_untrusted_reference(skill: dict[str, Any]) -> str:
-    """
-    Wraps a Markdown skill playbook explicitly as UNTRUSTED REFERENCE CONTENT so it
+    """Wraps a Markdown skill playbook explicitly as UNTRUSTED REFERENCE CONTENT so it
     can NEVER override system policy, approval requirements, or safety guardrails.
     """
     name = str(skill.get("name", "unknown"))
@@ -664,12 +703,12 @@ def format_skill_as_untrusted_reference(skill: dict[str, Any]) -> str:
     )
 
 
-def match_markdown_skill(prompt: str, skills_dir: Path = config.SKILLS_DIR) -> Optional[dict[str, Any]]:
+def match_markdown_skill(prompt: str, skills_dir: Path = config.SKILLS_DIR) -> dict[str, Any] | None:
     """Returns the single best matching TRUSTED SKILL.md playbook ONLY when triggered by the prompt."""
     low = prompt.strip().lower()
     if not low:
         return None
-    best: Optional[dict[str, Any]] = None
+    best: dict[str, Any] | None = None
     best_score = 0
     for sk in load_markdown_skills(skills_dir):
         score = sum(len(t) for t in sk["triggers"] if t and t in low)
@@ -684,17 +723,36 @@ def _sanitize_slug(raw: str) -> str:
     return slug[:64] or "community-skill"
 
 
+def _get_skill_integrity_key() -> bytes:
+    """Per-install HMAC key for signing skill meta.json.
+
+    Stored at BASE_DIR/.skill_integrity_key (0600) — outside quarantine/ —
+    so an attacker who can rewrite quarantine/ files cannot forge a valid HMAC.
+    """
+    key_path = config.BASE_DIR / ".skill_integrity_key"
+    try:
+        if key_path.is_file():
+            return bytes.fromhex(key_path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pass
+    key = os.urandom(32)
+    try:
+        config.atomic_write_private_text(key_path, key.hex())
+    except (OSError, ValueError):
+        pass
+    return key
+
+
 def install_community_skill(
     url: str,
     name: str = "",
     publisher: str = "",
     signature: str = "",
-    approval_cb: Optional[ApprovalCallback] = None,
-    skills_dir: Optional[Path] = None,
-    resolver: Optional[net_policy.ResolverFn] = None,
+    approval_cb: ApprovalCallback | None = None,
+    skills_dir: Path | None = None,
+    resolver: net_policy.ResolverFn | None = None,
 ) -> str:
-    """
-    Downloads an open-source SKILL.md via centralized SSRF-safe net_policy into
+    """Downloads an open-source SKILL.md via centralized SSRF-safe net_policy into
     skills/quarantine/ ONLY (NEVER auto-activates!). Requires explicit review &
     promotion via approve_quarantined_skill() before activation.
     """
@@ -748,8 +806,14 @@ def install_community_skill(
         "sha256": sha256_hex,
         "publisher": (publisher or parsed.hostname or "unknown").strip(),
         "signature": (signature or "unsigned").strip(),
-        "downloaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "downloaded_at": datetime.datetime.now(datetime.UTC).isoformat(),
     }
+    # HMAC-sign the meta so an attacker who can rewrite both .md and .meta.json
+    # cannot forge a consistent pair — the key lives outside quarantine/.
+    _integrity_key = _get_skill_integrity_key()
+    meta["hmac_sha256"] = hmac.new(
+        _integrity_key, sha256_hex.encode("utf-8"), hashlib.sha256,
+    ).hexdigest()
     config.atomic_write_private_text(md_dest, content)
     config.atomic_write_private_text(meta_dest, json.dumps(meta, indent=2) + "\n")
 
@@ -762,7 +826,7 @@ def install_community_skill(
     )
 
 
-def list_quarantined_skills(skills_dir: Optional[Path] = None) -> str:
+def list_quarantined_skills(skills_dir: Path | None = None) -> str:
     """Lists all untrusted community skills currently awaiting user review in quarantine/."""
     base_dir = skills_dir or config.SKILLS_DIR
     q_dir = base_dir / "quarantine"
@@ -784,7 +848,7 @@ def list_quarantined_skills(skills_dir: Optional[Path] = None) -> str:
         actual_sha = hashlib.sha256(md.read_bytes()).hexdigest()
         lines.append(
             f"• {slug} | sha256={actual_sha[:16]}... | source={meta.get('source_url', 'unknown')} "
-            f"| publisher={meta.get('publisher', 'unknown')} ({meta.get('signature', 'unsigned')})"
+            f"| publisher={meta.get('publisher', 'unknown')} ({meta.get('signature', 'unsigned')})",
         )
     return "\n".join(lines)
 
@@ -792,11 +856,10 @@ def list_quarantined_skills(skills_dir: Optional[Path] = None) -> str:
 def approve_quarantined_skill(
     slug: str,
     expected_sha256: str = "",
-    approval_cb: Optional[ApprovalCallback] = None,
-    skills_dir: Optional[Path] = None,
+    approval_cb: ApprovalCallback | None = None,
+    skills_dir: Path | None = None,
 ) -> str:
-    """
-    Explicitly promotes a reviewed community skill from quarantine/ -> trusted/ after
+    """Explicitly promotes a reviewed community skill from quarantine/ -> trusted/ after
     verifying its SHA-256 checksum and obtaining exact argument-bound user approval.
     """
     clean_slug = _sanitize_slug(slug)
@@ -819,11 +882,23 @@ def approve_quarantined_skill(
         except Exception:
             return f"Error: Corrupted metadata for quarantined skill '{clean_slug}'."
         recorded_sha = str(meta.get("sha256", "")).strip().lower()
+        recorded_hmac = str(meta.get("hmac_sha256", "")).strip().lower()
+        # Verify HMAC before trusting the recorded SHA — an attacker who can
+        # rewrite both .md and .meta.json cannot forge a valid HMAC.
         if recorded_sha and recorded_sha != actual_sha:
             return (
                 f"Blocked: Integrity mismatch for quarantined skill '{clean_slug}' "
                 f"(recorded {recorded_sha[:12]} != current {actual_sha[:12]})."
             )
+        if recorded_hmac:
+            expected_hmac = hmac.new(
+                _get_skill_integrity_key(), recorded_sha.encode("utf-8"), hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(recorded_hmac, expected_hmac):
+                return (
+                    f"Blocked: HMAC verification failed for quarantined skill "
+                    f"'{clean_slug}' — metadata may have been tampered with."
+                )
 
     if expected_sha256.strip() and expected_sha256.strip().lower() != actual_sha:
         return (
@@ -851,7 +926,7 @@ def approve_quarantined_skill(
     dst_meta = t_dir / f"{clean_slug}.meta.json"
     meta["status"] = "trusted"
     meta["sha256"] = actual_sha
-    meta["promoted_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    meta["promoted_at"] = datetime.datetime.now(datetime.UTC).isoformat()
     config.atomic_write_private_text(dst_md, content)
     config.atomic_write_private_text(dst_meta, json.dumps(meta, indent=2) + "\n")
     src_md.unlink(missing_ok=True)
@@ -860,7 +935,7 @@ def approve_quarantined_skill(
     return f"✅ Promoted skill '{clean_slug}' (sha256={actual_sha[:16]}...) from quarantine/ to trusted/."
 
 
-def reject_quarantined_skill(slug: str, skills_dir: Optional[Path] = None) -> str:
+def reject_quarantined_skill(slug: str, skills_dir: Path | None = None) -> str:
     """Deletes an untrusted skill from quarantine/ without ever activating it."""
     clean_slug = _sanitize_slug(slug)
     base_dir = skills_dir or config.SKILLS_DIR

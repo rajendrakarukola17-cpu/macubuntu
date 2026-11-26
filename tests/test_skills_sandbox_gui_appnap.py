@@ -112,8 +112,9 @@ class TestSkillQuarantine:
             with mock.patch.object(memory, "get_db", return_value=db):
                 skills.run_skill("mixed_workflow", executor=fake_exec, approval_cb=real_cb)
 
-            # Read-only step uses inherited callback; high-risk shell step MUST receive real_cb!
-            assert seen_cbs == [("get_system_stats", False), ("run_shell_command", True)]
+            # Both child steps receive the real callback: a parent classification
+            # must not create an automatic approval for a downstream executor.
+            assert seen_cbs == [("get_system_stats", True), ("run_shell_command", True)]
         finally:
             db.close()
 

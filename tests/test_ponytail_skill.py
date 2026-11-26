@@ -63,9 +63,18 @@ def test_ponytail_install_without_git():
         assert "git not found" in message
 
 
-def test_ponytail_already_installed():
-    """install should return True when already installed."""
-    skill = ponytail_skill.PonytailSkill(ponytail_path="/home/jtcviza/.local/share/ponytail")
+def test_ponytail_already_installed(tmp_path, monkeypatch):
+    """install should return True without ever launching a network clone."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(ponytail_skill.shutil, "which", lambda _name: "/fake/git")
+
+    def reject_clone(*_args, **_kwargs):
+        raise AssertionError("git clone must not run")
+
+    monkeypatch.setattr(ponytail_skill.subprocess, "run", reject_clone)
+    installed = tmp_path / ".local" / "share" / "ponytail"
+    installed.mkdir(parents=True)
+    skill = ponytail_skill.PonytailSkill(ponytail_path=str(installed))
     skill._installed = True
     success, message = skill.install()
     assert success is True

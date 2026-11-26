@@ -1,17 +1,19 @@
-"""
-Celina v5 — Capability #5: Pre-Execution Logical Scaffolding (FORST)
+"""Celina v5 — Capability #5: Pre-Execution Logical Scaffolding (FORST)
 
 Builds a deterministic, structured logical scaffold BEFORE leaf execution or
 multi-step tree expansion to prevent initial logical drift, and injects canonical
 KV-cache anchor prefixes so local 1.7B–4B models start with warm LCP KV slots.
+
+stdlib-only (sqlite3, datetime, re, json).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclasses.dataclass(frozen=True)
@@ -37,6 +39,9 @@ class LogicalScaffold:
             "anchor_prefix": self.anchor_prefix,
         }
 
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), sort_keys=True)
+
 
 # Canonical KV-cache anchor templates reused verbatim across planning sessions
 _ANCHOR_TEMPLATES: dict[str, str] = {
@@ -48,7 +53,7 @@ _ANCHOR_TEMPLATES: dict[str, str] = {
     ),
     "office_document": (
         "[FORST_ANCHOR:OFFICE_DOCUMENT]\n"
-        "INVARIANT_1: Prefer structured LibreOffice UNO bridge (localhost:2002) over GUI clicks.\n"
+        "INVARIANT_1: Prefer structured LibreOffice UNO pipe (localhost:2002) over GUI clicks.\n"
         "INVARIANT_2: Capture SHA-256 UndoJournal snapshot prior to mutation.\n"
         "INVARIANT_3: Confirm document stored cleanly before marking done.\n"
     ),
@@ -72,17 +77,43 @@ _ANCHOR_TEMPLATES: dict[str, str] = {
     ),
 }
 
+_OBJECTIVE_KEYWORDS: dict[str, list[str]] = {
+    "office_document": [
+        r"\.odt\b", r"\.docx\b", r"\.ods\b", r"\.xlsx\b",
+        r"\blibreoffice\b", r"\bspreadsheet\b", r"\bwriter\b", r"\bcalc\b",
+    ],
+    "file_mutation": [
+        r"\brefactor\b", r"\bpatch\b", r"\bmove\b", r"\brename\b",
+        r"\bdelete\b", r"\btrash\b", r"\bwrite\b", r"\bedit\b",
+    ],
+    "gui_automation": [
+        r"\bclick\b", r"\bscreen\b", r"\bwindow\b", r"\bgui\b",
+        r"\bform\b", r"\bbutton\b",
+    ],
+    "system_diagnostic": [
+        r"\bstatus\b", r"\bcheck\b", r"\bdiagnose\b", r"\bram\b",
+        r"\bcpu\b", r"\baudit\b", r"\binspect\b", r"\bstats\b",
+    ],
+}
+
 
 def _classify_objective(goal: str) -> str:
+    """Classify objective type using word-boundary regexes (P1 fix).
+
+    Avoids substring false positives: \"undelete\" no longer matches \"delete\",
+    \"create\" no longer triggers file_mutation via \"delete\", etc.
+    """
     low = (goal or "").lower()
-    if any(k in low for k in (".odt", ".docx", ".ods", ".xlsx", "libreoffice", "spreadsheet", "writer", "calc")):
-        return "office_document"
-    if any(k in low for k in ("edit ", "write ", "move ", "rename ", "delete ", "trash ", "refactor ", "patch ")):
-        return "file_mutation"
-    if any(k in low for k in ("click", "screen", "window", "gui", "form", "button")):
-        return "gui_automation"
-    if any(k in low for k in ("status", "check ", "diagnose", "ram", "cpu", "audit", "inspect", "stats")):
-        return "system_diagnostic"
+    scores: dict[str, int] = dict.fromkeys(_OBJECTIVE_KEYWORDS, 0)
+    for obj_type, patterns in _OBJECTIVE_KEYWORDS.items():
+        for pat in patterns:
+            if re.search(pat, low):
+                scores[obj_type] += 1
+    # Deterministic tie-break: office_document > file_mutation > gui > diagnostic > general
+    tiebreak = ["office_document", "file_mutation", "gui_automation", "system_diagnostic"]
+    best = max(tiebreak, key=lambda t: scores[t])
+    if scores[best] > 0:
+        return best
     return "general_autonomy"
 
 
@@ -93,26 +124,36 @@ class LogicalScaffolder:
         self,
         goal: str,
         *,
-        available_tools: Optional[list[str]] = None,
-        world_state: Optional[dict[str, Any]] = None,
+        available_tools: list[str] | None = None,
+        world_state: dict[str, Any] | None = None,
     ) -> LogicalScaffold:
         clean_goal = " ".join((goal or "").strip().split())
         obj_type = _classify_objective(clean_goal)
         anchor_prefix = _ANCHOR_TEMPLATES[obj_type]
         kv_anchor_id = hashlib.sha256(anchor_prefix.encode("utf-8")).hexdigest()[:16]
 
-        clauses = [c.strip() for c in re.split(r"\b(?:and then|then|after that|;)\b", clean_goal, flags=re.I) if c.strip()]
+        ws = world_state or {}
+
+        clauses = [c.strip() for c in re.split(r"\b(?:and then|then|after that|;)\b", clean_goal, flags=re.IGNORECASE) if c.strip()]
         if not clauses:
             clauses = [clean_goal or "Complete objective"]
 
+        tool_count = len(available_tools or [])
         preconditions = (
-            f"Objective parsed ({obj_type}) with {len(available_tools or [])} declared tools",
+            f"Objective parsed ({obj_type}) with {tool_count} declared tools",
             "Active security policy & capability boundaries verified",
         )
+        if ws:
+            preconditions += (
+                f"World state snapshot captured ({len(ws)} keys): " + ", ".join(sorted(ws)[:5]),
+            )
+
         invariants = tuple(
             ln.strip() for ln in anchor_prefix.splitlines() if ln.strip().startswith("INVARIANT_")
         )
+
         milestones = tuple(f"M{idx}: {clause}" for idx, clause in enumerate(clauses[:5], 1))
+
         verification = (
             "All leaf tasks completed or safely observed without policy violation",
             "Hash-chained evidence verified from root goal to leaf execution",

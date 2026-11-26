@@ -306,7 +306,7 @@ def test_nautilus_quick_look_keyd_and_continuity_hub(tmp_path):
     )
     assert r.returncode == 0, r.stderr + r.stdout
     assert "MACOS_CMD_KEYS=true" in r.stdout
-    assert "apt install keyd" in r.stdout
+    assert "apt-get install -y keyd" in r.stdout
     assert list(clean_home.iterdir()) == []
 
     # Continuity status reports Bluetooth batteries, USB iPhone Sync & Continuity Camera
@@ -537,9 +537,9 @@ def test_neural_schema_v42_to_v43_upgrade_preserves_user_and_unions_new_tools(tm
     assert migrated["persona"]["name"] == "Nova"
     assert migrated["persona"]["nickname"] == "Novi"
     assert migrated["routing"]["local_model"] == "qwen3:4b"
-    # Schema upgraded to 4.4 with all 88 tools, 21 sensitive local tools & 8 clean domains!
+    # Schema upgraded to 4.4 with all 106 tools across 11 domains, 21 sensitive local tools!
     assert migrated["schema_version"] == "4.4"
-    assert len(migrated["security_policy"]["tier1_auto_tools"]) == 60
+    assert len(migrated["security_policy"]["tier1_auto_tools"]) == 64
     assert len(migrated["security_policy"]["tier2_approval_tools"]) == 42
     assert "get_upcoming_events" in migrated["privacy"]["local_sensitive_tools"]
     assert "prepare_meeting_context" in migrated["privacy"]["local_sensitive_tools"]

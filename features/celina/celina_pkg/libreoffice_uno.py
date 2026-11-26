@@ -1,5 +1,4 @@
-"""
-Celina AI — LibreOffice UNO Bridge with Automatic Wayland GUI Fallback (files_office)
+"""Celina AI — LibreOffice UNO Bridge with Automatic Wayland GUI Fallback (files_office)
 
 Prefers structured headless UNO edits over fragile pixel/GUI automation when
 `python3-uno` and the local LibreOffice UNO socket (`localhost:2002`) are available:
@@ -12,8 +11,9 @@ from __future__ import annotations
 
 import importlib.util
 import socket
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from . import config
 
@@ -34,7 +34,7 @@ def get_uno_port() -> int:
     return config.get_libreoffice_uno_port()
 
 
-def build_uno_autostart_command(port: Optional[int] = None) -> list[str]:
+def build_uno_autostart_command(port: int | None = None) -> list[str]:
     p = int(port) if port is not None else get_uno_port()
     return [
         "libreoffice",
@@ -52,7 +52,7 @@ def is_uno_module_installed() -> bool:
 
 def is_uno_socket_open(
     host: str = DEFAULT_UNO_HOST,
-    port: Optional[int] = None,
+    port: int | None = None,
     timeout: float = 0.5,
 ) -> bool:
     p = int(port) if port is not None else get_uno_port()
@@ -65,7 +65,7 @@ def is_uno_socket_open(
 
 def is_uno_available(
     host: str = DEFAULT_UNO_HOST,
-    port: Optional[int] = None,
+    port: int | None = None,
     timeout: float = 0.5,
 ) -> bool:
     """Returns True only when both `python3-uno` and the UNO TCP socket are ready."""
@@ -76,26 +76,26 @@ def _to_file_url(path: Path) -> str:
     return path.expanduser().resolve().as_uri()
 
 
-def connect_uno_desktop(host: str = DEFAULT_UNO_HOST, port: Optional[int] = None) -> tuple[Any, Any]:
+def connect_uno_desktop(host: str = DEFAULT_UNO_HOST, port: int | None = None) -> tuple[Any, Any]:
     """Connects to the running headless LibreOffice UNO instance and returns (uno_mod, desktop)."""
     p = int(port) if port is not None else get_uno_port()
     try:
         import uno  # type: ignore[import-not-found]
     except Exception as exc:
         raise UnoUnavailableError(
-            "python3-uno is not installed (install via: sudo apt install python3-uno)."
+            "python3-uno is not installed (install via: sudo apt install python3-uno).",
         ) from exc
 
     if not is_uno_socket_open(host=host, port=p, timeout=0.5):
         raise UnoUnavailableError(
             f"LibreOffice UNO socket {host}:{p} is not listening. "
-            f'Start via: libreoffice --headless --accept="socket,host={host},port={p};urp;"'
+            f'Start via: libreoffice --headless --accept="socket,host={host},port={p};urp;"',
         )
 
     try:
         local_ctx = uno.getComponentContext()
         resolver = local_ctx.ServiceManager.createInstanceWithContext(
-            "com.sun.star.bridge.UnoUrlResolver", local_ctx
+            "com.sun.star.bridge.UnoUrlResolver", local_ctx,
         )
         ctx = resolver.resolve(f"uno:socket,host={host},port={p};urp;StarOffice.ComponentContext")
         desktop = ctx.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
@@ -107,16 +107,16 @@ def connect_uno_desktop(host: str = DEFAULT_UNO_HOST, port: Optional[int] = None
 def edit_document_via_uno(
     path: Path,
     action: str,
-    params: Optional[dict[str, Any]] = None,
+    params: dict[str, Any] | None = None,
     *,
     host: str = DEFAULT_UNO_HOST,
-    port: Optional[int] = None,
+    port: int | None = None,
 ) -> str:
     """Executes a structured document edit through the LibreOffice UNO bridge."""
     act = (action or "").strip().lower()
     if act not in SUPPORTED_UNO_ACTIONS:
         raise ValueError(
-            f"Unsupported libreoffice_edit action '{action}'. Supported: {sorted(SUPPORTED_UNO_ACTIONS)}"
+            f"Unsupported libreoffice_edit action '{action}'. Supported: {sorted(SUPPORTED_UNO_ACTIONS)}",
         )
     pdict = dict(params or {})
     resolved = path.expanduser().resolve()
@@ -191,14 +191,13 @@ def edit_document_via_uno(
 def fallback_wayland_gui_edit(
     path: Path,
     action: str,
-    params: Optional[dict[str, Any]] = None,
+    params: dict[str, Any] | None = None,
     *,
-    open_doc_fn: Optional[Callable[[str], str]] = None,
-    gui_runner: Optional[Callable[[str, dict[str, Any]], str]] = None,
+    open_doc_fn: Callable[[str], str] | None = None,
+    gui_runner: Callable[[str, dict[str, Any]], str] | None = None,
     reason: str = "",
 ) -> str:
-    """
-    Falls back to `wayland_gui` GUI automation when the UNO socket/module is unavailable.
+    """Falls back to `wayland_gui` GUI automation when the UNO socket/module is unavailable.
     Never crashes in headless environments; delegates cleanly to `wayland_gui` hooks.
     """
     pdict = dict(params or {})

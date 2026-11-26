@@ -1,0 +1,53 @@
+[Unit]
+Description=Celina AI - Local-first cognitive assistant
+Documentation=file:///usr/share/doc/celina/ARCHITECTURE.md
+Wants=network-online.target
+After=network-online.target
+
+# Run as the desktop user, NEVER root (security invariant)
+[Service]
+Type=notify
+WatchdogSec=30s
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+
+# Resource caps tuned to the 8 GB floor (P2: process lifecycle)
+MemoryMax=4G
+CPUQuota=200%
+# Default no-network: Celina tools request network explicitly via capability manifest
+PrivateNetwork=false
+# No new privileges - defense in depth
+NoNewPrivileges=true
+# Protect home directories except Celina state
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/celina %h/.config/celina %h/.local/state/celina
+# Kernel lockdown
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Remove dangerous capabilities
+CapabilityBoundingSet=
+# Filesystem hardening
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectProc=invisible
+PrivateTmp=true
+PrivateDevices=true
+# Disable core dumps (may contain secrets)
+LimitCORE=0
+
+# Watchdog: kill switch preempts everything in < 1 s
+ExecStart=%h/.local/share/celina/venv/bin/celina --daemon
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Install as a user service
+[Install]
+WantedBy=default.target

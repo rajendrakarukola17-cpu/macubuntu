@@ -166,7 +166,8 @@ def test_gnome_shell_extension_schema_esm_and_lifecycle():
 
     js_text = (ext_dir / "extension.js").read_text(encoding="utf-8")
     assert "export default class CelinaIslandExtension extends Extension" in js_text
-    assert "Main.panel.addToStatusArea" in js_text
+    # GNOME 46+: addChrome is sole placement; addToStatusArea removed (no double-parenting)
+    assert "Main.panel.addToStatusArea" not in js_text
     assert "org.macubuntu.Celina" in js_text
     assert "global.workspace_manager" in js_text
     assert "global.display" in js_text
@@ -483,7 +484,7 @@ def test_strix_halo_rocm_guard_npu_localhost_and_why_attribution(tmp_path: Path)
     assert strix.env["HSA_OVERRIDE_GFX_VERSION"] == "11.5.1"
     assert strix.env["OLLAMA_FLASH_ATTENTION"] == "1"
     assert strix.env["OLLAMA_KV_CACHE_TYPE"] == "q8_0"
-    assert "OLLAMA_VULKAN" not in strix.env
+    assert strix.env["OLLAMA_VULKAN"] == "0"  # explicitly negated, never absent
 
     # Non-Strix-Halo AMD RDNA3+ selects Vulkan
     rdna3 = select_compute_backend(
@@ -517,9 +518,11 @@ def test_strix_halo_rocm_guard_npu_localhost_and_why_attribution(tmp_path: Path)
     (tmp_path / "accel").mkdir()
     (tmp_path / "accel" / "accel0").write_text("", encoding="utf-8")
     cmd = OpenVINONPUBackend.build_scoped_launch_cmd(dev_root=tmp_path)
-    assert cmd[:3] == ["systemd-run", "--user", "--scope"]
+    assert cmd[:3] == ["systemd-run", "--user", "--no-block"]
+    assert "--collect" in cmd
     assert "GGML_OPENVINO_DEVICE=NPU" in cmd
     assert "OLLAMA_HOST=127.0.0.1:11435" in cmd
+    assert "--" in cmd  # separator before binary
 
     # /why TurnTrace includes compute_backend provenance
     receipt = TurnTrace(prompt_preview="hi", compute_backend=strix.to_why_line()).format_receipt()

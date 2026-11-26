@@ -1,0 +1,8 @@
+# Boost CPU Energy Performance Preference on AC; conserve on Battery
+# Guard: only apply raw EPP sysfs writes when power-profiles-daemon (ppd)
+# is NOT active, to avoid AC/battery race conditions between ppd and udev.
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="1", \
+  RUN+="/bin/sh -c 'systemctl is-active --quiet power-profiles-daemon || for p in /sys/devices/system/cpu/cpufreq/policy*/energy_performance_preference; do [ -w \"$p\" ] && echo balance_performance > \"$p\"; done'"
+
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{online}=="0", \
+  RUN+="/bin/sh -c 'systemctl is-active --quiet power-profiles-daemon || for p in /sys/devices/system/cpu/cpufreq/policy*/energy_performance_preference; do [ -w \"$p\" ] && echo balance_power > \"$p\"; done'"

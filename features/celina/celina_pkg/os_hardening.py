@@ -1,5 +1,4 @@
-"""
-Celina AI — OS-Level Kernel & Systems Hardening Runtime (`os_hardening.py`)
+"""Celina AI — OS-Level Kernel & Systems Hardening Runtime (`os_hardening.py`)
 
 Unifies inspection, verification, and safe command construction across all 7
 Linux OS-level hardening layers for Ubuntu 26.04+ / kernel 6.12+:
@@ -19,9 +18,8 @@ import dataclasses
 import platform
 import re
 import shutil
-import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +36,7 @@ class SchedExtStatus:
 def detect_sched_ext(
     *,
     sys_root: Path = Path("/sys"),
-    scxctl_bin: Optional[str] = None,
+    scxctl_bin: str | None = None,
 ) -> SchedExtStatus:
     state_p = Path(sys_root) / "kernel" / "sched_ext" / "state"
     ops_p = Path(sys_root) / "kernel" / "sched_ext" / "root" / "ops"
@@ -67,7 +65,7 @@ def detect_sched_ext(
 def build_scx_switch_cmd(
     scheduler: str,
     *,
-    mode: Optional[str] = None,
+    mode: str | None = None,
     scxctl_bin: str = "/usr/bin/scxctl",
 ) -> list[str]:
     """Builds `scxctl switch -s <lavd|rusty> [--mode <lowlatency|auto|...>]` safely (no shell)."""
@@ -90,8 +88,7 @@ def build_scx_stop_cmd(*, scxctl_bin: str = "/usr/bin/scxctl") -> list[str]:
 
 
 class SchedExtWatchdog:
-    """
-    Safety watchdog guarding against the documented `scx_lavd` kernel watchdog-ejection
+    """Safety watchdog guarding against the documented `scx_lavd` kernel watchdog-ejection
     compositor freeze (33-45s Wayland stalls).
     Tracks unexpected ejections (state falling from `enabled` -> `disabled` while active
     or explicit ejection reports); once `max_ejections` is reached, trips a cooldown lock
@@ -104,7 +101,7 @@ class SchedExtWatchdog:
         self.ejection_count = 0
         self.locked_to_eevdf_until = 0.0
 
-    def allow_scx_lavd(self, *, now: Optional[float] = None) -> tuple[bool, str]:
+    def allow_scx_lavd(self, *, now: float | None = None) -> tuple[bool, str]:
         import time as _time
 
         t = float(now) if now is not None else _time.time()
@@ -118,7 +115,7 @@ class SchedExtWatchdog:
         *,
         expected_active: bool,
         sys_root: Path = Path("/sys"),
-        now: Optional[float] = None,
+        now: float | None = None,
     ) -> dict[str, Any]:
         import time as _time
 
@@ -258,8 +255,7 @@ def compute_psi_trimmed_ctx(
     trim_factor: float = 0.75,
     min_ctx: int = 512,
 ) -> tuple[int, bool, str]:
-    """
-    kv-psi adaptive KV-cache pruning:
+    """kv-psi adaptive KV-cache pruning:
     If `/proc/pressure/memory` `full avg10 > 10.0` (or severe `some avg10 > 30.0`),
     trims `num_ctx` by 25% (floor `min_ctx`) before submitting the Ollama request.
     """
@@ -290,16 +286,16 @@ def compute_psi_trimmed_ctx(
 class PreemptRTStatus:
     is_realtime: bool
     uname_v: str
-    sys_realtime_flag: Optional[int]
+    sys_realtime_flag: int | None
 
 
 def detect_preempt_rt(
     *,
-    uname_v: Optional[str] = None,
+    uname_v: str | None = None,
     realtime_path: Path = Path("/sys/kernel/realtime"),
 ) -> PreemptRTStatus:
     uv = uname_v if uname_v is not None else platform.version()
-    rt_flag: Optional[int] = None
+    rt_flag: int | None = None
     p = Path(realtime_path)
     if p.exists():
         try:
@@ -351,8 +347,7 @@ def build_tpm2_pcr_sign_cmd(
     public_key_path: Path = Path("/etc/celina/tierb-pcr.pub"),
     phase: str = "enter-initrd",
 ) -> list[str]:
-    """
-    Builds `systemd-measure sign` for PCR 11 policy signing so TPM2 volume sealing
+    """Builds `systemd-measure sign` for PCR 11 policy signing so TPM2 volume sealing
     survives Ubuntu kernel updates (unlike brittle literal `--tpm2-pcrs=7,11`).
     """
     krel = (kernel_release or "").strip()
@@ -373,8 +368,7 @@ def build_tpm2_cryptenroll_cmd(
     *,
     public_key_path: Path = Path("/etc/celina/tierb-pcr.pub"),
 ) -> list[str]:
-    """
-    Builds `systemd-cryptenroll --tpm2-device=auto --tpm2-public-key=... <dev>`.
+    """Builds `systemd-cryptenroll --tpm2-device=auto --tpm2-public-key=... <dev>`.
     Uses signed PCR public-key policy instead of raw PCR hashes so kernel upgrades
     do not lock out Tier B LUKS volumes.
     """
@@ -409,7 +403,7 @@ def build_tpm2_seal_secret_cmd(
 @dataclasses.dataclass(frozen=True)
 class IoUringStatus:
     available: bool
-    disabled_flag: Optional[int]  # 0 = enabled, 1 = unprivileged disabled, 2 = fully disabled
+    disabled_flag: int | None  # 0 = enabled, 1 = unprivileged disabled, 2 = fully disabled
     sqlite_mode: str = "sqlite_wal_busy_timeout"
     turso_v5_ready: bool = False
 
@@ -419,7 +413,7 @@ def detect_io_uring(
     sys_path: Path = Path("/sys/kernel/io_uring_disabled"),
 ) -> IoUringStatus:
     p = Path(sys_path)
-    flag: Optional[int] = None
+    flag: int | None = None
     if p.exists():
         try:
             flag = int(p.read_text(encoding="utf-8").strip())
@@ -440,7 +434,7 @@ def collect_os_hardening_report(
     sys_root: Path = Path("/sys"),
     dev_root: Path = Path("/dev"),
     psi_path: Path = Path("/proc/pressure/memory"),
-    cgroup_dir: Optional[Path] = None,
+    cgroup_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Returns a single structured readiness report across all 7 OS hardening layers."""
     from . import landlock_policy

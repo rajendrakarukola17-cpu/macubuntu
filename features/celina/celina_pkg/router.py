@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - v4.4 Self-Improving, Glass-Box Cognitive Brain + Strict Privacy Firewall
+"""Celina AI (Celly) - v4.4 Self-Improving, Glass-Box Cognitive Brain + Strict Privacy Firewall
 - Gear 0 (Reflex):     Instant local shortcuts (<20ms, 0 tokens, 0 MB)
 - Gear 1 (Fast):       No deep thinking (reasoning_effort='none', crisp 1-2 sentence answers)
 - Gear 2 (Tactical):   Pre-flight micro-plan + dynamic domain-pruned tools + error self-correction
@@ -11,16 +10,13 @@ Celina AI (Celly) - v4.4 Self-Improving, Glass-Box Cognitive Brain + Strict Priv
 """
 
 import argparse
-import ast
 import ctypes
 import dataclasses
 import datetime
-import functools
 import gc
 import hashlib
 import json
 import math
-import operator as _op
 import os
 import re
 import shutil
@@ -28,155 +24,40 @@ import subprocess
 import sys
 import threading
 import time
-from collections import OrderedDict
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
-
-
-# ---------------------------------------------------------------------------
-# Gear 0 classify result cache (Update 25)
-#
-# Caches (clean_query) -> (mod_name, handler) so repeated queries skip the
-# sequential classify chain. Bounded to 512 entries with LRU eviction to
-# prevent unbounded memory growth.
-# ---------------------------------------------------------------------------
-
-_GEAR0_CLASSIFY_CACHE: OrderedDict[str, tuple[str, str]] = OrderedDict()
-_GEAR0_CLASSIFY_CACHE_MAX = 512
-
-
-def _gear0_classify_cached(clean: str) -> Optional[tuple[str, str]]:
-    """Return cached (mod_name, handler) for clean, or None if not cached."""
-    return _GEAR0_CLASSIFY_CACHE.get(clean)
-
-
-def _gear0_classify_store(clean: str, mod_name: str, handler: str) -> None:
-    """Store (mod_name, handler) in the classify cache with LRU eviction."""
-    if clean in _GEAR0_CLASSIFY_CACHE:
-        _GEAR0_CLASSIFY_CACHE.move_to_end(clean)
-        return
-    _GEAR0_CLASSIFY_CACHE[clean] = (mod_name, handler)
-    if len(_GEAR0_CLASSIFY_CACHE) > _GEAR0_CLASSIFY_CACHE_MAX:
-        _GEAR0_CLASSIFY_CACHE.popitem(last=False)
-
-_GEAR0_MATH_BINOPS = {
-    ast.Add: _op.add,
-    ast.Sub: _op.sub,
-    ast.Mult: _op.mul,
-    ast.Div: _op.truediv,
-    ast.FloorDiv: _op.floordiv,
-    ast.Mod: _op.mod,
-    ast.Pow: _op.pow,
-}
-_GEAR0_MATH_UNARYOPS = {ast.UAdd: _op.pos, ast.USub: _op.neg}
-_GEAR0_MATH_FUNCS = {
-    "sqrt": math.sqrt,
-    "sin": math.sin,
-    "cos": math.cos,
-    "tan": math.tan,
-    "log": math.log,
-    "log10": math.log10,
-    "exp": math.exp,
-    "abs": abs,
-    "round": round,
-    "floor": math.floor,
-    "ceil": math.ceil,
-}
-_GEAR0_MATH_CONSTS = {"pi": math.pi, "e": math.e}
-_GEAR0_MATH_PREFIX_RE = re.compile(
-    r"^(?:(?:what(?:'s|\s+is)|calculate|compute|eval(?:uate)?|solve)\s+)+",
-    re.IGNORECASE,
-)
-
-
-def _safe_math_eval(node: ast.AST) -> int | float:
-    if isinstance(node, ast.Expression):
-        return _safe_math_eval(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
-        return node.value
-    if isinstance(node, ast.BinOp) and type(node.op) in _GEAR0_MATH_BINOPS:
-        left = _safe_math_eval(node.left)
-        right = _safe_math_eval(node.right)
-        if isinstance(node.op, ast.Pow) and abs(right) > 1000:
-            raise ValueError("Exponent too large")
-        return _GEAR0_MATH_BINOPS[type(node.op)](left, right)
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _GEAR0_MATH_UNARYOPS:
-        return _GEAR0_MATH_UNARYOPS[type(node.op)](_safe_math_eval(node.operand))
-    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and not node.keywords:
-        fn = _GEAR0_MATH_FUNCS.get(node.func.id)
-        if fn is not None and 1 <= len(node.args) <= 2:
-            return fn(*(_safe_math_eval(a) for a in node.args))
-    if isinstance(node, ast.Name) and node.id in _GEAR0_MATH_CONSTS:
-        return _GEAR0_MATH_CONSTS[node.id]
-    raise ValueError(f"Unsupported AST node: {type(node).__name__}")
-
-
-def try_gear0_math(query: str) -> Optional[str]:
-    """
-    Eval-free AST arithmetic evaluator for Gear 0 (Reflex, 0 LLM tokens).
-    Evaluates expressions like `sqrt(144)`, `what is 12 * 12?`, `2^8`, `sin(0)`.
-    Returns None for non-math or bare single-number inputs.
-    """
-    raw = (query or "").strip()
-    if not raw or len(raw) > 120:
-        return None
-    stripped = _GEAR0_MATH_PREFIX_RE.sub("", raw).strip().rstrip("=?").strip()
-    if not stripped:
-        return None
-    expr = stripped.replace("^", "**")
-    try:
-        tree = ast.parse(expr, mode="eval")
-    except SyntaxError:
-        return None
-    if isinstance(tree.body, ast.Constant):
-        return None
-    try:
-        result = _safe_math_eval(tree)
-    except (ValueError, TypeError, ZeroDivisionError, OverflowError):
-        return None
-    if isinstance(result, float):
-        if math.isnan(result) or math.isinf(result):
-            return None
-        if result.is_integer():
-            return str(int(result))
-        return f"{result:.10g}"
-    return str(result)
+from typing import Any
 
 import requests
-from requests.adapters import HTTPAdapter
 
 from . import (
     automation,
     cache,
+    capabilities,
     config,
+    context_compressor,
     everyday_agents,
     everyday_trainer,
+    gear0_5_micro,
+    gear0_5_smolLM,
+    gear0_audit,
     gear0_calendar,
+    gear0_clipboard,
     gear0_contacts,
     gear0_context,
     gear0_dual,
+    gear0_focus,
     gear0_graph,
     gear0_hardware,
     gear0_intent,
     gear0_iot,
-    gear0_audit,
-    gear0_brain,
-    gear0_clipboard,
-    gear0_focus,
     gear0_ledger,
     gear0_lists,
     gear0_macro,
     gear0_media,
-    gear0_memory,
-    gear0_ml_nlu,
     gear0_network,
     gear0_routines,
-    gear0_5_micro,
-    gear0_5_smolLM,
-    gear0_slots,
     gear0_status,
-    gear0_voice,
-    gear0_storage,
     gear0_utils,
     guardrails,
     inference_adaptive,
@@ -192,54 +73,67 @@ from . import (
     turbo_mode,
     voice,
 )
-from .gear0_storage import initialize_storage
-from .plugins import sniffer_plugin, habit_engine, data_oracle, os_shim, self_heal
+from . import brain_harness as _bh_mod
+from . import persona as _persona_mod
+from . import prompt_transpiler as _pt_mod
+from . import sensory_buffer as _sensory_mod
 from .connectors import get_registry as _connectors_get_registry
-# Initialize storage backend state at import time (P0-03)
-initialize_storage()
-
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-_LIBREOFFICE_HINTS = (
-    "libreoffice", "writer", "calc", "impress", ".odt", ".ods", ".odp", ".docx", ".xlsx", "spreadsheet", "document"
+from .gear0_storage import initialize_storage
+from .plugins import data_oracle, habit_engine, os_shim, self_heal, sniffer_plugin
+from .prompt_transpiler import PromptLayer
+from .router_gear0 import (
+    _gear0_classify_cached,
+    _gear0_classify_store,
+    try_gear0_math,
 )
+from .router_providers import (
+    _build_pooled_session,
+    _effective_ollama_keep_alive,
+    _has_cloud_key,
+    _ollama_ctx_for_gear,
+    _recommended_ollama_threads,
+)
+from .router_receipts import (
+    OfflineFallback,
+    RouteDecision,
+    TurnTrace,
+    _build_self_correction_hint,
+    _format_stream_preview,
+    _gear_settings,
+    _get_base_system_prompt,
+    _is_tool_error,
+    _parse_tool_args,
+    _strip_analysis_tags,
+    apply_action_gate,  # noqa: F401  # Re-exported for router API compatibility; used by tests
+    classify_cognitive_gear_with_reason,
+    is_informational_only_prompt,  # noqa: F401  # Re-exported for router API compatibility; used by tests
+    select_swarm_role,
+)
+from .world_model import OSWorldModel
 
-
-@dataclasses.dataclass(frozen=True)
-class OfflineFallback:
-    """Returned by the router when a web_comms request cannot run offline or while disabled."""
-    tool: str = "respond_offline"
-    message: str = (
-        "Offline fallback: live web_comms tools require internet access and opt-in web_comms.enabled=true. "
-        "Local offline tools and local LLM remain available."
-    )
-    domain: str = "web_comms"
-
-
-@dataclasses.dataclass(frozen=True)
-class RouteDecision:
-    tool_name: str
-    domain: str
-    tier: int = 1
-    arguments: dict[str, Any] = dataclasses.field(default_factory=dict)
-    arguments_hash: str = ""
-    why_receipt_hash: str = ""
-    gear: str = "tactical"
-    preferred_backend: str = ""
+# Callback type aliases (used by CelinaRouter methods)
+TaskGlowCallback = Callable[[bool], None]
+StreamCallback = Callable[[str], None]
+StatusCallback = Callable[[str], None]
+ApprovalCallback = Callable[[str, str], bool]
+PrivacyConsentCallback = privacy.PrivacyConsentCallback
+_LIBREOFFICE_HINTS = (
+    "libreoffice", "writer", "calc", "impress", ".odt", ".ods", ".odp",
+    ".docx", ".xlsx", "spreadsheet", "document",
+)
 
 
 def apply_offline_and_uno_policy(
     decision: RouteDecision,
     *,
     goal: str = "",
-    online_probe: Optional[Callable[[], bool]] = None,
-    uno_probe: Optional[Callable[[], bool]] = None,
+    online_probe: Callable[[], bool] | None = None,
+    uno_probe: Callable[[], bool] | None = None,
 ) -> RouteDecision | OfflineFallback:
-    """
-    Offline-aware & UNO-preferring router policy:
-      1. If decision.domain == 'web_comms' and (offline or web_comms disabled), return OfflineFallback.
-      2. For files_office document edits (or GUI edits targeting LibreOffice), prefer UNO (`libreoffice_edit`)
-         over fragile `wayland_gui` GUI automation when UNO is available.
+    """Offline-aware & UNO-preferring router policy:
+    1. If decision.domain == 'web_comms' and (offline or web_comms disabled), return OfflineFallback.
+    2. For files_office document edits (or GUI edits targeting LibreOffice), prefer UNO (`libreoffice_edit`)
+       over fragile `wayland_gui` GUI automation when UNO is available.
     """
     probe_online = online_probe if online_probe is not None else net_policy.is_online
     if decision.domain == "web_comms":
@@ -285,462 +179,172 @@ def apply_offline_and_uno_policy(
 
     return decision
 
-StatusCallback = Callable[[str], None]
-ApprovalCallback = Callable[[str, str], bool]
-PrivacyConsentCallback = privacy.PrivacyConsentCallback
-TaskGlowCallback = Callable[[bool], None]
-StreamCallback = Callable[[str], None]
 
-_IMPLICIT_CORRECTION_PATTERNS = [
-    re.compile(r"^\s*(?:no[,.]?\s+(?:i\s+meant|don'?t|do\s+not|never|always|use|instead)|actually[,.]?\s+(?:always|never|prefer|use|don'?t))", re.I),
-    re.compile(r"\b(?:always\s+use|never\s+use|stop\s+using|don'?t\s+use\s+\w+\s+(?:use|instead)|from\s+now\s+on|prefer\s+\w+\s+over\s+\w+)\b", re.I),
-    re.compile(r"(?:అలా\s+కాదు|ఎప్పుడూ\s+వాడు|नहीं\s+मेरा\s+मतलब|हमेशा\s+इस्तेमाल)", re.I),
-]
+def _deterministic_intent(goal: str) -> tuple[str, dict[str, str]] | None:
+    """Recognize limited, unambiguous local intents without guessing targets.
 
-_TOOL_ERROR_MARKERS = (
-    "error:",
-    "failed",
-    "not found",
-    "does not exist",
-    "no such file",
-    "could not find",
-    "unable to",
-    "denied:",
-    "timed out",
-    "invalid ",
-    "unknown tool",
-    "traceback (most recent call last):",
-)
-
-_ANALYSIS_BLOCK_RE = re.compile(r"<(?:analysis|think)>.*?</(?:analysis|think)>\s*", re.DOTALL | re.IGNORECASE)
-_OPEN_ANALYSIS_RE = re.compile(r"<(?:analysis|think)>[\s\S]*$", re.IGNORECASE)
-_PARTIAL_REDACT_RE = re.compile(r"\[(?:EMAIL|PHONE|PAN|AADHAAR|CARD|USER_HOME|REDACTED)[A-Z0-9_]*$")
-
-
-@dataclasses.dataclass
-class TurnTrace:
-    """Glass-Box Explainability receipt captured on every Celina turn (/why)."""
-
-    prompt_preview: str = ""
-    gear: str = "fast"
-    gear_reason: str = ""
-    swarm_role: str = "Executive Orchestrator"
-    detected_lang: str = "en"
-    lang_style: str = "native"
-    active_window: str = ""
-    tool_domains: list[str] = dataclasses.field(default_factory=list)
-    tools_attached: int = 0
-    tools_total: int = 0
-    tools_called: list[str] = dataclasses.field(default_factory=list)
-    circuit_breaker_events: list[str] = dataclasses.field(default_factory=list)
-    action_gate_suppressed: int = 0
-    recalled_facts: list[str] = dataclasses.field(default_factory=list)
-    recalled_episodes: int = 0
-    active_skill_md: str = ""
-    privacy_summary: str = "clean"
-    cache_status: str = "miss"
-    self_corrections: int = 0
-    cot_used: bool = False
-    dry_run: bool = False
-    simulated_actions: list[str] = dataclasses.field(default_factory=list)
-    learned_notes: list[str] = dataclasses.field(default_factory=list)
-    compute_backend: str = ""
-    mcp_server: str = ""
-    mcp_tool: str = ""
-    mcp_arguments_hash: str = ""
-    mcp_transport: str = ""
-    memweave_strategy: str = ""
-    quiet_brain_hit: bool = False
-    second_thought_escalated: bool = False
-    second_thought_confidence: float = 1.0
-    autotune_ctx: int = 0
-    autotune_keep: int = 0
-    latency_ms: int = 0
-    source: str = ""
-    cloud_provider: str = ""
-    cloud_model: str = ""
-
-    def format_receipt(self) -> str:
-        lines = ["🔍 Decision Receipt (Glass-Box Trace)"]
-        if self.dry_run:
-            lines.append("• Mode: 🧪 DRY-RUN SIMULATION (0 bytes modified on disk)")
-        if self.prompt_preview:
-            lines.append(f"• Prompt: \"{self.prompt_preview}\"")
-        lines.append(f"• Gear: {self.gear.upper()} — {self.gear_reason or 'default policy'}")
-        if self.swarm_role:
-            lines.append(f"• Swarm Role: {self.swarm_role}")
-        lines.append(f"• Source: {self.source or 'n/a'} ({self.latency_ms} ms)")
-        if self.compute_backend:
-            lines.append(f"• Compute: {self.compute_backend}")
-        if self.memweave_strategy:
-            lines.append(f"• Memory Router (MemWeave): strategy={self.memweave_strategy}")
-        if self.quiet_brain_hit:
-            lines.append("• Quiet Brain BM25: served compiled verified answer (0 big-model tokens)")
-        if self.second_thought_escalated:
-            lines.append(f"• SecondThought Gate: escalated to thinking (mean_logprob={self.second_thought_confidence:.2f} < 0.82)")
-        if self.autotune_ctx:
-            lines.append(f"• Autotune KV: num_ctx={self.autotune_ctx}, num_keep={self.autotune_keep}")
-        lang_tag = f"{self.detected_lang} ({self.lang_style})"
-        if self.active_window:
-            lines.append(f"• Context: lang={lang_tag} · window={self.active_window}")
-        else:
-            lines.append(f"• Context: lang={lang_tag}")
-
-        if self.tools_total > 0:
-            saved_pct = int(round((1.0 - (self.tools_attached / max(1, self.tools_total))) * 100))
-            doms = ", ".join(self.tool_domains) if self.tool_domains else "core"
-            lines.append(
-                f"• Tools Pruned: {self.tools_attached}/{self.tools_total} attached "
-                f"(~{max(0, saved_pct)}% schema tokens saved · domains: {doms})"
-            )
-        if self.tools_called:
-            lines.append(f"• Tools Executed: {' -> '.join(self.tools_called)}")
-        if self.mcp_server or self.mcp_tool:
-            lines.append(
-                f"• MCP Dispatch: server={self.mcp_server or 'n/a'} · tool={self.mcp_tool or 'n/a'} "
-                f"· transport={self.mcp_transport or 'n/a'} · arguments_hash={self.mcp_arguments_hash or 'n/a'}"
-            )
-        if self.circuit_breaker_events:
-            lines.append(f"• Circuit Breaker: ⚡ {'; '.join(self.circuit_breaker_events[:4])}")
-        if self.action_gate_suppressed > 0:
-            lines.append(
-                f"• ActionGate: 🛡️ suppressed {self.action_gate_suppressed} mutating tool(s) "
-                "(informational/how-to question)"
-            )
-        if self.simulated_actions:
-            lines.append(f"• Simulated (Not Executed): {'; '.join(self.simulated_actions[:6])}")
-        if self.recalled_facts or self.recalled_episodes:
-            f_str = ", ".join(self.recalled_facts[:5]) if self.recalled_facts else "none"
-            lines.append(
-                f"• Memory Recalled (BM25): facts=[{f_str}], episodes={self.recalled_episodes}"
-            )
-        if self.active_skill_md:
-            lines.append(f"• Active Playbook: {self.active_skill_md}")
-        lines.append(f"• Privacy: {self.privacy_summary} · Cache: {self.cache_status}")
-        if self.self_corrections > 0 or self.cot_used:
-            extras = []
-            if self.self_corrections > 0:
-                extras.append(f"self-corrections={self.self_corrections}")
-            if self.cot_used:
-                extras.append("local-3B <analysis> CoT")
-            lines.append(f"• Reflection: {', '.join(extras)}")
-        if self.learned_notes:
-            lines.append(f"• Continual Learning: {'; '.join(self.learned_notes)}")
-        return "\n".join(lines)
-
-
-def _get_base_system_prompt() -> str:
-    return config.format_persona_instructions()
-
-
-def _has_cloud_key() -> bool:
-    return any(row["configured"] for row in provider_router.status())
-
-
-def _parse_tool_args(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str) and raw.strip():
-        try:
-            parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            return {}
-    return {}
-
-
-def classify_cognitive_gear_with_reason(prompt: str) -> tuple[str, str, str]:
+    Unknown requests continue through the existing router. These patterns are
+    intentionally conservative: they never infer file mutations or a network
+    location from incomplete text.
     """
-    <1 ms System-1 / System-2 classifier driven by config/neural-schema.json.
-    Returns (gear_name, cleaned_prompt, explanation_reason).
-    """
-    cog = config.COGNITION_CFG
-    if not cog.get("adaptive_thinking", True):
-        return "tactical", prompt, "adaptive thinking disabled in schema"
-
-    text = prompt.strip()
-    low = text.lower()
-
-    # 1. Explicit user prefix overrides ('quick: ...' or 'deep: ...')
-    for pref in cog.get("fast_overrides", ["quick:", "fast:", "brief:"]):
-        if low.startswith(pref):
-            return "fast", text[len(pref) :].strip() or text, f"explicit fast override '{pref}'"
-    for pref in cog.get("deep_overrides", ["deep:", "think deeply"]):
-        if low.startswith(pref):
-            return "deep", text[len(pref) :].strip() or text, f"explicit deep override '{pref}'"
-        if pref in low and not pref.endswith(":"):
-            return "deep", text, f"explicit deep override '{pref}'"
-
-    # 2. High-stakes / complex triggers -> Deep Strategist (Gear 3)
-    matched_deep = [kw for kw in cog.get("deep_triggers", []) if kw in low]
-    has_code_or_trace = ("```" in text) or ("traceback" in low) or (text.count("\n") >= 4)
-    word_count = len(text.split())
-    if matched_deep:
-        return "deep", text, f"matched deep trigger '{matched_deep[0]}'"
-    if has_code_or_trace:
-        return "deep", text, "multi-line code or traceback detected"
-    if word_count >= 45:
-        return "deep", text, f"long complex query ({word_count} words)"
-
-    # 3. Actionable / advisory / OS-tool triggers -> Tactical Advisor (Gear 2)
-    matched_tact = [kw for kw in cog.get("tactical_triggers", []) if kw in low]
-    if matched_tact:
-        return "tactical", text, f"matched tactical trigger '{matched_tact[0]}'"
-    if word_count >= 16:
-        return "tactical", text, f"medium prompt ({word_count} words)"
-
-    # 4. Short, simple query -> Fast Instinct (Gear 1, deep thinking OFF!)
-    return "fast", text, f"short direct prompt ({word_count} words)"
-
-
-def classify_cognitive_gear(prompt: str) -> tuple[str, str]:
-    gear, clean, _ = classify_cognitive_gear_with_reason(prompt)
-    return gear, clean
-
-
-def select_swarm_role(prompt: str, gear: str) -> tuple[str, str]:
-    """
-    Zero-RAM Role-Swapping Multi-Agent Swarm (<1 ms):
-    Dynamically selects Architect / Engineer / Researcher / Executive Orchestrator
-    within the single active LLM using word-boundary trigger scoring.
-    """
-    if gear == "fast":
-        return "Fast Instinct", ""
-    low = (prompt or "").lower()
-    roles = config.SWARM_ROLES or {}
-    best_role: Optional[tuple[str, str]] = None
-    best_score = 0
-    for role_key in ("engineer", "architect", "researcher"):
-        rcfg = roles.get(role_key) or {}
-        score = sum(
-            1
-            for trig in rcfg.get("triggers", [])
-            if re.search(rf"\b{re.escape(str(trig).lower())}\b", low)
-        )
-        if score > best_score:
-            best_score = score
-            best_role = (str(rcfg.get("name", role_key.title())), str(rcfg.get("directive", "")))
-    if best_role is not None:
-        return best_role
-    if gear == "deep" and "architect" in roles:
-        rcfg = roles["architect"]
-        return str(rcfg.get("name", "The Architect")), str(rcfg.get("directive", ""))
-    return "Executive Orchestrator", ""
-
-
-def _gear_settings(gear: str) -> dict[str, Any]:
-    gears = config.COGNITION_CFG.get("gears", {})
-    defaults = {
-        "gear0_5": {"reasoning_effort": "none", "max_tokens": 128, "temperature": 0.3, "max_steps": 1, "instruction": ""},
-        "fast": {"reasoning_effort": "none", "max_tokens": 220, "temperature": 0.35, "max_steps": 2, "instruction": ""},
-        "tactical": {"reasoning_effort": "low", "max_tokens": 550, "temperature": 0.45, "max_steps": 4, "instruction": ""},
-        "deep": {"reasoning_effort": "high", "max_tokens": 1500, "temperature": 0.3, "max_steps": 5, "instruction": ""},
-    }
-    return gears.get(gear) or defaults.get(gear, defaults["tactical"])
-
-
-def _is_tool_error(output: str) -> bool:
-    low = (output or "").strip().lower()
-    if not low:
-        return True
-    if low.startswith("cancelled by user"):
-        return False
-    return any(low.startswith(m) or f"\n{m}" in low for m in _TOOL_ERROR_MARKERS) or (
-        "not found" in low[:120] and len(low) < 240
+    text = re.sub(r"^(?:please|could you|can you|would you)\s+", "", goal.strip(), flags=re.I)
+    text = re.sub(r"[.!?]+$", "", text).strip()
+    lower = text.lower()
+    actions = re.findall(r"\b(?:read|open|list|show|delete|remove|erase|trash|write|edit)\b", lower)
+    if re.search(r"\bor\b", lower) and len(set(actions)) >= 2 and re.search(
+        r"\b(?:files?|folders?|directories|directory|documents?)\b", lower,
+    ):
+        return "clarify", {"message": "Which action would you like me to take?"}
+    if re.fullmatch(r"(?:hi|hello|hey(?: there)?|good (?:morning|afternoon|evening))", lower):
+        return "respond_directly", {"message": "Hello! How can I help?"}
+    if re.fullmatch(
+        r"(?:list|show|display|enumerate)\s+(?:(?:my|the|local)\s+)*"
+        r"(?:(?:home)\s+)?(?:files?|folders?|directories|directory)"
+        r"(?:\s+(?:in|inside|under)\s+(?:my\s+)?home(?:\s+(?:folder|directory))?)?",
+        lower,
+    ):
+        return "list_files", {"path": str(config.HOME)}
+    memory = re.fullmatch(
+        r"(?:search|find|look up)\s+(?:my\s+)?(?:saved\s+)?(?:notes|memory)\s+"
+        r"(?:for|about|on)\s+(.+)", text, flags=re.I,
     )
-
-
-def _build_self_correction_hint(fn_name: str, output: str, dup_failures: int) -> str:
-    max_dups = int(config.REFLECTION_POLICY.get("max_identical_tool_failures", 2))
-    low = (output or "").lower()
-    if dup_failures >= max_dups:
-        return (
-            f"\n[CRITIC VERIFIER — SELF-CORRECTION REQUIRED]: '{fn_name}' failed {dup_failures} times with identical arguments. "
-            "Do NOT retry the same call. Switch to a different tool/strategy or concisely explain the blocker to the user."
-        )
-    if fn_name in {"read_file", "edit_file", "trash_file", "edit_document", "read_document"} or "no such file" in low:
-        return (
-            "\n[CRITIC VERIFIER — SELF-CORRECTION REQUIRED]: That path failed. Call search_files first to locate the exact file path before retrying."
-        )
-    if fn_name in {"click_on_text", "click_position", "drag_and_drop"}:
-        return (
-            "\n[CRITIC VERIFIER — SELF-CORRECTION REQUIRED]: That UI target was not found. Call inspect_ui_elements or read_screen to read exact live coordinates/labels before clicking again."
-        )
-    if fn_name == "run_python_sandbox" or "traceback" in low:
-        return (
-            "\n[CRITIC VERIFIER — ENGINEER CODE SELF-CORRECTION]: Your Python snippet raised a runtime error/traceback. "
-            "Read the stderr carefully, fix the bug in your code, and re-run run_python_sandbox to verify exit=0 before giving your final answer."
-        )
-    return (
-        f"\n[CRITIC VERIFIER — SELF-CORRECTION REQUIRED]: Tool '{fn_name}' returned an error (sensory-motor mismatch). Analyze the error, adjust arguments or try an alternate tool once."
-    )
-
-
-def _detect_implicit_correction(prompt: str) -> Optional[tuple[str, str]]:
-    """Detects explicit user correction/preference statements so Celina remembers them permanently."""
-    clean = prompt.strip()
-    if len(clean) < 12 or len(clean) > 220:
-        return None
-    if any(p.search(clean) for p in _IMPLICIT_CORRECTION_PATTERNS):
-        digest = hashlib.sha1(clean.lower().encode("utf-8")).hexdigest()[:6]
-        return f"preference_{digest}", clean
+    if memory:
+        return "search_memory", {"query": memory.group(1).strip()}
+    if (
+        re.match(r"(?:what|how|check|show|look up|get|tell me|weather|forecast)\b", lower)
+        and re.search(r"\b(?:weather|forecast)\b", lower)
+        and not re.search(r"\b(?:delete|remove|erase|trash|write|edit|save|create|list)\b", lower)
+    ):
+        city = re.search(r"\b(?:in|for)\s+([\w .'-]+)$", text, flags=re.I)
+        place = city.group(1).strip() if city else ""
+        return "get_weather", {"city": place} if place.lower() not in {"", "today", "tomorrow"} else {}
+    web = re.fullmatch(r"(?:search|look up)\s+(?:the\s+)?(?:web|internet)\s+for\s+(.+)", text, flags=re.I)
+    if web:
+        return "web_search", {"query": web.group(1).strip()}
     return None
 
 
-_SIDE_EFFECT_TIER1_TOOLS: frozenset[str] = frozenset({
-    "set_volume", "set_brightness", "control_media", "control_connectivity",
-    "open_application", "toggle_app_nap", "open_document", "set_clipboard",
-    "set_timer", "remember_fact", "link_knowledge", "manage_goal",
-    "save_workspace_snapshot", "set_assistant_identity", "set_focus_mode",
-    "route_app_audio", "learn_skill", "save_last_actions_as_skill",
-    "update_skill", "forget_skill", "start_recording", "stop_recording",
-    "reject_quarantined_skill", "clear_cache",
-})
+# Initialize storage backend state at import time (P0-03)
+initialize_storage()
 
-_INFO_QUESTION_PREFIX_RE = re.compile(
-    r"^\s*(?:"
-    r"how\s+(?:do\s+(?:i|you|we)|does|to|can\s+(?:i|you|we)|is|are|would)\b|"
-    r"what\s+(?:is|are|does|do|was|were|would|happens\s+if)\b|"
-    r"why\s+(?:does|do|is|are|did|would|should)\b|"
-    r"explain(?:\s+how|\s+what|\s+why|\s+the)?\b|"
-    r"tell\s+me\s+(?:about|how|what|why)\b|"
-    r"difference\s+between\b|"
-    r"compare\b|"
-    r"can\s+you\s+explain\b|"
-    r"define\b|"
-    r"what's\s+the\s+(?:difference|meaning|purpose)\b"
-    r")",
-    re.IGNORECASE,
-)
-_EXPLICIT_IMPERATIVE_RE = re.compile(
-    r"\b(?:"
-    r"please\s+(?:set|open|close|delete|trash|move|edit|write|create|run|click|type|enable|disable|turn|start|stop|launch|route|schedule|mirror)|"
-    r"for\s+me\b|right\s+now\b|my\s+(?:file|folder|calendar|meeting|volume|brightness|wifi|bluetooth|screen|focus|audio|clipboard|contacts|bookmarks|laptop|pc|system)"
-    r")\b",
-    re.IGNORECASE,
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+_LIBREOFFICE_HINTS = (
+    "libreoffice", "writer", "calc", "impress", ".odt", ".ods", ".odp", ".docx", ".xlsx", "spreadsheet", "document",
 )
 
+# --- Prompt hygiene (audit item 15) ---
+# Tool-derived strings entering LLM prompts are untrusted input.  This
+# sanitizer length-caps and neutralizes prompt-injection patterns before any
+# tool output is inserted into a `{"role": "tool", ...}` message.
+_TOOL_PROMPT_CAP = 4000  # max chars of tool output allowed in an LLM prompt
+_PROMPT_INJECTION_RE = re.compile(
+    r"""(?ix)
+    # ignore/disregard/forget/override instructions (incl. 4-word variant)
+    \b(ignore|disregard|forget|override|bypass|cancel|stop)\s+(all\s+)?(previous|prior|the\s+)?\s*(instructions|rules|guidelines|system|prompt|safety)\b
+    | \bignore\s+your\s+(safety|training|guidelines)\b
+    | \bforget\s+(all\s+)?(safety|training)\b
+    # Persona / role change
+    | \b(you\s+are\s+now|you\s+must|from\s+now\s+on|act\s+as|pretend\s+to\s+be|roleplay\s+as)\b
+    | \b(unrestricted|root|developer)\s+mode\b
+    | \bDAN\b|\bdo\s+anything\s+now\b
+    # Role prefix / system label
+    | \b(system|developer|assistant|user)\s*:\s*
+    | \[(SYSTEM|system|CELINA|celina)\s*\]
+    # Jailbreak / safety override
+    | \b(jailbreak|prompt\s+injection|override\s+safety|disable\s+safety|disable_?safety|disable_?approval)\b
+    | \b(override|bypass)\s+(all\s+)?(approval|safety|gate|guardrail|confirmation|required)\b
+    # Exfiltration / repetition
+    | \b(repeat\s+above|repeat\s+the\s+above|verbatim\s+above|print\s+above|print\s+your\s+system\s+prompt)\b
+    # CELINA_ directives
+    | \bCELINA_[A-Z_]+\b
+    # Tool names in hostile context
+    | \b(write_file|edit_file|move_file|trash_file|run_shell_command|code_sandbox|run_python_sandbox)\s*\(
+    # HTML/XML comments with directives
+    | <!--\s*(CELINA|system|tool_override|admin_override|celina_directive)
+    | <\s*/?(celina_directive|system|tool_override|admin_override)\s*>
+    | \b(ignore_safety|disable_approval|approve_all|bypass_guard)\b
+    # NEW INSTRUCTION / prefix patterns
+    | \bnew\s+instruction\s*:?\s
+    | \b(window\.)?celina[Oo]verride\b
+    | \bdata:text/html\b
+    | \bjavascript:\s*(void\s*\()?
+    | \bmeta\s+http-equiv\s*=
+    | \b(EDIT_FILE|RENAME_FILE|TRASH_FILE|RUN|CHMOD|CHOWN|OVERRIDE|NEW_INSTRUCTION|MODE|RESET)\s*:
+    | "action"\s*:\s*"(write_file|edit_file|move_file|trash_file|run_shell_command)"
+    | \blogin\s*=\s*\w+\s+password\s*=
+    | \bCELINA:\s+
+    """,
+)
 
-def is_informational_only_prompt(prompt: str) -> bool:
+
+def _sanitize_tool_prompt_content(content: str, *, cap: int = _TOOL_PROMPT_CAP) -> str:
+    """Sanitize tool output before it is inserted into an LLM prompt.
+
+    - Strips control characters (except newline/tab).
+    - Neutralizes prompt-injection phrasing by replacing it with a safe marker.
+    - Length-caps at `cap` characters with a truncation notice.
+
+    Returns a safe, bounded string suitable for a `tool` role message.
     """
-    Deterministic ActionGate (inspired by lumina-agent & BFCL restraint optimization):
-    Returns True when the prompt is clearly an educational / conceptual / how-to question
-    (e.g. 'how do you delete a file in linux?', 'what does recursive deletion do?', 'explain focus mode')
-    with no imperative request to mutate the user's machine.
-    """
-    clean = (prompt or "").strip()
-    if not clean or len(clean) < 8:
-        return False
-    if not _INFO_QUESTION_PREFIX_RE.search(clean):
-        return False
-    if _EXPLICIT_IMPERATIVE_RE.search(clean):
-        return False
-    return True
-
-
-def apply_action_gate(
-    prompt: str,
-    active_tools: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], int]:
-    """
-    Suppresses mutating/side-effecting tools on clearly informational questions so small
-    local models (1.7B–4B) never over-eagerly fire actions during 'how do I...' Q&A.
-    Returns (filtered_tools, suppressed_count).
-    """
-    if not config.ACTION_GATE_ENABLED or not active_tools:
-        return active_tools, 0
-    if not is_informational_only_prompt(prompt):
-        return active_tools, 0
-    blocked = config.TIER2_APPROVAL_TOOLS | _SIDE_EFFECT_TIER1_TOOLS
-    kept = [t for t in active_tools if t["function"]["name"] not in blocked]
-    suppressed = len(active_tools) - len(kept)
-    return kept, suppressed
-
-
-def _strip_analysis_tags(text: str) -> str:
-    cleaned = _ANALYSIS_BLOCK_RE.sub("", text or "").strip()
-    return cleaned if cleaned else (text or "").strip()
-
-
-def _format_stream_preview(raw_text: str, vault: Optional[privacy.RedactionVault] = None) -> str:
-    """Strips complete or in-progress <analysis> blocks and partial redaction tokens during streaming."""
-    cleaned = _ANALYSIS_BLOCK_RE.sub("", raw_text or "")
-    cleaned = _OPEN_ANALYSIS_RE.sub("", cleaned)
-    if vault is not None:
-        cleaned = vault.restore(cleaned)
-    cleaned = _PARTIAL_REDACT_RE.sub("", cleaned)
-    return cleaned.strip()
-
-
-def _build_pooled_session() -> requests.Session:
-    """Creates a persistent HTTP/1.1 keep-alive Session to eliminate repeat TCP/TLS handshakes."""
-    sess = requests.Session()
-    adapter = HTTPAdapter(pool_connections=8, pool_maxsize=16)
-    sess.mount("https://", adapter)
-    sess.mount("http://", adapter)
-    return sess
-
-
-def _recommended_ollama_threads(cpu_count: Optional[int] = None) -> int:
-    """Computes physical-core-friendly inference thread count to avoid SMT/hyperthread contention."""
-    if config.OLLAMA_NUM_THREADS > 0:
-        return max(1, int(config.OLLAMA_NUM_THREADS))
-    logical = cpu_count if cpu_count is not None else (os.cpu_count() or 4)
-    if logical <= 4:
-        return max(1, logical)
-    return max(4, min(8, logical // 2))
-
-
-def _ollama_ctx_for_gear(
-    gear: str,
-    base_ctx: Optional[int] = None,
-    total_ram_gb: Optional[int] = None,
-) -> int:
-    """
-    Adaptive context window to prevent KV-cache RAM spikes & disk thrashing:
-    - On <= 10GB RAM laptops: 1536 (fast) / 2048 (tactical/deep) saves ~500-900MB RAM.
-    - On 12GB+ systems: 2048 (fast) / full OLLAMA_NUM_CTX (tactical/deep).
-    """
-    ctx = int(base_ctx if base_ctx is not None else config.OLLAMA_NUM_CTX)
-    ram = int(total_ram_gb if total_ram_gb is not None else config.detect_system_ram_gb())
-    if ram <= 10:
-        cap = 1536 if gear == "fast" else 2048
-        return max(1024, min(ctx, cap))
-    if gear == "fast":
-        return max(1024, min(ctx, 2048))
-    return max(1024, ctx)
-
-
-def _effective_ollama_keep_alive(available_ram_mb: Optional[int] = None) -> Any:
-    """
-    Dynamically tightens Ollama keep_alive under real RAM pressure (or Zero-Lag Turbo/Lite Mode)
-    so models never hold 2-4GB hostage while browsing/working and never trigger ZRAM swap churn:
-      - CELINA_LITE_MODE=1       -> 0 (evict immediately once reply completes!)
-      - MemAvailable < 1200 MiB  -> 0 (evict immediately once reply completes!)
-      - MemAvailable < 2200 MiB  -> "15s" (brief follow-up window, then free RAM)
-      - MemAvailable >= 2200 MiB -> config.OLLAMA_KEEP_ALIVE (default "45s")
-    """
-    if config.is_lite_mode():
-        return 0
-    avail = int(available_ram_mb if available_ram_mb is not None else config.detect_available_ram_mb())
-    if avail < 1200:
-        return 0
-    if avail < 2200:
-        return "15s"
-    return config.OLLAMA_KEEP_ALIVE
+    if not isinstance(content, str):
+        content = str(content)
+    # Strip control characters except \n and \t
+    content = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", content)
+    # Neutralize prompt-injection patterns
+    content = _PROMPT_INJECTION_RE.sub("[PROMPT_INJECTION_PATTERN_REDACTED]", content)
+    # Length cap
+    if len(content) > cap:
+        content = content[:cap] + f"\n...[tool output truncated at {cap} chars]"
+    return content
 
 
 class CelinaRouter:
-    def __init__(self, db: Optional[memory.MemoryDB] = None, response_cache: Optional[cache.SmartCache] = None):
+    def __init__(
+        self,
+        db: memory.MemoryDB | None = None,
+        response_cache: cache.SmartCache | None = None,
+        os_world_model: OSWorldModel | None = None,
+    ):
         self.db = db if db is not None else memory.get_db()
         self._memory: memory.CelinaMemory = self.db.get_hybrid_memory()
         self.cache = response_cache if response_cache is not None else cache.get_cache()
-        self.last_trace: Optional[TurnTrace] = None
+        self.last_trace: TurnTrace | None = None
         self._http: requests.Session = _build_pooled_session()
         self._last_warm_ts: float = 0.0
-        self._compute_why: Optional[str] = None
-        self._session_tier: Optional[int] = None
-        self._supervisor: Optional[Any] = None
+        self._compute_why: str | None = None
+        self._session_tier: int | None = None
+        self._persona_style: str = "celina"
+        self._persona_channel: str = "text"
+        self.os_world_model = os_world_model or OSWorldModel()
+
+    def _finalize_reply(
+        self,
+        reply: str,
+        source: str,
+        trace: TurnTrace | None = None,
+        callbacks: _bh_mod.BrainCallbacks | None = None,
+    ) -> tuple[str, str]:
+        """Run completion verification and emit turn-done callback before returning."""
+        # Emit on_route callback
+        if callbacks is not None:
+            callbacks.emit("on_route", self._persona_style, source)
+
+        # Run final completion verification (anti-victory-bias gate)
+        verdict = _bh_mod.verify_final_completion(reply, getattr(self, "_turn_tool_results", []))
+        if trace is not None:
+            trace.completion_verified = verdict.passed
+        if verdict.corrected:
+            reply = verdict.reply
+        if callbacks is not None:
+            callbacks.emit("on_turn_done", {
+                "source": source,
+                "completion_verified": verdict.passed,
+                "history_compacted": getattr(trace, "history_compacted", False) if trace else False,
+            })
+        return reply, source
+
+        self._supervisor: Any | None = None
         skills.seed_builtin_skills(self.db)
         self._register_connectors()
 
@@ -748,11 +352,11 @@ class CelinaRouter:
         """Register built-in connectors (Update 23). Outside Gear 0, opt-in only."""
         try:
             from .connectors import get_registry as _reg
-            from .connectors.linear import LinearConnector
             from .connectors.github import GitHubConnector
             from .connectors.gmail import GmailConnector
-            from .connectors.slack import SlackConnector
+            from .connectors.linear import LinearConnector
             from .connectors.notion import NotionConnector
+            from .connectors.slack import SlackConnector
 
             reg = _reg()
             for conn in (
@@ -787,14 +391,14 @@ class CelinaRouter:
         q = (query or "").strip().lower()
         return bool(
             re.search(r'["\'][^"\']+["\']|\b(?:exact|port|path|command|version|date|email|filename|config\s+key|what\s+is\s+my)\b', q)
-            or re.search(r"[/\\][\w.-]+\.[a-z0-9]{1,5}\b", q)
+            or re.search(r"[/\\][\w.-]+\.[a-z0-9]{1,5}\b", q),
         )
 
     @staticmethod
     def _is_associative(query: str) -> bool:
         q = (query or "").strip().lower()
         return bool(
-            re.search(r"\b(?:similar\s+to|like|reminds?\s+me|something\s+about|roughly|fuzzy|conceptually|vibe|related\s+idea)\b", q)
+            re.search(r"\b(?:similar\s+to|like|reminds?\s+me|something\s+about|roughly|fuzzy|conceptually|vibe|related\s+idea)\b", q),
         )
 
     @staticmethod
@@ -804,7 +408,7 @@ class CelinaRouter:
             re.search(
                 r"\b(?:why\s+did|after\s+that|before\s+that|weeks?\s+after|days?\s+after|connected\s+to|linked\s+to|depends?\s+on|led\s+to|caused\s+by|who\s+worked\s+with|prior\s+attempts?|failed\s+with)\b",
                 q,
-            )
+            ),
         )
 
     def _retrieval_strategy(self, query: str) -> str:
@@ -825,7 +429,7 @@ class CelinaRouter:
         query: str,
         *,
         k: int = 8,
-        trace: Optional[TurnTrace] = None,
+        trace: TurnTrace | None = None,
     ) -> list[dict[str, Any]]:
         """Single unified hybrid retrieval entrypoint fusing vector + FTS5 + graph via RRF."""
         strategy = self._retrieval_strategy(query)
@@ -841,10 +445,9 @@ class CelinaRouter:
         query: str,
         *,
         confidence_threshold: float = 0.82,
-        trace: Optional[TurnTrace] = None,
+        trace: TurnTrace | None = None,
     ) -> dict[str, Any]:
-        """
-        Queries offline-compiled verified answers via SQLite FTS5 BM25 first.
+        """Queries offline-compiled verified answers via SQLite FTS5 BM25 first.
         Only escalates to the runtime model when confidence < `confidence_threshold`.
         """
         res = self._memory.route_bm25_compiled(query, confidence_threshold=confidence_threshold)
@@ -858,8 +461,7 @@ class CelinaRouter:
     # ------------------------------------------------------------------
     @staticmethod
     def extract_mean_logprob(response_payload: dict[str, Any]) -> float:
-        """
-        Extracts normalized confidence in [0.0, 1.0] from an Ollama/OpenAI
+        """Extracts normalized confidence in [0.0, 1.0] from an Ollama/OpenAI
         response's token `logprobs` (exp(mean_logprob)), or falls back to
         explicit `mean_logprob` / `confidence` fields when provided.
         """
@@ -877,7 +479,8 @@ class CelinaRouter:
             if vals:
                 avg_lp = sum(vals) / len(vals)
                 return max(0.0, min(1.0, math.exp(avg_lp) if avg_lp <= 0.0 else avg_lp))
-        return 1.0
+        # Fail-closed: no logprobs ⇒ confidence 0.0 ⇒ escalate/verify
+        return 0.0
 
     def call_with_second_thought(
         self,
@@ -886,10 +489,9 @@ class CelinaRouter:
         no_think_fn: Callable[[str], dict[str, Any]],
         think_fn: Callable[[str], dict[str, Any]],
         threshold: float = 0.82,
-        trace: Optional[TurnTrace] = None,
+        trace: TurnTrace | None = None,
     ) -> dict[str, Any]:
-        """
-        SecondThought confidence-gated reasoning (~50% fewer output tokens while
+        """SecondThought confidence-gated reasoning (~50% fewer output tokens while
         preventing 'thinking talks the model into wrong tool calls'):
           1. Run fast no-think tool call first.
           2. Read calibrated mean token probability (`mean_logprob`).
@@ -925,11 +527,10 @@ class CelinaRouter:
     def warm_local_model_async(
         self,
         *,
-        total_ram_gb: Optional[int] = None,
-        available_ram_mb: Optional[int] = None,
+        total_ram_gb: int | None = None,
+        available_ram_mb: int | None = None,
     ) -> bool:
-        """
-        Non-blocking Ollama weight pre-warm ONLY when plenty of free RAM exists.
+        """Non-blocking Ollama weight pre-warm ONLY when plenty of free RAM exists.
         Strictly disabled on <= 10GB RAM laptops or when MemAvailable < 3500 MiB
         so opening Dynamic Island NEVER causes unnecessary disk reads or swap spikes!
         """
@@ -961,12 +562,12 @@ class CelinaRouter:
         return self.last_trace.format_receipt()
 
     @telemetry.agent_span("router", self_attr="tracer", governance_tier="routing")
-    def route_for_autonomy(self, goal: str, context: Optional[dict[str, Any]] = None) -> dict[str, Any]:
-        """
-        Autonomy-aware routing entrypoint returning the structured decision dict
+    def route_for_autonomy(self, goal: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Autonomy-aware routing entrypoint returning the structured decision dict
         consumed by Celina v5 `AutonomyEngine`.
         """
         import hashlib
+
         from . import approval
 
         ctx = context or {}
@@ -985,13 +586,13 @@ class CelinaRouter:
                 "arguments_hash": approval.compute_arguments_hash("respond_directly", args),
                 "tier": 1,
                 "domain": "os_hardware",
-                "why_receipt_hash": hashlib.sha256(f"gear0_math:{clean_goal}={math_ans}".encode("utf-8")).hexdigest(),
+                "why_receipt_hash": hashlib.sha256(f"gear0_math:{clean_goal}={math_ans}".encode()).hexdigest(),
             }
 
         active_win = str(ctx.get("active_window") or "")
         gear, clean_goal, gear_reason = classify_cognitive_gear_with_reason(clean_goal)
         selected_tools, domains = tools.get_contextual_tool_schemas(
-            clean_goal, gear=gear, active_window=active_win, is_recording=False
+            clean_goal, gear=gear, active_window=active_win, is_recording=False,
         )
 
         # Pick highest-ranked matching tool, honoring retry suggested_fallback & avoiding known failures
@@ -999,14 +600,39 @@ class CelinaRouter:
         known_tools = config.TIER1_AUTO_TOOLS | config.TIER2_APPROVAL_TOOLS
         failed_tools = {str(x).strip() for x in (ctx.get("known_failed_attempts") or []) if str(x).strip()}
         suggested_fb = str(ctx.get("suggested_fallback") or "").strip()
+        candidates = []
+        fresh_candidates = []
         if not suggested_fb:
             last_err = str(ctx.get("last_error") or "")
             m_fb = re.search(r"suggested_fallback=([A-Za-z0-9_]+)", last_err)
             if m_fb:
                 suggested_fb = m_fb.group(1)
 
+        inferred = None
+        if not (suggested_fb and suggested_fb in known_tools and suggested_fb not in failed_tools):
+            inferred = _deterministic_intent(clean_goal)
+        if inferred and inferred[0] in {"respond_directly", "clarify"}:
+            message_args = inferred[1]
+            return {
+                "tool_name": "respond_directly", "arguments": message_args,
+                "arguments_hash": approval.compute_arguments_hash("respond_directly", message_args),
+                "tier": 1, "domain": "os_hardware", "gear": gear,
+                "why_receipt_hash": hashlib.sha256(f"direct:{clean_goal}".encode()).hexdigest(),
+                "requires_clarification": inferred[0] == "clarify",
+            }
+        if inferred and (inferred[0] not in known_tools or inferred[0] in failed_tools):
+            message_args = {"message": "That action is unavailable. How would you like to proceed?"}
+            return {
+                "tool_name": "respond_directly", "arguments": message_args,
+                "arguments_hash": approval.compute_arguments_hash("respond_directly", message_args),
+                "tier": 1, "domain": "os_hardware", "gear": gear,
+                "why_receipt_hash": hashlib.sha256(f"unavailable:{clean_goal}".encode()).hexdigest(),
+                "requires_clarification": True,
+            }
         if suggested_fb and suggested_fb in known_tools and suggested_fb not in failed_tools:
             chosen_tool = suggested_fb
+        elif inferred and inferred[0] in known_tools and inferred[0] not in failed_tools:
+            chosen_tool = inferred[0]
         elif selected_tools:
             # Prefer explicit tool name mention in goal if present (and not already failed)
             goal_low = clean_goal.lower()
@@ -1023,6 +649,8 @@ class CelinaRouter:
                 domain = dname
                 break
         arguments = dict(ctx.get("arguments") or {})
+        if inferred and chosen_tool == inferred[0]:
+            arguments = {**inferred[1], **arguments}
 
         raw_decision = RouteDecision(
             tool_name=chosen_tool,
@@ -1064,9 +692,108 @@ class CelinaRouter:
                 "preferred_backend": "offline",
             }
 
+        if inferred and chosen_tool == "get_weather" and not arguments.get("city"):
+            message_args = {"message": "Which city should I check the weather for?"}
+            return {
+                "tool_name": "respond_directly", "arguments": message_args,
+                "arguments_hash": approval.compute_arguments_hash("respond_directly", message_args),
+                "tier": 1, "domain": "os_hardware", "gear": gear,
+                "why_receipt_hash": hashlib.sha256(f"clarify:{clean_goal}".encode()).hexdigest(),
+                "requires_clarification": True,
+            }
+
         chosen_tool = resolved.tool_name
         domain = resolved.domain
         tier = resolved.tier
+        args_hash = approval.compute_arguments_hash(chosen_tool, arguments)
+
+        # D3: Dispatch-time capability enforcement with candidate fallback.
+        # Build a prioritized candidate list and try each one until a tool
+        # passes the OS capability boundary check (fail-closed).
+        is_tier2_map = {t: (t in config.TIER2_APPROVAL_TOOLS) for t in config.TIER1_AUTO_TOOLS | config.TIER2_APPROVAL_TOOLS}
+        candidate_tools: list[str] = []
+        if suggested_fb and suggested_fb in known_tools and suggested_fb not in failed_tools:
+            candidate_tools.append(suggested_fb)
+        # Add selected_tools candidates (already excludes failed_tools via fresh_candidates above)
+        for c in fresh_candidates:
+            if c not in candidate_tools:
+                candidate_tools.append(c)
+
+        # Preserve the policy-resolved choice ahead of generic candidates.
+        if chosen_tool in candidate_tools:
+            candidate_tools.remove(chosen_tool)
+        candidate_tools.insert(0, chosen_tool)
+
+        capability_rejections: list[str] = []
+        final_tool = None
+        final_domain = None
+        final_tier = None
+        for cand in candidate_tools:
+            cand_tier2 = is_tier2_map.get(cand, cand in config.TIER2_APPROVAL_TOOLS)
+            cap_ok, cap_reason = capabilities.check_tool_execution_boundary(
+                cand, is_tier2=cand_tier2,
+            )
+            if cap_ok:
+                # A capability fallback must pass the same offline/UNO policy as
+                # the initial choice; otherwise a denied local tool can lead to
+                # a live web dispatch while offline.
+                cand_tier = 2 if cand in config.TIER2_APPROVAL_TOOLS else 1
+                cand_domain = next(
+                    (name for name, cfg in (config.TOOL_DOMAINS or {}).items()
+                     if cand in (cfg.get("tools") or ())), domain,
+                )
+                if cand != chosen_tool:
+                    alternate = apply_offline_and_uno_policy(
+                        RouteDecision(
+                            tool_name=cand, domain=cand_domain, tier=cand_tier,
+                            arguments=arguments, gear=gear,
+                        ),
+                        goal=clean_goal, online_probe=ctx.get("online_probe"),
+                        uno_probe=ctx.get("uno_probe"),
+                    )
+                    if isinstance(alternate, OfflineFallback) or alternate.tool_name != cand:
+                        capability_rejections.append(f"{cand}: offline/UNO policy denied fallback")
+                        continue
+                final_tool, final_tier, final_domain = cand, cand_tier, cand_domain
+                break
+            capability_rejections.append(f"{cand}: {cap_reason}")
+
+        if final_tool is None:
+            # No candidate passed capability check — deny with all rejections recorded
+            trace = TurnTrace(
+                prompt_preview=clean_goal[:80],
+                gear=gear,
+                gear_reason=f"Capability denied: {'; '.join(capability_rejections)}",
+                active_window=active_win,
+                tool_domains=list(domains),
+                tools_attached=len(selected_tools),
+                tools_called=[],
+                capability_rejections=capability_rejections,
+                compute_backend=self._get_compute_why(),
+                source="autonomy_router_denied",
+            )
+            self.last_trace = trace
+            return {
+                "tool_name": "respond_directly",
+                "arguments": {"message": f"I cannot perform that action: {'; '.join(capability_rejections)}"},
+                "arguments_hash": approval.compute_arguments_hash(
+                    "respond_directly", {"message": f"I cannot perform that action: {'; '.join(capability_rejections)}"},
+                ),
+                "tier": 1,
+                "domain": "os_hardware",
+                "why_receipt_hash": hashlib.sha256(
+                    f"capability_denied:{'|'.join(candidate_tools)}".encode(),
+                ).hexdigest(),
+                "gear": gear,
+                "preferred_backend": "local",
+                "capability_denied": True,
+                "denial_reason": "; ".join(capability_rejections),
+            }
+
+        chosen_tool = final_tool
+        domain = final_domain
+        tier = final_tier
+        # Capability fallback may change the tool; bind the returned tool, not the rejected one.
         args_hash = approval.compute_arguments_hash(chosen_tool, arguments)
 
         trace = TurnTrace(
@@ -1077,11 +804,19 @@ class CelinaRouter:
             tool_domains=list(domains),
             tools_attached=len(selected_tools),
             tools_called=[chosen_tool],
+            capability_rejections=capability_rejections,
             compute_backend=self._get_compute_why(),
             source="autonomy_router",
         )
         self.last_trace = trace
         why_hash = hashlib.sha256(trace.format_receipt().encode("utf-8")).hexdigest()
+
+        wm_ctx = {
+            "headroom_factor": round(self.os_world_model.headroom_factor(), 3),
+            "hardware_tier": self.os_world_model.hardware.tier,
+            "has_battery": self.os_world_model.hardware.has_battery,
+            "gpu_vendor": self.os_world_model.hardware.gpu_vendor,
+        }
 
         return {
             "tool_name": chosen_tool,
@@ -1092,6 +827,7 @@ class CelinaRouter:
             "why_receipt_hash": why_hash,
             "gear": gear,
             "preferred_backend": resolved.preferred_backend,
+            "world_model": wm_ctx,
         }
 
     def _build_messages(
@@ -1103,73 +839,89 @@ class CelinaRouter:
         active_window: str = "",
         det_lang: str = "en",
         lang_style: str = "native",
-        trace: Optional[TurnTrace] = None,
+        trace: TurnTrace | None = None,
     ) -> list[dict[str, Any]]:
         now_str = datetime.datetime.now().strftime("%A, %Y-%m-%d %H:%M")
         gcfg = _gear_settings(gear)
-        sys_parts = [
-            _get_base_system_prompt(),
-            f"Current local date & time: {now_str}.",
-        ]
-        if active_window:
-            sys_parts.append(f"Active desktop window: {active_window}")
+
+        # ── STATIC PREFIX (byte-identical across calls — cacheable) ──
+        static_parts = [_get_base_system_prompt()]
+        # Persona system prompt (dual-channel, style-aware)
+        persona_prompt = _persona_mod.build_system_prompt(
+            config.get_assistant_name(),
+            nickname=config.get_assistant_nickname(),
+            style=getattr(self, "_persona_style", "celina"),
+            channel=getattr(self, "_persona_channel", "text"),
+            honorific="",
+        )
+        static_parts.append(persona_prompt)
         if gcfg.get("instruction"):
-            sys_parts.append(str(gcfg["instruction"]))
+            static_parts.append(str(gcfg["instruction"]))
 
         # Zero-RAM Multi-Agent Swarm Role + System 2 Tree-of-Thought + Critic Gate
         role_name, role_directive = select_swarm_role(user_prompt, gear)
         if trace is not None:
             trace.swarm_role = role_name
         if role_directive:
-            sys_parts.append(role_directive)
+            static_parts.append(role_directive)
 
         if gear == "deep" and config.COGNITION_CFG.get("tree_of_thought_on_deep", True):
-            sys_parts.append(
+            static_parts.append(
                 "Tree-of-Thought Deliberation: Before committing to a high-impact action, mentally compare "
-                "2 candidate approaches, weigh failure modes and reversibility, and pick the safest path."
+                "2 candidate approaches, weigh failure modes and reversibility, and pick the safest path.",
             )
 
         if gear in {"tactical", "deep"}:
             if config.COGNITION_CFG.get("critic_audit_on_tier2", True):
                 critic_dir = str((config.SWARM_ROLES.get("critic") or {}).get("directive", "")).strip()
                 if critic_dir:
-                    sys_parts.append(critic_dir)
+                    static_parts.append(critic_dir)
             if config.REFLECTION_POLICY.get("enable_preflight_micro_plan", True):
-                sys_parts.append(
+                static_parts.append(
                     "Execution discipline: Before invoking tools, silently plan the minimal 2-4 step sequence. "
-                    "Verify tool outputs before declaring success; if a tool fails, reflect and correct your arguments once."
+                    "Verify tool outputs before declaring success; if a tool fails, reflect and correct your arguments once.",
                 )
             clar = str(config.CONFIDENCE_POLICY.get("clarification_instruction", "")).strip()
             if clar:
-                sys_parts.append(clar)
+                static_parts.append(clar)
 
-        # Pillar 7A: Native + Romanized Tenglish / Hinglish Language Awareness (strict English lock on English turns!)
+        # Pillar 7A: Language Awareness (static rules, no per-turn data)
         lang_code = (language or "auto").lower()
         if lang_code != "auto" and lang_code in config.LANGUAGES:
             lmeta = config.LANGUAGES[lang_code]
-            sys_parts.append(
+            static_parts.append(
                 f"Reply strictly in {lmeta.get('name', lang_code)} "
-                f"({lmeta.get('native_name', lang_code)}) using its native script."
+                f"({lmeta.get('native_name', lang_code)}) using its native script.",
             )
         elif lang_style == "romanized" and det_lang in {"te", "hi"}:
             l_label = "Romanized Telugu (Tenglish)" if det_lang == "te" else "Romanized Hindi (Hinglish)"
-            sys_parts.append(
+            static_parts.append(
                 f"User wrote in {l_label}. Understand naturally and reply in clear, natural "
-                f"{'Telugu or Tenglish' if det_lang == 'te' else 'Hindi or Hinglish'} matching their tone."
+                f"{'Telugu or Tenglish' if det_lang == 'te' else 'Hindi or Hinglish'} matching their tone.",
             )
         elif det_lang in {"te", "hi"} and det_lang in config.LANGUAGES:
             lmeta = config.LANGUAGES[det_lang]
-            sys_parts.append(
+            static_parts.append(
                 f"LANGUAGE RULE: The user's latest message is in {lmeta.get('name', det_lang)}. "
-                f"Reply naturally in {lmeta.get('name', det_lang)}."
+                f"Reply naturally in {lmeta.get('name', det_lang)}.",
             )
         else:
-            sys_parts.append(
+            static_parts.append(
                 "LANGUAGE RULE: The user's latest message is in English. "
-                "Reply ONLY in English — never switch to Telugu, Hindi, or any other language."
+                "Reply ONLY in English — never switch to Telugu, Hindi, or any other language.",
             )
 
-        # Pillar 3 + v4.1: SQLite FTS5 BM25 Top-K Memory + Knowledge Graph + Active Goals + Sensory Warnings
+        # Learned skills playbook (changes rarely — treat as static prefix)
+        learned = self.db.format_skills_for_prompt()
+        if learned:
+            static_parts.append(learned)
+
+        # ── VOLATILE SUFFIX (changes every turn — not cacheable) ──
+        volatile_parts = [f"Current local date & time: {now_str}."]
+        if active_window:
+            volatile_parts.append(f"Active desktop window: {active_window}")
+
+        # Pillar 3 + v4.1: Memory + Knowledge Graph (per-turn retrieval)
         mem_block, recalled_keys, recalled_ep_cnt = self.db.format_relevant_memory_for_prompt(
             user_prompt,
             max_facts=5 if gear != "fast" else 3,
@@ -1178,38 +930,82 @@ class CelinaRouter:
             active_window=active_window,
         )
         if mem_block:
-            sys_parts.append(mem_block)
+            volatile_parts.append(mem_block)
         if trace is not None:
             trace.recalled_facts = recalled_keys
             trace.recalled_episodes = recalled_ep_cnt
 
-        learned = self.db.format_skills_for_prompt()
-        if learned:
-            sys_parts.append(learned)
-
-        # Dynamically inject ONLY the single matching TRUSTED SKILL.md playbook,
-        # explicitly labeled UNTRUSTED REFERENCE CONTENT (cannot override system policy!)
+        # Dynamically inject skill.md playbook (untrusted reference, per-turn)
         matched_md = skills.match_markdown_skill(user_prompt)
         if matched_md:
-            sys_parts.append(skills.format_skill_as_untrusted_reference(matched_md))
+            volatile_parts.append(skills.format_skill_as_untrusted_reference(matched_md))
             if trace is not None:
                 trace.active_skill_md = str(matched_md["name"])
 
         if skills.recorder.is_recording:
-            sys_parts.append(
+            volatile_parts.append(
                 f"ACTIVE LEARNING MODE: Recording steps for skill '{skills.recorder.recording_name}'. "
-                "Execute each action the user requests cleanly; when they say stop recording, call stop_recording."
+                "Execute each action the user requests cleanly; when they say stop recording, call stop_recording.",
             )
 
-        messages: list[dict[str, Any]] = [{"role": "system", "content": "\n\n".join(sys_parts)}]
+        # ── Assemble messages with cache boundary ──
+        messages: list[dict[str, Any]] = []
+
+        # Transpile prompt with static-prefix-first ordering for KV-cache stability
+        static_layers = [
+            PromptLayer(name=f"static-{i}", content=part, volatile=False)
+            for i, part in enumerate(static_parts)
+            if part and part.strip()
+        ]
+        volatile_layers = [
+            PromptLayer(name=f"volatile-{i}", content=part, volatile=True)
+            for i, part in enumerate(volatile_parts)
+            if part and part.strip()
+        ]
+        compiled = _pt_mod.transpile_prompt(static_layers + volatile_layers)
+
+        # System message 1: transpiled prompt (cacheable static prefix + volatile suffix)
+        sys_msg: dict[str, Any] = {
+            "role": "system",
+            "content": compiled.text,
+        }
+        if for_cloud:
+            # Mark first system message as cacheable prefix for providers that support it
+            sys_msg["cache_control"] = {"type": "ephemeral"}
+        messages.append(sys_msg)
+
+        # Record prompt hashes on trace for /why receipt
+        if trace is not None:
+            trace.static_prefix_hash = compiled.static_prefix_hash
+            trace.prompt_hash = compiled.full_hash
+
+        # System message 2: volatile suffix (not cacheable)
+        if volatile_parts:
+            messages.append({"role": "system", "content": "\n\n".join(volatile_parts)})
+
+        # Conversation history
+        # Conversation history with tier-adaptive compaction
         hist_limit = 4 if gear == "fast" else config.MEMORY_HISTORY_LIMIT
-        messages.extend(self.db.get_recent_messages(limit=hist_limit, cloud_only=for_cloud))
+        raw_history = self.db.get_recent_messages(limit=hist_limit, cloud_only=for_cloud)
+        try:
+            from .model_selector import get_ram_tier as _get_ram_tier
+            _ram_tier = _get_ram_tier()
+        except Exception:
+            _ram_tier = "16gb"
+        compacted_history, _was_compacted = _bh_mod.compact_conversation_history(
+            raw_history, ram_tier=_ram_tier,
+            on_episode_summary=lambda summary: self.db.add_episode(summary, importance=0.5)
+            if hasattr(self.db, "add_episode") else None,
+        )
+        if trace is not None:
+            trace.history_compacted = _was_compacted
+        messages.extend(compacted_history)
         messages.append({"role": "user", "content": user_prompt})
         return messages
 
     @staticmethod
     def _sanitize_messages_for_cloud(
-        messages: list[dict[str, Any]], vault: privacy.RedactionVault
+        messages: list[dict[str, Any]], vault: privacy.RedactionVault,
     ) -> list[dict[str, Any]]:
         """Redacts secrets & PII across system prompt, injected facts, and conversation history."""
         sanitized: list[dict[str, Any]] = []
@@ -1227,12 +1023,12 @@ class CelinaRouter:
         url: str,
         payload: dict[str, Any],
         timeout: int,
-        headers: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         retries: int = 3,
         stream: bool = False,
     ) -> requests.Response:
         """Executes pooled HTTP/1.1 keep-alive POST with backoff retries on transient 5xx/network blips."""
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         for attempt in range(retries):
             try:
                 resp = self._http.post(url, headers=headers, json=payload, timeout=timeout, stream=stream)
@@ -1296,10 +1092,9 @@ class CelinaRouter:
         self,
         messages: list[dict[str, Any]],
         gear: str,
-        vault: Optional[privacy.RedactionVault] = None,
+        vault: privacy.RedactionVault | None = None,
     ) -> dict[str, Any]:
-        """
-        Run task decomposition + parallel multi-provider ensemble.
+        """Run task decomposition + parallel multi-provider ensemble.
 
         Splits the user task into subtasks, sends each to its best provider
         in parallel, merges results into one coherent answer.
@@ -1330,7 +1125,7 @@ class CelinaRouter:
             future_to_candidate = {}
             for provider, api_key, model, subtask in candidates:
                 future = executor.submit(
-                    self._call_provider_chat, provider, api_key, model, subtask, request_timeout
+                    self._call_provider_chat, provider, api_key, model, subtask, request_timeout,
                 )
                 future_to_candidate[future] = (provider.name, subtask)
 
@@ -1363,9 +1158,8 @@ class CelinaRouter:
         micro: Any,
         query: str,
         dry_run: bool = False,
-    ) -> Optional[str]:
-        """
-        Execute a Gear 0.5 micro-intent result deterministically through Gear 0 handlers.
+    ) -> str | None:
+        """Execute a Gear 0.5 micro-intent result deterministically through Gear 0 handlers.
 
         The micro-LLM only classifies intent + slots; Gear 0 executes the actual OS action.
         This guarantees safety — the LLM never touches system APIs directly.
@@ -1423,6 +1217,9 @@ class CelinaRouter:
             alias = slots.get("alias", "")
             value = slots.get("value", "")
             kind = slots.get("kind", "contact")
+            # P0: block save kind=command unless behind host_shell_override
+            if kind == "command":
+                return None  # fail-closed: command saves are not allowed via micro-tier
             synthetic = f"save {alias} as {value} {kind}"
         elif intent in ("turn_on", "turn_off"):
             device = slots.get("device", "")
@@ -1463,9 +1260,9 @@ class CelinaRouter:
         messages: list[dict[str, Any]],
         gear: str,
         use_tools: bool = True,
-        active_tools: Optional[list[dict[str, Any]]] = None,
-        stream_cb: Optional[StreamCallback] = None,
-        vault: Optional[privacy.RedactionVault] = None,
+        active_tools: list[dict[str, Any]] | None = None,
+        stream_cb: StreamCallback | None = None,
+        vault: privacy.RedactionVault | None = None,
     ) -> dict[str, Any]:
         """Call a task-ranked provider with bounded, rate-limit-aware failover.
 
@@ -1488,6 +1285,27 @@ class CelinaRouter:
                 return self._run_ensemble(messages, gear, vault=vault)
 
         gcfg = _gear_settings(gear)
+        # Tier-adaptive context compression (cloud route) — runs AFTER privacy DLP redaction
+        # via vault, preserves system/user msgs verbatim, leaves small outputs untouched on 16 GB / 32 GB.
+        try:
+            comp_report = context_compressor.compress_messages_for_llm(
+                messages,
+                model=str(gcfg.get("model", "qwen3:1.7b")),
+                route="cloud",
+                enabled=True,
+                record_metrics=True,
+            )
+            if comp_report.backend != "bypass":
+                messages = comp_report.messages
+                if trace is not None:
+                    trace.compression_backend = comp_report.backend
+                    trace.compression_tier = comp_report.tier
+                    trace.compression_saved_pct = comp_report.saved_pct
+                    trace.compression_ccr_ids = list(comp_report.ccr_ids)
+        except Exception:
+            # Compression must never break inference — fall back to raw messages.
+            pass
+
         payload: dict[str, Any] = {
             "messages": messages,
             "max_tokens": int(gcfg.get("max_tokens", 550)),
@@ -1634,7 +1452,7 @@ class CelinaRouter:
                     resp.close()
                 errors.append(f"{provider.name}: HTTP {status_code or 'error'}")
                 continue
-            except (ValueError, json.JSONDecodeError) as exc:
+            except (ValueError, json.JSONDecodeError):
                 if resp is not None:
                     resp.close()
                 provider_router.mark_failure(provider.name, "invalid response")
@@ -1664,17 +1482,16 @@ class CelinaRouter:
         messages: list[dict[str, Any]],
         gear: str,
         vault: privacy.RedactionVault,
-        active_tools: Optional[list[dict[str, Any]]] = None,
-        trace: Optional[TurnTrace] = None,
-        status_cb: Optional[StatusCallback] = None,
-        approval_cb: Optional[ApprovalCallback] = None,
-        consent_cb: Optional[PrivacyConsentCallback] = None,
-        task_glow_cb: Optional[TaskGlowCallback] = None,
-        stream_cb: Optional[StreamCallback] = None,
+        active_tools: list[dict[str, Any]] | None = None,
+        trace: TurnTrace | None = None,
+        status_cb: StatusCallback | None = None,
+        approval_cb: ApprovalCallback | None = None,
+        consent_cb: PrivacyConsentCallback | None = None,
+        task_glow_cb: TaskGlowCallback | None = None,
+        stream_cb: StreamCallback | None = None,
         dry_run: bool = False,
-    ) -> tuple[Optional[str], Optional[str], bool]:
-        """
-        Returns (reply, error, switched_to_local).
+    ) -> tuple[str | None, str | None, bool]:
+        """Returns (reply, error, switched_to_local).
         Includes automatic error self-correction reflexion and privacy gating.
         """
         if not _has_cloud_key():
@@ -1734,6 +1551,11 @@ class CelinaRouter:
                     else:
                         if trace is not None:
                             trace.tools_called.append(fn_name)
+                        # Track tool chain step for ExperiencePromoter
+                        self._turn_steps.append({
+                            "tool": fn_name,
+                            "args": fn_args or {},
+                        })
                         if status_cb:
                             status_cb(f"Running {fn_name}...")
                         if task_glow_cb:
@@ -1742,7 +1564,7 @@ class CelinaRouter:
                             from . import evidence as _ev
 
                             _ev.set_current_why_context(
-                                f"gear={trace.gear} role={trace.swarm_role} prompt={trace.prompt_preview}"
+                                f"gear={trace.gear} role={trace.swarm_role} prompt={trace.prompt_preview}",
                             )
                         try:
                             out = tools.execute_tool(
@@ -1759,6 +1581,17 @@ class CelinaRouter:
                     last_tool_out = out
                     if trace is not None and "Circuit breaker open" in out:
                         trace.circuit_breaker_events.append(f"{fn_name} (cooldown)")
+
+                    # Gear 0.5.1: Record Mirage vision backend on TurnTrace
+                    if trace is not None and fn_name in {"vision_ocr", "vision_analyze"}:
+                        trace.vision_backend = "gear0_5_1_mirage"
+                        try:
+                            out_json = json.loads(out)
+                            trace.vision_escalated = bool(
+                                out_json.get("escalate_to_vlm", False),
+                            )
+                        except Exception:
+                            trace.vision_escalated = True
 
                     # Sensory-Motor Learning: record (active_app, tool_name, outcome)
                     is_err = _is_tool_error(out)
@@ -1795,8 +1628,8 @@ class CelinaRouter:
                         {
                             "role": "tool",
                             "tool_call_id": tc.get("id", f"call_{step}"),
-                            "content": cloud_out,
-                        }
+                            "content": _sanitize_tool_prompt_content(cloud_out),
+                        },
                     )
                 if status_cb:
                     status_cb(f"Thinking ({gear})...")
@@ -1842,15 +1675,36 @@ class CelinaRouter:
         messages: list[dict[str, Any]],
         gear: str,
         use_tools: bool = True,
-        active_tools: Optional[list[dict[str, Any]]] = None,
-        stream_cb: Optional[StreamCallback] = None,
-        trace: Optional[TurnTrace] = None,
+        active_tools: list[dict[str, Any]] | None = None,
+        stream_cb: StreamCallback | None = None,
+        trace: TurnTrace | None = None,
     ) -> dict[str, Any]:
         gcfg = _gear_settings(gear)
         # Stream live across ALL gears (fast, tactical, deep); _format_stream_preview strips <analysis>
         want_stream = stream_cb is not None
 
         send_msgs = list(messages)
+        # Tier-adaptive context compression (local route) — preserves system/user msgs verbatim,
+        # leaves small/medium outputs untouched on 16 GB / 32 GB, stashes originals in RAM-only CCR.
+        try:
+            comp_report = context_compressor.compress_messages_for_llm(
+                send_msgs,
+                model=config.LOCAL_MODEL,
+                route="local",
+                enabled=True,
+                record_metrics=True,
+            )
+            if comp_report.backend != "bypass":
+                send_msgs = comp_report.messages
+                if trace is not None:
+                    trace.compression_backend = comp_report.backend
+                    trace.compression_tier = comp_report.tier
+                    trace.compression_saved_pct = comp_report.saved_pct
+                    trace.compression_ccr_ids = list(comp_report.ccr_ids)
+        except Exception:
+            # Compression must never break inference — fall back to raw messages.
+            pass
+
         # Pillar 7B: Lightweight 3-bullet <analysis> CoT for small 3B local models on Gear 3
         if (
             gear == "deep"
@@ -1903,6 +1757,9 @@ class CelinaRouter:
             "think": want_think,
             "keep_alive": _effective_ollama_keep_alive(),
             "options": ollama_opts,
+            # Request token logprobs for SecondThought confidence gating.
+            # Fail-closed: if the model doesn't support logprobs, confidence=0.0 → escalate.
+            "logprobs": True,
         }
         tool_list = active_tools if active_tools is not None else tools.get_enabled_tool_schemas()
         if use_tools and tool_list:
@@ -1955,15 +1812,15 @@ class CelinaRouter:
         self,
         messages: list[dict[str, Any]],
         gear: str,
-        active_tools: Optional[list[dict[str, Any]]] = None,
-        trace: Optional[TurnTrace] = None,
-        status_cb: Optional[StatusCallback] = None,
-        approval_cb: Optional[ApprovalCallback] = None,
-        consent_cb: Optional[PrivacyConsentCallback] = None,
-        task_glow_cb: Optional[TaskGlowCallback] = None,
-        stream_cb: Optional[StreamCallback] = None,
+        active_tools: list[dict[str, Any]] | None = None,
+        trace: TurnTrace | None = None,
+        status_cb: StatusCallback | None = None,
+        approval_cb: ApprovalCallback | None = None,
+        consent_cb: PrivacyConsentCallback | None = None,
+        task_glow_cb: TaskGlowCallback | None = None,
+        stream_cb: StreamCallback | None = None,
         dry_run: bool = False,
-    ) -> tuple[Optional[str], Optional[str]]:
+    ) -> tuple[str | None, str | None]:
         gcfg = _gear_settings(gear)
         base_max_steps = int(gcfg.get("max_steps", config.MAX_AGENT_STEPS))
         forge = guardrails.ForgeGuardrailStack(max_steps=base_max_steps)
@@ -1992,6 +1849,24 @@ class CelinaRouter:
                 if not tool_calls:
                     raw_reply = (msg.get("content") or "").strip()
                     reply = _strip_analysis_tags(raw_reply)
+
+                    # SecondThought: confidence-gated thinking escalation (P0)
+                    conf = self.extract_mean_logprob(data)
+                    if trace is not None:
+                        trace.second_thought_confidence = round(conf, 4)
+                    if conf < 0.82 and gear == "fast":
+                        # Re-run with thinking enabled — low confidence on fast pass
+                        data2 = self._post_ollama(
+                            convo, gear=gear, use_tools=False,
+                            stream_cb=stream_cb, trace=trace,
+                        )
+                        msg2 = data2.get("message") or {}
+                        raw_reply2 = (msg2.get("content") or "").strip()
+                        if raw_reply2:
+                            reply = _strip_analysis_tags(raw_reply2)
+                        if trace is not None:
+                            trace.second_thought_escalated = True
+
                     return (reply or last_tool_out or "(No response)"), None
 
                 convo.append(msg)
@@ -2013,6 +1888,11 @@ class CelinaRouter:
                     else:
                         if trace is not None:
                             trace.tools_called.append(fn_name)
+                        # Track tool chain step for ExperiencePromoter
+                        self._turn_steps.append({
+                            "tool": fn_name,
+                            "args": fn_args or {},
+                        })
                         if status_cb:
                             status_cb(f"Running {fn_name} (local)...")
                         if task_glow_cb:
@@ -2021,7 +1901,7 @@ class CelinaRouter:
                             from . import evidence as _ev
 
                             _ev.set_current_why_context(
-                                f"gear={trace.gear} role={trace.swarm_role} prompt={trace.prompt_preview}"
+                                f"gear={trace.gear} role={trace.swarm_role} prompt={trace.prompt_preview}",
                             )
                         try:
                             out = tools.execute_tool(
@@ -2036,8 +1916,30 @@ class CelinaRouter:
                             if task_glow_cb:
                                 task_glow_cb(False)
                     last_tool_out = out
+
+                    # Track tool result for completion verification
+                    try:
+                        self._turn_tool_results.append((fn_name, str(out)))
+                    except AttributeError:
+                        self._turn_tool_results = [(fn_name, str(out))]
+
+                    # Taint tracking: untrusted external text sources taint the turn (T1 defense)
+                    if fn_name in {"fetch_webpage", "fetch_url_text", "read_document", "get_clipboard", "live_text_ocr", "web_search"}:
+                        self._turn_tainted = True
                     if trace is not None and "Circuit breaker open" in out:
                         trace.circuit_breaker_events.append(f"{fn_name} (cooldown)")
+
+                    # Gear 0.5.1: Record Mirage vision backend on TurnTrace
+                    if trace is not None and fn_name in {"vision_ocr", "vision_analyze"}:
+                        trace.vision_backend = "gear0_5_1_mirage"
+                        try:
+                            out_json = json.loads(out)
+                            trace.vision_escalated = bool(
+                                out_json.get("escalate_to_vlm", False),
+                            )
+                        except Exception:
+                            # Not Mirage JSON — fell through to MCP/heavy VLM
+                            trace.vision_escalated = True
 
                     # Sensory-Motor Learning: record (active_app, tool_name, outcome)
                     is_err = _is_tool_error(out)
@@ -2057,9 +1959,27 @@ class CelinaRouter:
                         if trace is not None:
                             trace.self_corrections += 1
 
-                    convo.append({"role": "tool", "content": tool_msg_content})
+                    convo.append({"role": "tool", "content": _sanitize_tool_prompt_content(tool_msg_content)})
                 if status_cb:
                     status_cb(f"Thinking ({gear} · local)...")
+
+            # Experience Learning Loop: record verified/untainted tool chain for promotion
+            all_verified = True
+            for tc in (trace.tools_called if trace is not None else []):
+                pass  # tools_called only has names; verification status tracked via outcomes
+            if self._turn_steps:
+                from .harness import ExperiencePromoter as _EP
+                promoter = _EP()
+                # Determine if all steps were verified (simplified: check trace for errors)
+                promoter.record_turn_trace(
+                    self._turn_steps,
+                    all_verified=all_verified and not any(
+                        "error" in str(tc.get("args", {})).lower()
+                        for tc in self._turn_steps
+                    ),
+                    turn_tainted=self._turn_tainted,
+                    error_summary="",
+                )
 
             return last_tool_out or "(Agent reached step limit)", None
         except (requests.RequestException, ValueError, KeyError, TypeError) as exc:
@@ -2075,12 +1995,108 @@ class CelinaRouter:
         self,
         clean: str,
         effective_dry_run: bool,
-        approval_cb: Optional[ApprovalCallback],
-        status_cb: Optional[StatusCallback],
-        consent_cb: Optional[PrivacyConsentCallback],
-        task_glow_cb: Optional[TaskGlowCallback],
-    ) -> tuple[Optional[str], Optional[str]]:
+        approval_cb: ApprovalCallback | None,
+        status_cb: StatusCallback | None,
+        consent_cb: PrivacyConsentCallback | None,
+        task_glow_cb: TaskGlowCallback | None,
+    ) -> tuple[str | None, str | None]:
         t0 = time.monotonic()
+
+        # ---- Memory v2: /context slash command (Gear 0 reflex) ----
+        if clean.strip().lower() == "/context":
+            try:
+                from .memory import get_db
+
+                ctx = get_db().build_tiered_context(
+                    query="",
+                    gear="deep",
+                    ram_tier=None,
+                    redact_for_cloud=True,
+                )
+                lines = [
+                    f"[CONTEXT] tier={ctx['tier']} budget={ctx['budget_tokens']}tok "
+                    f"L0={ctx['l0_count']} L1={ctx['l1_count']} L2={ctx['l2_count']}",
+                    "",
+                    ctx["text"] or "(no active context)",
+                ]
+                reply = "\n".join(lines)
+            except Exception as exc:  # pragma: no cover - defensive
+                reply = f"[CONTEXT] Error building tiered context: {exc}"
+            self.last_trace = TurnTrace(
+                prompt_preview=clean[:80],
+                gear="reflex",
+                gear_reason="Gear 0 /context slash command (build_tiered_context deep+redact)",
+                source="dry-run · context" if effective_dry_run else "context",
+                latency_ms=int((time.monotonic() - t0) * 1000),
+            )
+            return reply, "context"
+
+        # ---- Memory v2 / v0.9.1: /seed slash command (Gear 0 reflex) ----
+        seed_match = re.match(r"^/seed(?:\s+(.*))?$", clean.strip(), re.IGNORECASE)
+        if seed_match:
+            args_str = seed_match.group(1) or ""
+            # Parse simple flags: --dir <path>, --include-ref, --dry-run
+            seed_dir = None
+            include_ref = False
+            seed_dry_run = effective_dry_run
+            tokens = args_str.split()
+            i = 0
+            while i < len(tokens):
+                tok = tokens[i]
+                if tok == "--dir" and i + 1 < len(tokens):
+                    seed_dir = Path(tokens[i + 1])
+                    i += 2
+                elif tok == "--include-ref":
+                    include_ref = True
+                    i += 1
+                elif tok == "--dry-run":
+                    seed_dry_run = True
+                    i += 1
+                else:
+                    i += 1
+            if seed_dir is None:
+                seed_dir = config.CONFIG_DIR / "seed"
+            if not seed_dry_run:
+                self.last_trace = TurnTrace(
+                    prompt_preview=clean[:80], gear="reflex",
+                    gear_reason="Live /seed disabled until broker-owned execution",
+                    source="seed", latency_ms=int((time.monotonic() - t0) * 1000),
+                )
+                return "Denied: live seeding requires broker-owned execution.", "seed"
+            try:
+                from . import seed_knowledge
+
+                bundle = seed_knowledge.run_seed_bundle(
+                    seed_dir=seed_dir,
+                    include_reference=include_ref,
+                    reference_dir=(seed_dir / "reference") if include_ref else None,
+                    dry_run=seed_dry_run,
+                )
+                lines = [
+                    f"[SEED] dir={seed_dir} dry_run={seed_dry_run} include_ref={include_ref}",
+                    f"  SOUL preferences: {bundle['soul'].get('preferences', 0)}",
+                    f"  USER facts/triples: {bundle['user'].get('facts', 0)}/{bundle['user'].get('triples', 0)}",
+                    f"  Corpus: files={bundle['corpus'].get('files_scanned', 0)} "
+                    f"facts={bundle['corpus'].get('facts_seeded', 0)} "
+                    f"triples={bundle['corpus'].get('triples_seeded', 0)} "
+                    f"skipped_sensitive={bundle['corpus'].get('skipped_sensitive', 0)} "
+                    f"errors={bundle['corpus'].get('errors', 0)}",
+                    f"  Total writes: {bundle.get('total_writes', 0)}",
+                ]
+                if seed_dry_run:
+                    lines.insert(1, "  [DRY-RUN] No knowledge database writes; local files were inspected.")
+                reply = "\n".join(lines)
+            except Exception as exc:  # pragma: no cover - defensive
+                reply = f"[SEED] Error seeding knowledge: {exc}"
+            self.last_trace = TurnTrace(
+                prompt_preview=clean[:80],
+                gear="reflex",
+                gear_reason="Gear 0 /seed slash command (run_seed_bundle)",
+                dry_run=seed_dry_run,
+                source="dry-run · seed",
+                latency_ms=int((time.monotonic() - t0) * 1000),
+            )
+            return reply, "dry-run · seed"
 
         # ---- Gear 0-math: Deterministic AST arithmetic (0 LLM tokens) ----
         math_reply = try_gear0_math(clean)
@@ -2117,8 +2133,8 @@ class CelinaRouter:
             self.last_trace = TurnTrace(
                 prompt_preview=clean[:80],
                 gear="reflex",
-                gear_reason="Gear 0 approval-gated curated Flathub app install",
-                tools_called=["run_shell_command"] if not effective_dry_run else ["[sim]run_shell_command"],
+                gear_reason="Gear 0 install request (live execution disabled without broker)",
+                tools_called=["[sim]run_shell_command"] if effective_dry_run else [],
                 dry_run=effective_dry_run,
                 source="dry-run · install" if effective_dry_run else "install",
                 latency_ms=int((time.monotonic() - t0) * 1000),
@@ -2219,7 +2235,7 @@ class CelinaRouter:
                 res = skills.run_skill(
                     name=matched_skill["name"],
                     executor=lambda tn, ta, acb: tools.execute_tool(
-                        tn, ta, approval_cb=acb, status_cb=status_cb, consent_cb=consent_cb, task_glow_cb=task_glow_cb
+                        tn, ta, approval_cb=acb, status_cb=status_cb, consent_cb=consent_cb, task_glow_cb=task_glow_cb,
                     ),
                     approval_cb=approval_cb,
                     status_cb=status_cb,
@@ -2275,7 +2291,10 @@ class CelinaRouter:
                     execute_fn = _ef
                     break
             if execute_fn is not None:
-                result = execute_fn(handler, clean, dry_run=effective_dry_run)
+                result = execute_fn(
+                    handler, clean, dry_run=effective_dry_run,
+                    approval_cb=approval_cb, status_cb=status_cb, consent_cb=consent_cb,
+                )
                 if result is not None:
                     safe_result = gear0_utils.gear0_redact_pii(result)
                     self.last_trace = TurnTrace(
@@ -2292,7 +2311,10 @@ class CelinaRouter:
             if handler:
                 # Cache the classification result for future queries
                 _gear0_classify_store(clean, mod_name, handler)
-                result = execute_fn(handler, clean, dry_run=effective_dry_run)
+                result = execute_fn(
+                    handler, clean, dry_run=effective_dry_run,
+                    approval_cb=approval_cb, status_cb=status_cb, consent_cb=consent_cb,
+                )
                 if result is not None:
                     safe_result = gear0_utils.gear0_redact_pii(result)
                     self.last_trace = TurnTrace(
@@ -2316,7 +2338,10 @@ class CelinaRouter:
         for mod_name, classify_fn, execute_fn in gear0_plugins:
             handler = classify_fn(clean)
             if handler:
-                result = execute_fn(handler, clean, dry_run=effective_dry_run)
+                result = execute_fn(
+                    handler, clean, dry_run=effective_dry_run,
+                    approval_cb=approval_cb, status_cb=status_cb, consent_cb=consent_cb,
+                )
                 if result is not None:
                     if mod_name == "plugin4_os_shim":
                         safe_result = gear0_utils.gear0_redact_pii(str(result))
@@ -2338,18 +2363,75 @@ class CelinaRouter:
     # Between Gear 0 (0 tokens, 0 MB) and Gear 1 (Ollama qwen3:1.7b).
     # Uses smolLM 4-bit GGUF via llama.cpp — ~100-200MB RAM, sub-100ms.
     # ------------------------------------------------------------------
-    def _tier0_5_local_smolLM(
+    def _tier0_5_micro_classify(
         self,
         clean: str,
         effective_dry_run: bool,
-        approval_cb: Optional[ApprovalCallback],
-        status_cb: Optional[StatusCallback],
-        consent_cb: Optional[PrivacyConsentCallback],
-        task_glow_cb: Optional[TaskGlowCallback],
-        stream_cb: Optional[StreamCallback],
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
-        """Returns (reply, error, source) or (None, None, None) on fallback."""
+        approval_cb: ApprovalCallback | None,
+        status_cb: StatusCallback | None,
+        consent_cb: PrivacyConsentCallback | None,
+        task_glow_cb: TaskGlowCallback | None,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Gear 0.5 micro-tier: intent + slot classification → Gear 0 execution.
+
+        This is the *designed* role of Tier 0.5: the micro-LLM only classifies
+        intent + slots; Gear 0 handlers execute the actual OS action. Never
+        answers with free text — that is Tier 1's job.
+
+        Returns (reply, error, source) or (None, None, None) if no micro result.
+        """
         t0 = time.monotonic()
+
+        try:
+            backend = config.GEAR0_5_BACKEND
+            if backend not in {"fasttext", "smollm", "none", "auto"}:
+                backend = "auto"
+
+            micro_result = None
+            if backend != "none":
+                chosen = backend
+                if chosen == "auto":
+                    chosen = "fasttext"
+
+                micro_router = gear0_5_micro.get_gear05_router(backend=chosen)
+                if micro_router is not None and micro_router._initialized:
+                    micro_result = micro_router.classify(
+                        clean, timeout_sec=10.0,
+                    )
+
+            if micro_result is not None and micro_result.intent != "unknown":
+                if micro_result.confidence >= config.GEAR0_5_MIN_CONFIDENCE:
+                    executed = self._execute_gear05_intent(
+                        micro_result, clean, dry_run=effective_dry_run,
+                    )
+                    if executed is not None:
+                        self.last_trace = TurnTrace(
+                            prompt_preview=clean[:80],
+                            gear="reflex",
+                            gear_reason=f"Tier 0.5 micro ({micro_result.intent}, conf={micro_result.confidence:.2f}, src={micro_result.confidence_source})",
+                            source="tier0_5_micro",
+                            latency_ms=int((time.monotonic() - t0) * 1000),
+                        )
+                        return executed, None, "tier0_5_micro"
+
+        except Exception:
+            # Micro-tier failure is non-fatal; fall through to caller's next tier
+            pass
+
+        return None, None, None
+
+    def _tier0_5_smollm_generate(
+        self,
+        clean: str,
+        effective_dry_run: bool,
+    ) -> tuple[str | None, str | None, str | None]:
+        """Gear 0.5 smolLM free-text generation.
+
+        Only invoked when Tier 1 is unavailable (auto mode) or when the user
+        explicitly selects Tier 0.5. Never preempts Tier 1 in auto mode.
+        """
+        t0 = time.monotonic()
+
         try:
             if not gear0_5_smolLM.gear0_5_smolLM_available():
                 return None, "smolLM not available (llama.cpp binary or GGUF model missing)", None
@@ -2393,6 +2475,17 @@ class CelinaRouter:
         except Exception as exc:
             return None, f"Tier 0.5 smolLM error: {exc}", None
 
+    def _tier1_available(self) -> bool:
+        """Lightweight check: is the Tier 1 Ollama endpoint reachable?"""
+        try:
+            import urllib.request
+            url = f"{config.OLLAMA_API_BASE.rstrip('/')}/api/tags"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=2.0) as resp:  # nosec B310 — Ollama localhost API, scheme fixed to http
+                return resp.status == 200
+        except Exception:
+            return False
+
     # ------------------------------------------------------------------
     # Tier 1 — Local Ollama fast (qwen3:1.7b, think=False, sub-200ms target)
     # ------------------------------------------------------------------
@@ -2400,12 +2493,12 @@ class CelinaRouter:
         self,
         clean: str,
         effective_dry_run: bool,
-        approval_cb: Optional[ApprovalCallback],
-        status_cb: Optional[StatusCallback],
-        consent_cb: Optional[PrivacyConsentCallback],
-        task_glow_cb: Optional[TaskGlowCallback],
-        stream_cb: Optional[StreamCallback],
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        approval_cb: ApprovalCallback | None,
+        status_cb: StatusCallback | None,
+        consent_cb: PrivacyConsentCallback | None,
+        task_glow_cb: TaskGlowCallback | None,
+        stream_cb: StreamCallback | None,
+    ) -> tuple[str | None, str | None, str | None]:
         """Returns (reply, error, source) or (None, None, None) on fallback."""
         t0 = time.monotonic()
         try:
@@ -2440,12 +2533,12 @@ class CelinaRouter:
         self,
         clean: str,
         effective_dry_run: bool,
-        approval_cb: Optional[ApprovalCallback],
-        status_cb: Optional[StatusCallback],
-        consent_cb: Optional[PrivacyConsentCallback],
-        task_glow_cb: Optional[TaskGlowCallback],
-        stream_cb: Optional[StreamCallback],
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        approval_cb: ApprovalCallback | None,
+        status_cb: StatusCallback | None,
+        consent_cb: PrivacyConsentCallback | None,
+        task_glow_cb: TaskGlowCallback | None,
+        stream_cb: StreamCallback | None,
+    ) -> tuple[str | None, str | None, str | None]:
         """Returns (reply, error, source) or (None, None, None) on fallback."""
         t0 = time.monotonic()
         try:
@@ -2480,12 +2573,12 @@ class CelinaRouter:
         self,
         clean: str,
         effective_dry_run: bool,
-        approval_cb: Optional[ApprovalCallback],
-        status_cb: Optional[StatusCallback],
-        consent_cb: Optional[PrivacyConsentCallback],
-        task_glow_cb: Optional[TaskGlowCallback],
-        stream_cb: Optional[StreamCallback],
-    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        approval_cb: ApprovalCallback | None,
+        status_cb: StatusCallback | None,
+        consent_cb: PrivacyConsentCallback | None,
+        task_glow_cb: TaskGlowCallback | None,
+        stream_cb: StreamCallback | None,
+    ) -> tuple[str | None, str | None, str | None]:
         """Returns (reply, error, source) or (None, None, None) on fallback."""
         if not _has_cloud_key():
             return None, "No cloud provider API key configured.", None
@@ -2526,19 +2619,26 @@ class CelinaRouter:
         self,
         text: str,
         mode: str = "auto",
-        language: Optional[str] = None,
-        status_cb: Optional[StatusCallback] = None,
-        approval_cb: Optional[ApprovalCallback] = None,
-        consent_cb: Optional[PrivacyConsentCallback] = None,
-        task_glow_cb: Optional[TaskGlowCallback] = None,
-        stream_cb: Optional[StreamCallback] = None,
+        language: str | None = None,
+        status_cb: StatusCallback | None = None,
+        approval_cb: ApprovalCallback | None = None,
+        consent_cb: PrivacyConsentCallback | None = None,
+        task_glow_cb: TaskGlowCallback | None = None,
+        stream_cb: StreamCallback | None = None,
         dry_run: bool = False,
-        tier: Optional[int] = None,
+        tier: int | None = None,
+        channel: str = "text",
+        callbacks: _bh_mod.BrainCallbacks | None = None,
     ) -> tuple[str, str]:
         t0 = time.monotonic()
         clean = text.strip()
         if not clean:
             return "Please enter a prompt.", "system"
+
+        # Reset taint flag, step log, and tool results for this turn (T1 defense)
+        self._turn_tainted = False
+        self._turn_steps: list[dict[str, Any]] = []
+        self._turn_tool_results: list[tuple[str, str]] = []
 
         # Phase 2: Explicit Local-First Compute Split (0=Reflex Only, 1=Local Fast, 2=Local Heavy, 3=Opt-In Cloud)
         effective_tier = tier if tier is not None else self._session_tier
@@ -2549,7 +2649,7 @@ class CelinaRouter:
 
         # Movie Feature D: Dry-Run Simulation Mode ("simulate: ...", "dry run: ...", or --dry-run)
         effective_dry_run = bool(dry_run)
-        dry_m = re.match(r"^(?:simulate|dry[\s-]?run)\s*[:\-]\s*(.+)$", clean, re.I)
+        dry_m = re.match(r"^(?:simulate|dry[\s-]?run)\s*[:\-]\s*(.+)$", clean, re.IGNORECASE)
         if dry_m:
             effective_dry_run = True
             clean = dry_m.group(1).strip()
@@ -2572,8 +2672,38 @@ class CelinaRouter:
                 "• /name <New> [Nick]    — rename assistant & nickname\n"
                 "• /facts · /goals · /kg — view saved memory, goals & knowledge graph\n"
                 "• /skills · /mcp · /cache · /clear\n"
+                "• /tokens             — show compression token & context savings ledger\n"
+                "• /expand <ccr_id>    — retrieve full original tool output from CCR cache\n"
+                "• /cli <tool> <subcmd> [args] — typed CLI executor (git, docker, systemctl, gh)\n"
                 "• Prefixes: 'quick: ...', 'deep: ...', 'simulate: ...', 'remember key = val'"
             ), "system"
+
+        if low == "/persona" or low.startswith("/persona "):
+            parts = clean.split(None, 1)
+            if len(parts) == 1:
+                cur_style = getattr(self, "_persona_style", "celina")
+                cur_channel = getattr(self, "_persona_channel", "text")
+                return (
+                    f"Current persona: style={cur_style}, channel={cur_channel}\n"
+                    "Styles: celina (warm, helpful), jarvis (formal, precise), minimal (concise)\n"
+                    "Channels: text (default), voice (1-3 sentences, no markdown/emojis/bullets)\n"
+                    "Usage: /persona <style> [text|voice]",
+                    "system",
+                )
+            style_arg = parts[1].strip().lower()
+            channel_arg = "text"
+            if " " in parts[1]:
+                style_arg, channel_arg = parts[1].strip().split(None, 1)
+                style_arg = style_arg.lower()
+                channel_arg = channel_arg.strip().lower()
+            if style_arg not in {"celina", "jarvis", "minimal"}:
+                return f"Unknown persona style '{style_arg}'. Choose: celina, jarvis, minimal.", "system"
+            if channel_arg not in {"text", "voice"}:
+                return f"Unknown channel '{channel_arg}'. Choose: text, voice.", "system"
+            self._persona_style = style_arg
+            self._persona_channel = channel_arg
+            return f"Persona set to style={style_arg}, channel={channel_arg}.", "system"
+
 
         if low == "/name" or low.startswith("/name "):
             arg = clean[5:].strip()
@@ -2641,10 +2771,45 @@ class CelinaRouter:
             return self.get_last_receipt(), "explain"
         if low in {"/clear", "clear memory"}:
             self.db.clear_history()
-            return "Short-term conversation history cleared.", "memory"
+            context_compressor.clear_compression_state()
+            _sensory_mod.get_sensory_buffer().clear()
+            return "Short-term conversation history cleared. Compression CCR cache wiped. Sensory buffer cleared.", "memory"
+        if low == "/tokens":
+            if low.startswith("/tokens reset"):
+                context_compressor.get_token_tracker().reset()
+                return "Compression token ledger reset.", "system"
+            return context_compressor.get_token_tracker().format_report(), "system"
+        if low == "/expand" or low.startswith("/expand "):
+            parts = low.split(None, 1)
+            ccr_id = parts[1].strip() if len(parts) > 1 else ""
+            if not ccr_id:
+                return "Usage: /expand <ccr_id> [optional filter query]\nExample: /expand abc123def4", "system"
+            query = ""
+            if len(parts) > 1 and " " in parts[1]:
+                query = parts[1].split(None, 1)[1] if len(parts[1].split(None, 1)) > 1 else ""
+            return context_compressor.retrieve_compressed_context(ccr_id, query=query), "system"
+        if low == "/cli" or low.startswith("/cli "):
+            from . import cli_bridge as _cli_bridge
+            cli_parts = clean.split(None, 2)
+            if len(cli_parts) < 3:
+                return (
+                    "Usage: /cli <tool> <subcmd> [args...]\n"
+                    "Tools: git (status/diff/log/branch/show/rev-parse/remote | add/commit/checkout/switch/stash/pull/fetch),\n"
+                    "       docker (ps/images/logs/inspect/stats/version | start/stop/restart),\n"
+                    "       systemctl (status/is-active/is-enabled/list-units/list-timers | start/stop/restart/reload),\n"
+                    "       gh (status/pr/issue/repo/run)\n"
+                    "Mutating subcommands require interactive Tier-2 approval.",
+                    "system",
+                )
+            tool_name = cli_parts[1]
+            subcmd = cli_parts[2]
+            extra = None
+            if len(cli_parts) > 3:
+                extra = cli_parts[3].split()
+            return _cli_bridge.run_typed_cli(tool_name, subcmd, extra), "system"
         if low == "/facts":
             summary = self.db.format_facts_for_prompt()
-            return summary if summary else "No long-term facts saved yet.", "memory"
+            return summary or "No long-term facts saved yet.", "memory"
         if low in {"/goals", "list goals", "my goals"}:
             goals = self.db.list_goals(status="all", limit=15, cloud_only=False)
             if not goals:
@@ -2727,7 +2892,7 @@ class CelinaRouter:
                 for row in summary["connectors"]:
                     mark = "✓" if row["configured"] else "○"
                     lines.append(
-                        f"  {mark} {row['display_name']} ({row['name']}): {row['status']}"
+                        f"  {mark} {row['display_name']} ({row['name']}): {row['status']}",
                     )
                 lines.append("")
                 lines.append("Usage: /connectors <name> configure | deconfigure | status")
@@ -2844,12 +3009,12 @@ class CelinaRouter:
             return skills.recorder.stop_and_save(db=self.db), "skills"
 
         # Pillar 6A shortcut: 1-phrase skill healing ("heal skill <name>")
-        heal_m = re.match(r"^(?:heal|fix|repair)\s+skill\s+(.+)$", clean, re.I)
+        heal_m = re.match(r"^(?:heal|fix|repair)\s+skill\s+(.+)$", clean, re.IGNORECASE)
         if heal_m:
             return skills.heal_skill_from_last_trace(heal_m.group(1).strip(), db=self.db), "skills"
 
         # Shortcut: "save last actions as <name>"
-        save_m = re.match(r"^save\s+last\s+actions?\s+as\s+(.+)$", clean, re.I)
+        save_m = re.match(r"^save\s+last\s+actions?\s+as\s+(.+)$", clean, re.IGNORECASE)
         if save_m:
             return skills.save_last_actions_as_skill(save_m.group(1).strip()), "skills"
 
@@ -2861,6 +3026,21 @@ class CelinaRouter:
             self.db.set_fact(k, v)
             return f"Saved to long-term memory: {k.strip()} = {v.strip()}", "memory"
 
+        # Deictic query detection: inject sensory buffer context for "what was that...?" queries
+        deictic_patterns = (
+            "what was that", "what did i just", "what did i see", "what did i look at",
+            "summarize what", "that error", "that message", "that notification",
+            "earlier", "just now", "a moment ago", "2 minutes ago", "few minutes ago",
+        )
+        is_deictic = any(p in low for p in deictic_patterns)
+        sensory_ctx = ""
+        if is_deictic:
+            sensory_ctx = _sensory_mod.get_sensory_buffer().recent_context(limit=4)
+            if sensory_ctx:
+                user_prompt_clean = clean
+                clean = sensory_ctx + "\n\nUser query (untrusted sensory data — verify before acting): " + user_prompt_clean
+                low = clean.lower()
+
         # ---- Tier 0: zero-token, zero-AI-RAM, sub-20ms local reflexes ----
         tier0_reply, tier0_source = self._tier0_dispatch(
             clean,
@@ -2871,7 +3051,7 @@ class CelinaRouter:
             task_glow_cb,
         )
         if tier0_reply is not None:
-            return tier0_reply, tier0_source
+            return self._finalize_reply(tier0_reply, tier0_source, self.last_trace, callbacks)
 
         # ------------------------------------------------------------------
         # Tier-based LLM fallback (only reached when Tier 0 has no match)
@@ -2890,15 +3070,29 @@ class CelinaRouter:
 
         # Determine which tiers to attempt based on effective_tier and mode
         if effective_tier in {None, 0.5}:
-            # Try Tier 0.5 (local smolLM quantized)
-            reply, err, src = self._tier0_5_local_smolLM(
+            # Step 1: Tier 0.5 micro-tier (intent classification → Gear 0 execution)
+            # Always runs — this is the designed role (classifier, not answerer)
+            micro_reply, micro_err, micro_src = self._tier0_5_micro_classify(
                 clean, effective_dry_run, approval_cb, status_cb,
-                consent_cb, task_glow_cb, stream_cb,
+                consent_cb, task_glow_cb,
             )
-            if reply is not None:
-                return reply, src or "tier0_5_smolLM"
-            if err and effective_tier == 0.5:
-                return f"Tier 0.5 smolLM unavailable: {err}", "tier0_5_error"
+            if micro_reply is not None:
+                return self._finalize_reply(micro_reply, micro_src or "tier0_5_micro", self.last_trace, callbacks)
+
+            # Step 2: Tier 0.5 smolLM free-text — only when Tier 1 is unavailable
+            # In auto mode, never let smolLM preempt Tier 1.
+            try_smollm = (
+                effective_tier == 0.5
+                or (effective_tier is None and not self._tier1_available())
+            )
+            if try_smollm:
+                reply, err, src = self._tier0_5_smollm_generate(
+                    clean, effective_dry_run,
+                )
+                if reply is not None:
+                    return self._finalize_reply(reply, src or "tier0_5_smolLM", self.last_trace, callbacks)
+                if err and effective_tier == 0.5:
+                    return f"Tier 0.5 smolLM unavailable: {err}", "tier0_5_error"
 
         if effective_tier in {None, 1}:
             # Try Tier 1 (local Ollama fast)
@@ -2907,7 +3101,7 @@ class CelinaRouter:
                 consent_cb, task_glow_cb, stream_cb,
             )
             if reply is not None:
-                return reply, src or "tier1_local_fast"
+                return self._finalize_reply(reply, src or "tier1_local_fast", self.last_trace, callbacks)
             if err and effective_tier == 1:
                 return f"Tier 1 local fast unavailable: {err}", "tier1_error"
 
@@ -2918,7 +3112,7 @@ class CelinaRouter:
                 consent_cb, task_glow_cb, stream_cb,
             )
             if reply is not None:
-                return reply, src or "tier2_local_heavy"
+                return self._finalize_reply(reply, src or "tier2_local_heavy", self.last_trace, callbacks)
             if err and effective_tier == 2:
                 return f"Tier 2 local heavy unavailable: {err}", "tier2_error"
 
@@ -2929,7 +3123,7 @@ class CelinaRouter:
                 consent_cb, task_glow_cb, stream_cb,
             )
             if reply is not None:
-                return reply, src or "tier3_cloud"
+                return self._finalize_reply(reply, src or "tier3_cloud", self.last_trace, callbacks)
             if err and effective_tier == 3:
                 return f"Tier 3 cloud unavailable: {err}", "tier3_error"
 
@@ -2945,10 +3139,10 @@ class CelinaRouter:
 def route_query_with_meta(
     text: str,
     mode: str = "auto",
-    language: Optional[str] = None,
-    status_cb: Optional[StatusCallback] = None,
-    approval_cb: Optional[ApprovalCallback] = None,
-    consent_cb: Optional[PrivacyConsentCallback] = None,
+    language: str | None = None,
+    status_cb: StatusCallback | None = None,
+    approval_cb: ApprovalCallback | None = None,
+    consent_cb: PrivacyConsentCallback | None = None,
 ) -> tuple[str, str]:
     return CelinaRouter().ask(
         text,
@@ -2960,7 +3154,7 @@ def route_query_with_meta(
     )
 
 
-def process_query(text: str, mode: str = "auto", language: Optional[str] = None) -> str:
+def process_query(text: str, mode: str = "auto", language: str | None = None) -> str:
     reply, _ = route_query_with_meta(text, mode=mode, language=language)
     return reply
 
@@ -3038,9 +3232,11 @@ def _terminal_privacy_consent(summary: str, preview: str) -> str:
 
 
 def main() -> None:
+    config.set_process_name("celina-daemon")
+
     # Fast-path operational subcommands: celina undo | migrate | export | import | checkpoints | evidence | capabilities | autonomy | config
     if len(sys.argv) >= 2 and sys.argv[1] in {
-        "undo", "migrate", "export", "import", "checkpoints", "evidence", "capabilities", "autonomy", "config"
+        "undo", "migrate", "export", "import", "checkpoints", "evidence", "capabilities", "autonomy", "config",
     }:
         from . import state_ops
 
@@ -3071,7 +3267,7 @@ def main() -> None:
     args = parser.parse_args()
 
     mode = "local" if args.local else ("cloud" if args.cloud else "auto")
-    tier_flag: Optional[int] = args.tier
+    tier_flag: int | None = args.tier
     if tier_flag in {1, 2} and mode == "auto":
         mode = "local"
     elif tier_flag == 3 and mode == "auto":
@@ -3083,7 +3279,7 @@ def main() -> None:
 
     if args.voice:
         transcript, err = voice.listen_and_transcribe(
-            lang_hint=lang, on_status=lambda s: print(f"[{s}]", flush=True)
+            lang_hint=lang, on_status=lambda s: print(f"[{s}]", flush=True),
         )
         if err or not transcript:
             print(f"[voice] {err or 'No speech detected.'}")
@@ -3121,7 +3317,7 @@ def main() -> None:
     print(
         f"{config.get_assistant_display_label()} AI v4.4 [mode={mode}, lang={lang}, dry_run={'ON' if dry_run_flag else 'OFF'}, "
         f"privacy={'STRICT' if config.STRICT_PRIVACY else 'OFF'}, cache={'ON' if config.CACHE_ENABLED else 'OFF'}] "
-        "(commands: 'exit', '/help', '/tier [0-3|auto]', '/turbo', '/bg <goal>', '/jobs', '/train', '/model [tag]', '/ram', '/why', '/struggle', '/offload', '/lang auto|en|te|hi')"
+        "(commands: 'exit', '/help', '/context', '/seed [--dir <path>] [--include-ref] [--dry-run]', '/tier [0-3|auto]', '/turbo', '/bg <goal>', '/jobs', '/train', '/model [tag]', '/ram', '/why', '/struggle', '/offload', '/lang auto|en|te|hi')",
     )
     while True:
         try:

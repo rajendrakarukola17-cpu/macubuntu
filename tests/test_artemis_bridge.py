@@ -49,7 +49,7 @@ def test_artemis_mcp_call_falls_back_to_cli():
 
     with patch.object(bridge, "_run_via_mcp", return_value={"success": False, "error": "connection refused"}), \
          patch.object(bridge, "_run_via_cli", return_value={"success": True, "result": "done", "method": "cli"}):
-        result = bridge.run_task("open Chrome")
+        result = bridge.run_task("open Chrome", approval_cb=lambda *a, **k: True)
         assert result["success"] is True
         assert result["method"] == "cli"
 

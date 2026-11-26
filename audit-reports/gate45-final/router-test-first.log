@@ -1,0 +1,59 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___________ test_explicit_selected_tool_precedes_generic_candidates ____________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7ff0a08cf360>
+
+    def test_explicit_selected_tool_precedes_generic_candidates(monkeypatch):
+        """A named tool, if allowed, must not be replaced by the first generic tool."""
+        choices = [
+            {"function": {"name": "get_system_stats"}},
+            {"function": {"name": "list_files"}},
+        ]
+        monkeypatch.setattr(tools, "get_contextual_tool_schemas", lambda *a, **kw: (choices, []))
+        monkeypatch.setattr(capabilities, "check_tool_execution_boundary", lambda *a, **kw: (True, ""))
+        decision = router.CelinaRouter().route_for_autonomy("please use list_files")
+>       assert decision["tool_name"] == "list_files"
+E       AssertionError: assert 'get_system_stats' == 'list_files'
+E
+E         - list_files
+E         + get_system_stats
+
+tests/selfimprove/test_gate45_router_priority.py:16: AssertionError
+_______________ test_denied_tool_fallback_hash_binds_actual_tool _______________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7ff0a08cf820>
+
+    def test_denied_tool_fallback_hash_binds_actual_tool(monkeypatch):
+        """Capability fallback must never carry a hash for the denied selection."""
+        choices = [
+            {"function": {"name": "get_system_stats"}},
+            {"function": {"name": "list_files"}},
+        ]
+        monkeypatch.setattr(tools, "get_contextual_tool_schemas", lambda *a, **kw: (choices, []))
+        monkeypatch.setattr(
+            capabilities, "check_tool_execution_boundary",
+            lambda name, **kw: (name != "list_files", "denied"),
+        )
+        decision = router.CelinaRouter().route_for_autonomy("please use list_files")
+        assert decision["tool_name"] == "get_system_stats"
+>       assert decision["arguments_hash"] == approval.compute_arguments_hash(
+            decision["tool_name"], decision["arguments"],
+        )
+E       AssertionError: assert '0682a9a11a84...2a1eb997bf20f' == 'f7919c17e4e7...cc80f1b80d830'
+E
+E         - f7919c17e4e73aee0d39ed2a6b282f76d5c5903f9aa15a26a2fcc80f1b80d830
+E         + 0682a9a11a84e252b667c4bfc4c93b9d9eb94cc2f0cbdfa90f52a1eb997bf20f
+
+tests/selfimprove/test_gate45_router_priority.py:35: AssertionError
+=============================== warnings summary ===============================
+../../../usr/local/lib/python3.13/site-packages/_pytest/config/__init__.py:1434
+  /usr/local/lib/python3.13/site-packages/_pytest/config/__init__.py:1434: PytestConfigWarning: Unknown config option: asyncio_mode
+
+    self._warn_or_fail_if_strict(f"Unknown config option: {key}\n")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/selfimprove/test_gate45_router_priority.py::test_explicit_selected_tool_precedes_generic_candidates
+FAILED tests/selfimprove/test_gate45_router_priority.py::test_denied_tool_fallback_hash_binds_actual_tool
+2 failed, 1 warning in 1.19s

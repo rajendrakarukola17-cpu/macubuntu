@@ -1,20 +1,19 @@
-"""
-Celina AI (Celly) - Gear 0 Hardware (Update 19)
+"""Celina AI (Celly) - Gear 0 Hardware (Update 19)
 
 Real-time local hardware state queries — Grok-style awareness, 100% local.
+
 Examples:
   - "Is my VPN on?" → checks network interfaces
   * "How hot is my CPU?" → reads thermal zones
   - "Is my mic muted?" → queries PulseAudio/PipeWire
+
 """
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
 
 _VPN_RE = __import__("re").compile(
     r"^(?:please\s+)?(?:is\s+my\s+)?vpn\s+(?:on|off|up|down|active|connected)\??$",
@@ -42,7 +41,7 @@ def hardware_vpn_status() -> str:
     """Check if VPN is active."""
     try:
         result = subprocess.run(
-            ["ip", "addr"], capture_output=True, text=True, timeout=5
+            ["ip", "addr"], capture_output=True, text=True, timeout=5,
         )
         output = result.stdout
         vpn_interfaces = ["tun0", "tun1", "wg0", "wg1", "ppp0"]
@@ -143,7 +142,7 @@ def hardware_local_ip() -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_hardware_classify(query: str) -> Optional[str]:
+def gear0_hardware_classify(query: str) -> str | None:
     """Classify query into a hardware handler name, or None."""
     low = query.strip().lower()
 
@@ -161,7 +160,7 @@ def gear0_hardware_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_hardware_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_hardware_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Hardware handler."""
     try:
         if handler == "vpn":
@@ -180,11 +179,11 @@ def gear0_hardware_execute(handler: str, query: str, dry_run: bool = False) -> O
 
 
 __all__ = [
-    "hardware_vpn_status",
-    "hardware_cpu_temp",
-    "hardware_mic_status",
-    "hardware_battery",
-    "hardware_local_ip",
     "gear0_hardware_classify",
     "gear0_hardware_execute",
+    "hardware_battery",
+    "hardware_cpu_temp",
+    "hardware_local_ip",
+    "hardware_mic_status",
+    "hardware_vpn_status",
 ]

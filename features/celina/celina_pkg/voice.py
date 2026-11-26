@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Zero-Idle-RAM Multilingual Neural Voice Engine (EN / TE / HI)
+"""Celina AI (Celly) - Zero-Idle-RAM Multilingual Neural Voice Engine (EN / TE / HI)
 - Script-aware Piper neural TTS via short-lived subprocess (0 MB idle RAM)
 - Automatic Unicode detection for Telugu (తెలుగు), Hindi (हिन्दी), and English
 - Mixed-language sentence segmentation so each language speaks with its native voice
@@ -9,6 +8,7 @@ Celina AI (Celly) - Zero-Idle-RAM Multilingual Neural Voice Engine (EN / TE / HI
 """
 
 import argparse
+import atexit
 import json
 import os
 import re
@@ -21,14 +21,37 @@ import tempfile
 import threading
 import time
 import wave
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from . import config
+from .model_integrity import verify_model_hash
+
+# Module-level registry for cleanup on exit (prevents orphaned Whisper/TTS workers
+# and ensures PipeWire ducker volumes are restored).
+_EXIT_HANDLERS: list[Callable[[], None]] = []
+
+
+def _register_exit_handler(handler: Callable[[], None]) -> None:
+    _EXIT_HANDLERS.append(handler)
+    atexit.register(handler)
+
+
+def _run_exit_handlers() -> None:
+    for handler in reversed(_EXIT_HANDLERS):
+        try:
+            handler()
+        except Exception:
+            pass
 
 _TTS_LOCK = threading.Lock()
 _ACTIVE_TTS_PROCS: list[subprocess.Popen] = []
 _TTS_GEN = 0
+
+# Kokoro model cache — loaded once, reused across sentences (avoids ~seconds of
+# per-sentence model reload latency).
+_KOKORO_CACHE: dict[str, Any] = {}
 
 _SELF_AUDIO_APPS = frozenset({
     "aplay", "paplay", "pw-play", "pw-cat", "piper", "espeak-ng", "espeak",
@@ -37,8 +60,7 @@ _SELF_AUDIO_APPS = frozenset({
 
 
 class PipeWireAudioDucker:
-    """
-    deskvoice-inspired PipeWire audio ducker:
+    """deskvoice-inspired PipeWire audio ducker:
     Smoothly lowers active background music/video sink-inputs (e.g. Spotify, Firefox, VLC)
     to `duck_pct`% while Celina listens or speaks, then ALWAYS restores exact original volumes.
     """
@@ -46,16 +68,36 @@ class PipeWireAudioDucker:
     def __init__(
         self,
         *,
-        enabled: Optional[bool] = None,
-        duck_pct: Optional[int] = None,
-        runner: Optional[Callable[[list[str]], tuple[int, str]]] = None,
-        has_pactl: Optional[bool] = None,
+        enabled: bool | None = None,
+        duck_pct: int | None = None,
+        runner: Callable[[list[str]], tuple[int, str]] | None = None,
+        has_pactl: bool | None = None,
     ):
         self.enabled = config.AUDIO_DUCKING_ENABLED if enabled is None else bool(enabled)
         self.duck_pct = max(5, min(90, int(config.AUDIO_DUCK_PCT if duck_pct is None else duck_pct)))
         self._runner = runner or self._default_runner
         self._has_pactl = (shutil.which("pactl") is not None) if has_pactl is None else bool(has_pactl)
         self._saved_volumes: list[tuple[str, int]] = []
+        type(self)._active_instances.add(self)
+
+    _active_instances: set = set()
+
+    @classmethod
+    def _restore_all_saved_volumes(cls) -> None:
+        """Restore volumes for all active ducker instances (atexit safety net)."""
+        for inst in list(cls._active_instances):
+            try:
+                inst.restore()
+            except Exception:
+                pass
+        cls._active_instances.clear()
+
+    def __del__(self) -> None:
+        try:
+            self.restore()
+        except Exception:
+            pass
+        type(self)._active_instances.discard(self)
 
     @staticmethod
     def _default_runner(cmd: list[str]) -> tuple[int, str]:
@@ -69,8 +111,8 @@ class PipeWireAudioDucker:
     def parse_duckable_sink_inputs(pactl_output: str, target_pct: int) -> list[tuple[str, int]]:
         """Parses `pactl list sink-inputs` -> [(sink_input_id, original_pct)] for non-Celina streams."""
         results: list[tuple[str, int]] = []
-        cur_id: Optional[str] = None
-        cur_vol: Optional[int] = None
+        cur_id: str | None = None
+        cur_vol: int | None = None
         cur_apps: list[str] = []
         cur_corked = False
 
@@ -138,11 +180,11 @@ class PipeWireAudioDucker:
 
     def __exit__(self, _exc_type, _exc, _tb) -> None:
         self.restore()
+        type(self)._active_instances.discard(self)
 
 
 class SileroOnnxVAD:
-    """
-    Zero-PyTorch Silero VAD v5 (and v4 fallback) via ONNX Runtime (<2 MB RAM).
+    """Zero-PyTorch Silero VAD v5 (and v4 fallback) via ONNX Runtime (<2 MB RAM).
     Rejects fan noise, keyboard typing & background TV far better than raw RMS energy thresholds.
     """
 
@@ -167,8 +209,8 @@ class SileroOnnxVAD:
     @classmethod
     def try_load(
         cls,
-        model_path: Optional[str] = None,
-        threshold: Optional[float] = None,
+        model_path: str | None = None,
+        threshold: float | None = None,
         sample_rate: int = 16000,
     ) -> Optional["SileroOnnxVAD"]:
         engine = config.VAD_ENGINE
@@ -176,6 +218,9 @@ class SileroOnnxVAD:
             return None
         mpath = Path(model_path or config.SILERO_VAD_MODEL)
         if not mpath.exists():
+            return None
+        # Verify model hash (fail closed on tampering)
+        if not verify_model_hash(mpath, lock_id="silero-vad-v5-onnx"):
             return None
         try:
             import onnxruntime as ort
@@ -211,8 +256,7 @@ class SileroOnnxVAD:
         for i in range(n_frames):
             frame = buf[i * self.FRAME_SAMPLES : (i + 1) * self.FRAME_SAMPLES]
             p = self.score_frame(frame)
-            if p > max_prob:
-                max_prob = p
+            max_prob = max(max_prob, p)
         self._tail = buf[n_frames * self.FRAME_SAMPLES :]
         return max_prob
 
@@ -251,8 +295,7 @@ _HINGLISH_PARTICLES = _HINGLISH_STRONG | {
 
 
 def detect_language_detail(text: str, default: str = "en") -> tuple[str, str]:
-    """
-    Detects Telugu ('te'), Hindi ('hi'), or English ('en') AND script style ('native' | 'romanized').
+    """Detects Telugu ('te'), Hindi ('hi'), or English ('en') AND script style ('native' | 'romanized').
     Checks Unicode ranges first, then lightweight Tenglish / Hinglish particle lexicons.
     """
     if not text:
@@ -297,17 +340,15 @@ def detect_language_detail(text: str, default: str = "en") -> tuple[str, str]:
 
 
 def detect_language(text: str, default: str = "en") -> str:
-    """
-    Detects Telugu ('te'), Hindi ('hi'), or English ('en') via Unicode script ranges
+    """Detects Telugu ('te'), Hindi ('hi'), or English ('en') via Unicode script ranges
     plus Romanized Tenglish / Hinglish particle lexicons.
     """
     code, _style = detect_language_detail(text, default=default)
     return code
 
 
-def split_by_language_segments(text: str, force_lang: Optional[str] = None) -> list[tuple[str, str]]:
-    """
-    Splits text on sentence boundaries (including Devanagari danda '।') and groups
+def split_by_language_segments(text: str, force_lang: str | None = None) -> list[tuple[str, str]]:
+    """Splits text on sentence boundaries (including Devanagari danda '।') and groups
     consecutive sentences sharing the same detected language for seamless multilingual TTS.
     """
     cleaned = _clean_for_speech(text)
@@ -344,7 +385,7 @@ def stop_speaking() -> None:
         _ACTIVE_TTS_PROCS.clear()
 
 
-def _find_piper_cmd() -> Optional[list[str]]:
+def _find_piper_cmd() -> list[str] | None:
     venv_piper = Path(sys.executable).parent / "piper"
     if venv_piper.exists() and os.access(venv_piper, os.X_OK):
         return [str(venv_piper)]
@@ -354,7 +395,7 @@ def _find_piper_cmd() -> Optional[list[str]]:
     return None
 
 
-def _find_audio_player(wav_path: str) -> Optional[list[str]]:
+def _find_audio_player(wav_path: str) -> list[str] | None:
     if shutil.which("pw-play"):
         return ["pw-play", wav_path]
     if shutil.which("paplay"):
@@ -364,22 +405,37 @@ def _find_audio_player(wav_path: str) -> Optional[list[str]]:
     return None
 
 
-def _piper_model_for_lang(lang_code: str) -> Optional[Path]:
+def _piper_lock_id(model_name: str) -> str | None:
+    """Map a Piper model name to its download-locks.sha256 lock ID."""
+    mapping = {
+        "en_US-amy-medium": "piper-en_US-amy-medium-onnx",
+        "te_IN-maya-medium": "piper-te_IN-maya-medium-onnx",
+        "hi_IN-priyamvada-medium": "piper-hi_IN-priyamvada-medium-onnx",
+    }
+    return mapping.get(model_name)
+
+
+def _piper_model_for_lang(lang_code: str) -> Path | None:
     model_name = config.get_voice_for_lang(lang_code)
     candidate = config.VOICES_DIR / f"{model_name}.onnx"
     if candidate.exists():
+        lock_id = _piper_lock_id(model_name)
+        if lock_id is not None and not verify_model_hash(candidate, lock_id=lock_id):
+            return None  # hash mismatch — tampered model, fail closed
         return candidate
     # Fallback to English Piper model only when language is English
     if lang_code == "en":
         fallback = config.VOICES_DIR / f"{config.VOICE_MODEL}.onnx"
         if fallback.exists():
+            lock_id = _piper_lock_id(config.VOICE_MODEL)
+            if lock_id is not None and not verify_model_hash(fallback, lock_id=lock_id):
+                return None
             return fallback
     return None
 
 
 def _try_speak_kokoro(lang_code: str, text: str, gen: int) -> bool:
-    """
-    Opt-in Kokoro-82M ONNX TTS for studio-grade English & Hindi voices (Apache-2.0, CPU-friendly).
+    """Opt-in Kokoro-82M ONNX TTS for studio-grade English & Hindi voices (Apache-2.0, CPU-friendly).
     Telugu ('te') always bypasses Kokoro and uses native Piper te_IN-maya-medium.
     """
     if config.TTS_ENGINE == "piper" or lang_code not in {"en", "hi"}:
@@ -389,20 +445,31 @@ def _try_speak_kokoro(lang_code: str, text: str, gen: int) -> bool:
     voices_bin = kokoro_dir / "voices-v1.0.bin"
     if not (model_onnx.exists() and voices_bin.exists()):
         return False
+    # Verify model hashes (fail closed on tampering)
+    if not verify_model_hash(model_onnx, lock_id="kokoro-v1.0-onnx"):
+        return False
+    if not verify_model_hash(voices_bin, lock_id="kokoro-voices-v1.0-bin"):
+        return False
     try:
-        from kokoro_onnx import Kokoro
         import numpy as np
+        from kokoro_onnx import Kokoro
     except Exception:
         return False
 
+    # Cache Kokoro instance across sentences to avoid per-sentence model reload.
+    cache_key = f"{model_onnx}:{voices_bin}"
     with _TTS_LOCK:
         if gen != _TTS_GEN:
             return True
+        kokoro = _KOKORO_CACHE.get(cache_key)
+        if kokoro is None:
+            kokoro = Kokoro(str(model_onnx), str(voices_bin))
+            _KOKORO_CACHE[cache_key] = kokoro
 
     fd, wav_path = tempfile.mkstemp(prefix="celina_kokoro_", suffix=".wav")
     os.close(fd)
+    os.chmod(wav_path, 0o600)
     try:
-        kokoro = Kokoro(str(model_onnx), str(voices_bin))
         voice_name = config.KOKORO_VOICE_EN if lang_code == "en" else config.KOKORO_VOICE_HI
         kokoro_lang = "en-us" if lang_code == "en" else "hi"
         samples, sr = kokoro.create(text, voice=voice_name, speed=1.0, lang=kokoro_lang)
@@ -455,6 +522,7 @@ def _speak_segment(lang_code: str, text: str, gen: int) -> None:
     if piper_cmd and model_path:
         fd, wav_path = tempfile.mkstemp(prefix="celina_tts_", suffix=".wav")
         os.close(fd)
+        os.chmod(wav_path, 0o600)
         try:
             synth = subprocess.Popen(
                 [*piper_cmd, "--model", str(model_path), "--output_file", wav_path],
@@ -533,12 +601,11 @@ def is_speaking() -> bool:
 
 def speak_text(
     text: str,
-    enabled: Optional[bool] = None,
-    lang: Optional[str] = None,
-    on_done: Optional[Callable[[], None]] = None,
+    enabled: bool | None = None,
+    lang: str | None = None,
+    on_done: Callable[[], None] | None = None,
 ) -> None:
-    """
-    Speaks text asynchronously using per-language Piper neural voices (0 MB idle RAM),
+    """Speaks text asynchronously using per-language Piper neural voices (0 MB idle RAM),
     automatically switching between English, Telugu (తెలుగు), and Hindi (हिन्दी).
     Invokes optional `on_done()` once playback completes or is interrupted (for echo-free wake-word resume).
     """
@@ -584,20 +651,19 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"(?<=[.!?।])\s+|\n+")
 
 
 class SentenceStreamSpeaker:
-    """
-    Siri-grade Sentence-Streamed Piper TTS player:
-      - Consumes live streamed cumulative text (`feed_partial(partial_text)`)
-      - Immediately speaks each completed sentence in order while the LLM is still generating
-      - Honors `stop_speaking()` barge-in (`Esc`) and fires `on_done()` once all queued audio finishes
+    """Siri-grade Sentence-Streamed Piper TTS player:
+    - Consumes live streamed cumulative text (`feed_partial(partial_text)`)
+    - Immediately speaks each completed sentence in order while the LLM is still generating
+    - Honors `stop_speaking()` barge-in (`Esc`) and fires `on_done()` once all queued audio finishes
     """
 
     def __init__(
         self,
         *,
-        enabled: Optional[bool] = None,
-        lang: Optional[str] = None,
-        on_done: Optional[Callable[[], None]] = None,
-        speak_fn: Optional[Callable[[str, str, int], None]] = None,
+        enabled: bool | None = None,
+        lang: str | None = None,
+        on_done: Callable[[], None] | None = None,
+        speak_fn: Callable[[str, str, int], None] | None = None,
     ):
         import queue as _queue
 
@@ -605,7 +671,7 @@ class SentenceStreamSpeaker:
         self._lang = lang
         self._on_done = on_done
         self._speak_fn = speak_fn or _speak_segment
-        self._queue: "_queue.Queue[Optional[str]]" = _queue.Queue()
+        self._queue: _queue.Queue[str | None] = _queue.Queue()
         self._consumed_len = 0
         self._started = False
         self._finished = False
@@ -716,9 +782,8 @@ class SentenceStreamSpeaker:
 def listen_followup_window(
     timeout_sec: float = 5.0,
     language: str = "auto",
-) -> tuple[Optional[str], Optional[str]]:
-    """
-    Siri-style hands-free follow-up mic window after Celina finishes speaking:
+) -> tuple[str | None, str | None]:
+    """Siri-style hands-free follow-up mic window after Celina finishes speaking:
     listens briefly (`timeout_sec`, default 5s) and returns (transcript, None) if the user
     speaks, or (None, None) silently if no follow-up speech occurs.
     """
@@ -742,13 +807,12 @@ def listen_followup_window(
 
 def record_until_silence(
     sample_rate: int = 16000,
-    max_duration: Optional[float] = None,
-    start_timeout: Optional[float] = None,
-    silence_duration: Optional[float] = None,
-    on_status: Optional[Callable[[str], None]] = None,
-) -> tuple[Optional[str], Optional[str]]:
-    """
-    Records mono 16kHz audio and automatically stops after silence (Siri-style VAD).
+    max_duration: float | None = None,
+    start_timeout: float | None = None,
+    silence_duration: float | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> tuple[str | None, str | None]:
+    """Records mono 16kHz audio and automatically stops after silence (Siri-style VAD).
     Returns (wav_file_path, error_message).
     """
     try:
@@ -806,13 +870,12 @@ def record_until_silence(
                             if on_status:
                                 on_status("Hearing speech...")
                         quiet_sec = 0.0
-                    else:
-                        if speech_started:
-                            quiet_sec += chunk_sec
-                            if quiet_sec >= sil_dur:
-                                break
-                        elif elapsed_sec >= start_to:
+                    elif speech_started:
+                        quiet_sec += chunk_sec
+                        if quiet_sec >= sil_dur:
                             break
+                    elif elapsed_sec >= start_to:
+                        break
     except Exception as exc:
         return None, f"Microphone error: {exc}"
 
@@ -823,6 +886,7 @@ def record_until_silence(
     pcm16 = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
 
     fd, wav_path = tempfile.mkstemp(prefix="celina_mic_", suffix=".wav")
+    os.chmod(wav_path, 0o600)
     os.close(fd)
     try:
         with wave.open(wav_path, "wb") as wf:
@@ -840,8 +904,8 @@ def record_until_silence(
 
 
 def _transcribe_wav_inline(
-    wav_path: str, lang_hint: Optional[str] = None, model: object = None
-) -> tuple[str, str, Optional[str]]:
+    wav_path: str, lang_hint: str | None = None, model: object = None,
+) -> tuple[str, str, str | None]:
     """Runs multilingual faster-whisper inside the worker subprocess."""
     try:
         from faster_whisper import WhisperModel
@@ -862,21 +926,20 @@ def _transcribe_wav_inline(
 
 
 class _WarmWhisperWorker:
-    """
-    Warm-standby faster-whisper subprocess with 180-second idle auto-offload (0 MB idle RAM):
+    """Warm-standby faster-whisper subprocess with 180-second idle auto-offload (0 MB idle RAM):
     - Never launches at boot; spins up on first voice command.
     - Stays warm during back-to-back voice conversations (0s cold-start delay).
     - Auto-terminates & closes pipes after WHISPER_IDLE_OFFLOAD_SEC of silence so Linux
       reclaims 100% of Whisper RAM.
     """
 
-    def __init__(self, idle_sec: Optional[float] = None):
+    def __init__(self, idle_sec: float | None = None):
         self._idle_sec = float(idle_sec if idle_sec is not None else config.WHISPER_IDLE_OFFLOAD_SEC)
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
         self._read_buf = bytearray()
         self._lock = threading.Lock()
         self._last_used = 0.0
-        self._reaper: Optional[threading.Timer] = None
+        self._reaper: threading.Timer | None = None
 
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
@@ -919,17 +982,23 @@ class _WarmWhisperWorker:
             if not self.is_alive():
                 self._stop_locked()
                 return False
-            if force or (time.time() - self._last_used) >= self._idle_sec:
+            # Use monotonic clock for idle calculation — immune to system clock jumps.
+            if force or (time.monotonic() - self._last_used) >= self._idle_sec:
                 self._stop_locked()
                 return True
             self._schedule_reaper_locked()
             return False
 
-    def transcribe(
-        self, wav_path: str, lang_hint: Optional[str] = None, timeout: float = 60.0
-    ) -> tuple[str, str, Optional[str]]:
+    def shutdown(self) -> None:
+        """Stop the worker subprocess and cancel the reaper timer. Safe to call at exit."""
         with self._lock:
-            self._last_used = time.time()
+            self._stop_locked()
+
+    def transcribe(
+        self, wav_path: str, lang_hint: str | None = None, timeout: float = 60.0,
+    ) -> tuple[str, str, str | None]:
+        with self._lock:
+            self._last_used = time.monotonic()
             if not self.is_alive():
                 self._stop_locked()
                 cmd = [sys.executable, "-m", "celina_pkg.voice", "--worker"]
@@ -953,12 +1022,16 @@ class _WarmWhisperWorker:
                 self._stop_locked()
                 return "", "en", f"Whisper worker write error: {exc}"
 
-            deadline = time.time() + timeout
+            deadline = time.monotonic() + timeout
             stdout_fd = self._proc.stdout.fileno()
             sel = selectors.DefaultSelector()
             sel.register(stdout_fd, selectors.EVENT_READ)
             try:
                 while True:
+                    # P1: read_buf cap — prevent unbounded growth from a stalled worker.
+                    if len(self._read_buf) > 16 * 1024 * 1024:  # 16 MB cap
+                        self._stop_locked()
+                        return "", "en", "Whisper worker read buffer exceeded cap."
                     nl_idx = self._read_buf.find(b"\n")
                     if nl_idx != -1:
                         raw_line = bytes(self._read_buf[:nl_idx])
@@ -968,7 +1041,7 @@ class _WarmWhisperWorker:
                             continue
                         try:
                             payload = json.loads(line)
-                            self._last_used = time.time()
+                            self._last_used = time.monotonic()
                             self._schedule_reaper_locked()
                             return (
                                 str(payload.get("text", "")),
@@ -978,7 +1051,7 @@ class _WarmWhisperWorker:
                         except json.JSONDecodeError:
                             continue
 
-                    remaining = deadline - time.time()
+                    remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         self._stop_locked()
                         return "", "en", "Transcription timed out."
@@ -1001,6 +1074,14 @@ class _WarmWhisperWorker:
 
 _WHISPER_WORKER = _WarmWhisperWorker()
 
+# P0: Prevent orphaned Whisper worker on process exit.
+_register_exit_handler(_WHISPER_WORKER.shutdown)
+
+# P0: Restore PipeWire ducker volumes on exit (in case ducker context was interrupted).
+# The PipeWireAudioDucker context manager already restores in __exit__; this atexit
+# handler is a safety net for abnormal exits where __exit__ may not have run.
+_register_exit_handler(lambda: PipeWireAudioDucker()._restore_all_saved_volumes())
+
 
 def offload_whisper_if_idle(force: bool = False) -> bool:
     """Terminates the warm-standby Whisper subprocess if idle (or immediately when force=True)."""
@@ -1008,18 +1089,16 @@ def offload_whisper_if_idle(force: bool = False) -> bool:
 
 
 def transcribe_in_subprocess(
-    wav_path: str, lang_hint: Optional[str] = None, timeout: int = 60
-) -> tuple[str, str, Optional[str]]:
-    """
-    Transcribes via the warm-standby Whisper subprocess (auto-offloads after 180s idle to 0 MB RAM).
+    wav_path: str, lang_hint: str | None = None, timeout: int = 60,
+) -> tuple[str, str, str | None]:
+    """Transcribes via the warm-standby Whisper subprocess (auto-offloads after 180s idle to 0 MB RAM).
     Returns (transcript, detected_language, error).
     """
     return _WHISPER_WORKER.transcribe(wav_path, lang_hint=lang_hint, timeout=float(timeout))
 
 
 def resolve_default_monitor_source() -> str:
-    """
-    Resolves PipeWire / PulseAudio default output sink monitor source
+    """Resolves PipeWire / PulseAudio default output sink monitor source
     (e.g. `alsa_output.pci-...monitor` or `@DEFAULT_AUDIO_SINK@.monitor`)
     so Celina can capture loopback meeting/video audio 100% offline.
     """
@@ -1042,15 +1121,16 @@ def resolve_default_monitor_source() -> str:
 def record_system_audio(
     seconds: int = 30,
     sample_rate: int = 16000,
-    monitor_source: Optional[str] = None,
-) -> tuple[Optional[str], Optional[str]]:
-    """
-    Captures live desktop/meeting loopback audio from the PipeWire output sink `.monitor`
+    monitor_source: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Captures live desktop/meeting loopback audio from the PipeWire output sink `.monitor`
     into a private 0600 temporary WAV file (never ducks playback since we are recording it).
     Returns (wav_path, error_message).
     """
     dur = max(3, min(120, int(seconds)))
     monitor = (monitor_source or resolve_default_monitor_source()).strip()
+    if monitor.startswith("-"):
+        return None, "Error: monitor source name must not start with '-'."
     fd, wav_path = tempfile.mkstemp(prefix="celina_loopback_", suffix=".wav")
     os.close(fd)
     try:
@@ -1058,7 +1138,7 @@ def record_system_audio(
     except OSError:
         pass
 
-    cmd: Optional[list[str]] = None
+    cmd: list[str] | None = None
     if shutil.which("pw-record"):
         cmd = [
             "pw-record",
@@ -1085,7 +1165,7 @@ def record_system_audio(
             pass
         return None, "Error: Neither `pw-record` (pipewire-bin) nor `parec` (pulseaudio-utils) is installed."
 
-    proc: Optional[subprocess.Popen] = None
+    proc: subprocess.Popen | None = None
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
@@ -1126,12 +1206,11 @@ def record_system_audio(
 
 def transcribe_system_audio(
     seconds: int = 30,
-    lang_hint: Optional[str] = None,
+    lang_hint: str | None = None,
     *,
-    monitor_source: Optional[str] = None,
+    monitor_source: str | None = None,
 ) -> str:
-    """
-    100% offline PipeWire meeting / lecture / video audio transcriber:
+    """100% offline PipeWire meeting / lecture / video audio transcriber:
     Captures `seconds` (3..120s) from `@DEFAULT_AUDIO_SINK@.monitor` and transcribes via
     Celina's warm-standby `faster-whisper` worker, then immediately deletes the temporary WAV.
     """
@@ -1156,9 +1235,9 @@ def transcribe_system_audio(
 
 
 def listen_and_transcribe(
-    lang_hint: Optional[str] = None,
-    on_status: Optional[Callable[[str], None]] = None,
-) -> tuple[str, Optional[str]]:
+    lang_hint: str | None = None,
+    on_status: Callable[[str], None] | None = None,
+) -> tuple[str, str | None]:
     """Full Siri-like capture: stop TTS -> record until silence -> ephemeral multilingual transcribe."""
     stop_speaking()
     wav_path, err = record_until_silence(on_status=on_status)
@@ -1179,8 +1258,7 @@ def listen_and_transcribe(
 
 
 class WakeWordListener:
-    """
-    Optional hands-free wake-word detector using openWakeWord (~45 MB RAM).
+    """Optional hands-free wake-word detector using openWakeWord (~45 MB RAM).
     Only active when CELINA_WAKE_WORD=1 in ~/.config/celina/env.
     Uses CELINA_WAKE_MODEL or any custom .onnx in ~/.local/share/celina/wakeword/
     (e.g. hey_celina.onnx / hey_celly.onnx), falling back to openWakeWord's bundled 'alexa' model.
@@ -1191,7 +1269,7 @@ class WakeWordListener:
         self.threshold = threshold
         self._stop_event = threading.Event()
         self._pause_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def pause(self) -> None:
         self._pause_event.set()
@@ -1206,9 +1284,9 @@ class WakeWordListener:
         if not config.WAKE_WORD_ENABLED:
             return False
         try:
-            import numpy as np  # noqa: F401
-            import sounddevice as sd  # noqa: F401
-            from openwakeword.model import Model as OWWModel  # noqa: F401
+            import numpy as np
+            import sounddevice as sd
+            from openwakeword.model import Model as OWWModel
         except ImportError:
             return False
 
@@ -1224,11 +1302,14 @@ class WakeWordListener:
         try:
             wake_models: list[str] = []
             if config.WAKE_WORD_MODEL and Path(config.WAKE_WORD_MODEL).expanduser().is_file():
-                wake_models = [str(Path(config.WAKE_WORD_MODEL).expanduser())]
+                wm_path = Path(config.WAKE_WORD_MODEL).expanduser()
+                if verify_model_hash(wm_path, lock_id=f"wakeword-{wm_path.name}"):
+                    wake_models = [str(wm_path)]
             elif config.WAKEWORD_DIR.is_dir():
                 custom_onnx = sorted(config.WAKEWORD_DIR.glob("*.onnx"))
-                if custom_onnx:
-                    wake_models = [str(p) for p in custom_onnx[:2]]
+                for p in custom_onnx[:2]:
+                    if verify_model_hash(p, lock_id=f"wakeword-{p.name}"):
+                        wake_models.append(str(p))
             if not wake_models:
                 wake_models = ["alexa"]
             oww = OWWModel(wakeword_models=wake_models, inference_framework="onnx")
@@ -1265,7 +1346,7 @@ class WakeWordListener:
 def _run_persistent_worker() -> None:
     """Persistent stdin/stdout JSON-lines worker: loads WhisperModel ONCE, reused until offloaded."""
     model = None
-    load_err: Optional[str] = None
+    load_err: str | None = None
     try:
         from faster_whisper import WhisperModel
 
@@ -1286,7 +1367,7 @@ def _run_persistent_worker() -> None:
             print(json.dumps({"text": "", "language": "en", "error": load_err}), flush=True)
             continue
         text, detected, err = _transcribe_wav_inline(
-            str(req.get("wav", "")), lang_hint=req.get("lang"), model=model
+            str(req.get("wav", "")), lang_hint=req.get("lang"), model=model,
         )
         print(json.dumps({"text": text, "language": detected, "error": err}, ensure_ascii=False), flush=True)
 

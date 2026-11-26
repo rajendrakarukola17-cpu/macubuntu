@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Gear 0-Context: State & Geofence Triggers (Update 19)
+"""Celina AI (Celly) - Gear 0-Context: State & Geofence Triggers (Update 19)
 
 OS-level state awareness for trigger-based actions without LLM.
 - Calendar-based: mute notifications when in a meeting
@@ -11,11 +10,11 @@ Zero LLM tokens, <5ms lookup, uses system APIs.
 
 from __future__ import annotations
 
-import datetime
+import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 _CONTEXT_DB_PATH = Path.home() / ".celina" / "storage" / "shared" / "context.db"
 
@@ -69,7 +68,7 @@ def context_list_triggers() -> list[dict[str, Any]]:
     try:
         conn = _get_conn()
         rows = conn.execute(
-            "SELECT id, kind, condition_json, action_json, active FROM triggers WHERE active = 1"
+            "SELECT id, kind, condition_json, action_json, active FROM triggers WHERE active = 1",
         ).fetchall()
         conn.close()
         return [
@@ -145,10 +144,8 @@ def handle_remind_when_home(message: str, dry_run: bool = False) -> str:
 # Master dispatch
 # ---------------------------------------------------------------------------
 
-def gear0_context_classify(query: str) -> Optional[str]:
+def gear0_context_classify(query: str) -> str | None:
     """Classify query into a context handler name, or None."""
-    import re as _re
-
     low = query.strip().lower()
 
     if _MEETING_RE.match(low):
@@ -159,10 +156,8 @@ def gear0_context_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_context_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_context_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Context handler."""
-    import re as _re
-
     try:
         if handler == "mute_when_busy":
             enable = "off" not in query.strip().lower() and "disable" not in query.strip().lower()
@@ -177,10 +172,10 @@ def gear0_context_execute(handler: str, query: str, dry_run: bool = False) -> Op
 
 
 __all__ = [
-    "gear0_context_classify",
-    "gear0_context_execute",
     "context_add_trigger",
-    "context_list_triggers",
     "context_check_calendar_busy",
     "context_check_location_home",
+    "context_list_triggers",
+    "gear0_context_classify",
+    "gear0_context_execute",
 ]

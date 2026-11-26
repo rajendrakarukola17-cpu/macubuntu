@@ -1,0 +1,53 @@
+# ============================================================================
+# macubuntu SHA-256 Capability Manifest
+# Every tool or MCP server must register here before use.
+# Default: Tier-2 approval for OS mutations.
+# Format: TOOL_NAME | TIER | SHA256 | SCOPE | APPROVAL | DESCRIPTION
+# ============================================================================
+
+# --- Core Celina tools (Tier-1: read-only, no approval needed) ---
+approve_quarantined_skill | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_plus_undo | Approve a quarantined skill for execution
+audit_app_permissions | tier1 | 0000000000000000000000000000000000000000000000000000000000000000 | home_ro | in_process_ro | Audit app permissions (read-only)
+autonomous_gui_task | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | dbus_portal_or_atspi | Autonomous GUI task execution via AT-SPI/portal
+calendar_bridge_create_event | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Create calendar event via calendar_bridge.py
+compose_message | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Compose and send messages via connectors
+computer_use | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | bwrap_unshare_net | Wayland-native click/type/scroll automation
+create_document | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Create documents via documents.py
+create_calendar_event | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Create calendar event (Tier-2, cryptographic binding)
+focus_mode_set | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Set GNOME Focus Mode via D-Bus
+learn_skill | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Learn and record a new automation skill
+read_document | tier1 | 0000000000000000000000000000000000000000000000000000000000000000 | home_ro | in_process_ro | Read documents (read-only)
+read_screen | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | portal_input | Read screen content via OCR/vision
+remember_fact | tier1 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | in_process_ro | Store a fact in Celina memory
+run_skill | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Execute a learned automation skill
+save_last_actions_as_skill | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Save recent actions as a reusable skill
+search_contacts | tier1 | 0000000000000000000000000000000000000000000000000000000000000000 | home_ro | in_process_ro | Search contacts (read-only)
+spotlight_query | tier1 | 0000000000000000000000000000000000000000000000000000000000000000 | home_ro | in_process_ro | Spotlight file/content search (read-only)
+vision_analyze | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | portal_input | Analyze screenshot via VLM
+vision_ocr | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | portal_input | OCR text from screenshot
+write_file | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | celina_state_only | approval_gated | Write files outside never_exposed_paths
+
+# --- MCP Servers (all default to Tier-2, enabled=False unless explicitly opted-in) ---
+mcp-os-desktop | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | unix_socket_0700 | fastmcp_elicitation | FastMCP 4.2 desktop & skills server over Unix socket
+mcp-dbus-desktop | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | unix_socket_0700 | fastmcp_elicitation | D-Bus MCP server (scx_loader, MPRIS, notifications, GNOME placement)
+mcp-proactive-observer | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | unix_socket_0700 | fastmcp_elicitation | Proactive observer MCP server for anticipatory behavior
+mcp-media-ondemand | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | unix_socket_0700 | fastmcp_elicitation | Local media on-demand MCP server
+mcp-playwright | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | unix_socket_0700 | fastmcp_elicitation | Playwright MCP — deterministic browser automation via accessibility tree snapshots (no vision model needed)
+mcp-activitywatch | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | unix_socket_0700 | fastmcp_elicitation | ActivityWatch MCP — local desktop telemetry (windows, URLs, AFK) via AQL for anticipatory context
+mcp-homeassistant | tier2 | 0000000000000000000000000000000000000000000000000000000000000000 | unix_socket_0700 | fastmcp_elicitation | Home Assistant MCP — physical environment control (Matter/Zigbee/Wi-Fi devices over LAN)
+
+# --- Security rules ---
+# never_exposed_paths: tools must never access these paths
+#   /home/$USER/.ssh, /home/$USER/.gnupg, /home/$USER/.aws, /home/$USER/.kube,
+#   /home/$USER/.netrc, /home/$USER/.git-credentials, /home/$USER/.config/celina/env,
+#   /home/$USER/.local/share/celina/evidence, /home/$USER/.config/autostart,
+#   /home/$USER/.config/systemd/user, /home/$USER/.local/bin,
+#   /home/$USER/.local/share/applications, /home/$USER/.local/share/keyrings,
+#   /home/$USER/.mozilla, /home/$USER/.password-store, /home/$USER/.docker/config.json,
+#   /home/$USER/.config/gh/hosts.yml, /home/$USER/.celina/models,
+#   /home/$USER/.local/share/celina/models, /home/$USER/.config/celina/connectors
+
+# IPC binding: all MCP servers bind to Unix domain sockets in
+# /run/user/$UID/celina/ (0700) only — no TCP, no abstract sockets.
+
+# Kernel boundary: Bubblewrap + Landlock LSM enforcement for all Tier-2 tools.

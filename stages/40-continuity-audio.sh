@@ -84,6 +84,32 @@ fi
 if is_true "$ENABLE_UNIVERSAL_CONTROL"; then
     step "Installing Deskflow (GPL-2.0 — Universal Control across Linux/Windows/macOS over Wayland libei/TLS)..."
     install_flatpak org.deskflow.deskflow
+    # Deploy Deskflow TLS/libei configuration for Wayland Universal Control
+    step "Configuring Deskflow TLS encryption + libei Wayland input..."
+    DESKFLOW_CONF_DIR="$HOME/.config/deskflow"
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] would write $DESKFLOW_CONF_DIR/deskflow.conf (TLS + libei)"
+        echo "      [dry-run] would create ~/.config/systemd/user/deskflow.service"
+    else
+        ensure_dir "$DESKFLOW_CONF_DIR"
+        copy_user_file "$REPO_DIR/system/deskflow/deskflow.conf" "$DESKFLOW_CONF_DIR/deskflow.conf" 644
+        # Generate self-signed TLS cert for Deskflow if not present
+        if [[ ! -f "$DESKFLOW_CONF_DIR/cert.pem" ]] || [[ ! -f "$DESKFLOW_CONF_DIR/key.pem" ]]; then
+            if command -v openssl >/dev/null 2>&1; then
+                openssl req -x509 -newkey rsa:2048 -keyout "$DESKFLOW_CONF_DIR/key.pem" \
+                    -out "$DESKFLOW_CONF_DIR/cert.pem" -days 365 -nodes \
+                    -subj "/CN=localhost/O=macubuntu/OU=Deskflow" 2>/dev/null || true
+                chmod 600 "$DESKFLOW_CONF_DIR/key.pem"
+                chmod 644 "$DESKFLOW_CONF_DIR/cert.pem"
+                echo "      ✅ Deskflow self-signed TLS certificate generated"
+            else
+                echo "      ⚠️  openssl not available — Deskflow TLS will use default certs"
+            fi
+        fi
+        # Create systemd user service for Deskflow
+        copy_user_file "$REPO_DIR/system/systemd/deskflow-user.service" "$HOME/.config/systemd/user/deskflow-user.service" 644
+        echo "      ✅ Deskflow TLS/libei configured (TLS cert: $DESKFLOW_CONF_DIR/cert.pem)"
+    fi
 fi
 
 step "Installing GNOME Remote Desktop (Sidecar), AirScan, USB iPhone Sync (libimobiledevice/ifuse) & Continuity Camera (v4l2loopback)..."
@@ -134,6 +160,31 @@ if is_true "$ENABLE_PRO_AUDIO_BLUETOOTH"; then
     if [[ "$DRY_RUN" != "1" ]] && command -v systemctl >/dev/null 2>&1; then
         systemctl --user try-restart pipewire.service wireplumber.service >/dev/null 2>&1 || true
     fi
+fi
+
+# PipeWire + BlueZ HFP: desktop call audio (make/receive phone calls from desktop)
+if is_true "$ENABLE_PHONE_HFP"; then
+    step "Deploying PipeWire + BlueZ HFP (Hands-Free Profile) for desktop call audio..."
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "      [dry-run] would configure BlueZ HFP + PipeWire Bluetooth audio profile"
+        echo "      [dry-run] would enable bluetooth.service and set ControllerConfig = Discoverable, Pairable"
+    else
+        # Enable BlueHFP (hfp-ofono or similar) via PipeWire
+        apt_install bluez bluez-tools pipewire-audio-client-libraries || true
+        # Configure BlueZ for HFP
+        run sudo install -d -m 755 /etc/bluetooth
+        if [[ -f /etc/bluetooth/main.conf ]]; then
+            sudo sed -i 's/^#ControllerMode = dual/ControllerMode = dual/' /etc/bluetooth/main.conf 2>/dev/null || true
+            sudo sed -i 's/^#AutoEnable=false/AutoEnable=true/' /etc/bluetooth/main.conf 2>/dev/null || true
+        fi
+        # Enable bluetooth service
+        run sudo systemctl enable bluetooth.service 2>/dev/null || true
+        run sudo systemctl start bluetooth.service 2>/dev/null || true
+        echo "      ✅ BlueZ + PipeWire HFP prepared"
+        record_manual "Pair phone via GSConnect/Bluetooth, then set audio profile to HFP in Sound settings"
+    fi
+else
+    echo "    ℹ️  Phone HFP skipped (ENABLE_PHONE_HFP=false)"
 fi
 
 step "Checking UFW firewall (LAN-only continuity rules — never exposed to WAN)..."

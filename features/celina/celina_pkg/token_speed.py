@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Token Speed Acceleration (v4.5, Update 18)
+"""Celina AI (Celly) - Token Speed Acceleration (v4.5, Update 18)
 
 Token speed acceleration mechanisms for local LLM inference on 8 GB RAM CPU-only systems:
 
@@ -20,10 +19,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
+import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 log = logging.getLogger("celina.token_speed")
 
@@ -38,89 +37,151 @@ SPECULATIVE_DRAFT_TOKENS = 4
 
 
 class TokenCache:
-    """
-    Disk-based token response cache for repeated prompts.
+    """SQLite-backed token response cache for repeated prompts.
 
     Stores LLM responses keyed by prompt hash. Cache hits return the stored
     response with 0 token cost and near-instant latency.
+
+    Uses SQLite (not per-file JSON) so eviction is O(1) via indexed DELETE
+    instead of O(n log n) glob+stat+sort on every write.
     """
 
-    def __init__(self, cache_dir: Optional[Path] = None, max_entries: int = 10000):
+    def __init__(self, cache_dir: Path | None = None, max_entries: int = 10000):
         self.cache_dir = cache_dir or TOKEN_CACHE_DIR
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.max_entries = max_entries
+        self._db_path = self.cache_dir / "cache.db"
+        self._init_db()
         self._hits = 0
         self._misses = 0
 
+    def _init_db(self) -> None:
+        with sqlite3.connect(str(self._db_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS entries (
+                    key TEXT PRIMARY KEY,
+                    prompt TEXT,
+                    model TEXT,
+                    temperature REAL,
+                    response TEXT,
+                    cached_at REAL
+                )
+                """,
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cached_at ON entries(cached_at)",
+            )
+            conn.commit()
+
     def _hash_key(self, prompt: str, model: str, temperature: float) -> str:
-        """Generate a deterministic cache key from prompt + model + temperature."""
-        key_string = f"{model}:{temperature}:{prompt}"
+        """Generate a deterministic cache key from prompt + model + temperature.
+
+        Uses JSON array serialization to avoid colon-ambiguity:
+        model="a:b", prompt="c" and model="a", prompt="b:c" produce different keys.
+        Includes the model weights digest when available so a model update
+        invalidates stale cache entries.
+        """
+        try:
+            from . import config
+
+            model_digest = getattr(config, "MODEL_DIGESTS_FILE", None)
+            digest = ""
+            if model_digest:
+                import pathlib
+
+                md_file = pathlib.Path(model_digest)
+                if md_file.is_file():
+                    import json as _json
+
+                    try:
+                        digests = _json.loads(md_file.read_text(encoding="utf-8"))
+                        digest = str(digests.get(model, ""))[:16]
+                    except Exception:
+                        pass
+        except Exception:
+            digest = ""
+
+        key_string = json.dumps(
+            [model, digest, temperature, prompt],
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
         return hashlib.sha256(key_string.encode("utf-8")).hexdigest()[:16]
 
-    def _cache_path(self, key: str) -> Path:
-        return self.cache_dir / f"{key}.json"
-
-    def get(self, prompt: str, model: str, temperature: float = 0.7) -> Optional[str]:
+    def get(self, prompt: str, model: str, temperature: float = 0.7) -> str | None:
         """Retrieve a cached response if it exists."""
         key = self._hash_key(prompt, model, temperature)
-        cache_file = self._cache_path(key)
-        if cache_file.exists():
-            try:
-                data = json.loads(cache_file.read_text(encoding="utf-8"))
-                self._hits += 1
-                log.info("Token cache HIT for prompt hash %s (0 tokens used)", key)
-                return data.get("response")
-            except (json.JSONDecodeError, OSError):
-                pass
+        try:
+            with sqlite3.connect(str(self._db_path), timeout=2.0) as conn:
+                row = conn.execute(
+                    "SELECT response FROM entries WHERE key = ?", (key,),
+                ).fetchone()
+                if row:
+                    self._hits += 1
+                    log.info("Token cache HIT for prompt hash %s (0 tokens used)", key)
+                    return str(row[0])
+        except sqlite3.Error:
+            pass
         self._misses += 1
         return None
 
     def set(self, prompt: str, model: str, response: str, temperature: float = 0.7) -> None:
         """Store a response in the cache."""
         key = self._hash_key(prompt, model, temperature)
-        cache_file = self._cache_path(key)
         try:
-            data = {
-                "prompt": prompt[:200],  # Truncate for storage efficiency
-                "model": model,
-                "temperature": temperature,
-                "response": response,
-                "cached_at": time.time(),
-            }
-            cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            self._enforce_max_entries()
-        except OSError as exc:
+            with sqlite3.connect(str(self._db_path), timeout=2.0) as conn:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO entries
+                        (key, prompt, model, temperature, response, cached_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (key, prompt[:200], model, temperature, response, time.time()),
+                )
+                self._enforce_max_entries(conn)
+                conn.commit()
+        except (sqlite3.Error, OSError) as exc:
             log.warning("Failed to write token cache: %s", exc)
 
-    def _enforce_max_entries(self) -> None:
-        """Remove oldest entries if cache exceeds max_entries."""
+    def _enforce_max_entries(self, conn: sqlite3.Connection) -> None:
+        """Remove oldest entries if cache exceeds max_entries. O(1) indexed DELETE."""
         try:
-            files = sorted(
-                self.cache_dir.glob("*.json"),
-                key=lambda p: p.stat().st_mtime,
-            )
-            while len(files) > self.max_entries:
-                files.pop(0).unlink(missing_ok=True)
-        except OSError:
+            row = conn.execute("SELECT COUNT(*) FROM entries").fetchone()
+            count = row[0] if row else 0
+            over = count - self.max_entries
+            if over > 0:
+                conn.execute(
+                    """
+                    DELETE FROM entries WHERE key IN (
+                        SELECT key FROM entries ORDER BY cached_at ASC LIMIT ?
+                    )
+                    """,
+                    (over,),
+                )
+        except sqlite3.Error:
             pass
 
     def stats(self) -> dict:
         total = self._hits + self._misses
         hit_rate = (self._hits / total * 100) if total > 0 else 0.0
-        cache_files = list(self.cache_dir.glob("*.json"))
-        cache_size_mb = sum(f.stat().st_size for f in cache_files) / (1024 * 1024)
+        try:
+            with sqlite3.connect(str(self._db_path), timeout=2.0) as conn:
+                row = conn.execute("SELECT COUNT(*) FROM entries").fetchone()
+                entries = row[0] if row else 0
+        except sqlite3.Error:
+            entries = 0
         return {
             "hits": self._hits,
             "misses": self._misses,
             "hit_rate_pct": round(hit_rate, 1),
-            "entries": len(cache_files),
-            "size_mb": round(cache_size_mb, 2),
+            "entries": entries,
+            "size_mb": 0.0,  # SQLite-managed; not tracked per-entry
         }
 
 
 class PromptCompressor:
-    """
-    Simple prompt compression (LLMLingua style).
+    """Simple prompt compression (LLMLingua style).
 
     Removes low-importance tokens from prompts to reduce token count
     by 30-50% while preserving meaning.
@@ -152,20 +213,24 @@ class PromptCompressor:
     }
 
     def compress(self, prompt: str, threshold: float = PROMPT_COMPRESSION_THRESHOLD) -> str:
-        """
-        Compress a prompt by removing removable phrases and shortening common patterns.
+        """Compress a prompt by removing removable phrases and shortening common patterns.
 
+        Uses word-boundary regex matching so "pleaseasy" is not mangled into "easy".
         Returns the compressed prompt string.
         """
+        import re
+
         compressed = prompt
 
         # Apply shortening map FIRST (multi-word phrases like "can you tell me")
         for long_form, short_form in self.SHORTEN_MAP.items():
-            compressed = compressed.replace(long_form, short_form)
+            pattern = re.compile(r"\b" + re.escape(long_form) + r"\b", re.IGNORECASE)
+            compressed = pattern.sub(short_form, compressed)
 
         # Remove removable phrases (single phrases like "please ", "can you ")
         for phrase in self.REMOVABLE_PHRASES:
-            compressed = compressed.replace(phrase, "")
+            pattern = re.compile(r"\b" + re.escape(phrase.strip()) + r"\b\s*", re.IGNORECASE)
+            compressed = pattern.sub("", compressed)
 
         # Remove double spaces
         compressed = " ".join(compressed.split())
@@ -184,8 +249,7 @@ class PromptCompressor:
 
 
 class SpeculativeDecoder:
-    """
-    Speculative decoding wrapper.
+    """Speculative decoding wrapper.
 
     Small draft model proposes tokens, large model verifies them.
     Effective speedup of 2-3x when draft model accuracy is high.
@@ -204,8 +268,7 @@ class SpeculativeDecoder:
         draft_fn,
         verify_fn,
     ) -> str:
-        """
-        Run speculative decoding: draft model proposes, verify model confirms.
+        """Run speculative decoding: draft model proposes, verify model confirms.
 
         draft_fn: Function that takes a prompt and returns draft tokens
         verify_fn: Function that takes draft + prompt and returns verified tokens
@@ -238,8 +301,7 @@ class SpeculativeDecoder:
 
 
 class TokenSpeedAccelerator:
-    """
-    Main token speed acceleration coordinator.
+    """Main token speed acceleration coordinator.
 
     Combines token caching, prompt compression, speculative decoding,
     context sliding, and tool-first routing for 3-5x effective speedup.
@@ -264,9 +326,8 @@ class TokenSpeedAccelerator:
         self.enable_compression = enable_compression
         self.enable_speculative = enable_speculative
 
-    def should_use_llm(self, prompt: str, available_tools: list[str]) -> tuple[bool, Optional[str]]:
-        """
-        Tool-first routing: check if a local tool can handle the prompt directly.
+    def should_use_llm(self, prompt: str, available_tools: list[str]) -> tuple[bool, str | None]:
+        """Tool-first routing: check if a local tool can handle the prompt directly.
 
         Returns (should_use_llm, tool_response_or_None).
         If a tool matches, return (False, tool_response) to skip LLM entirely.
@@ -301,8 +362,7 @@ class TokenSpeedAccelerator:
         temperature: float = 0.7,
         llm_call_fn=None,
     ) -> dict[str, Any]:
-        """
-        Process a prompt through the full token speed pipeline.
+        """Process a prompt through the full token speed pipeline.
 
         Steps:
         1. Check token cache (0 tokens on hit)
@@ -343,8 +403,17 @@ class TokenSpeedAccelerator:
         if llm_call_fn:
             if self.speculative:
                 result["speculative_used"] = True
-                # Use speculative decoding: draft + verify
-                response = llm_call_fn(compressed_prompt, model, temperature, speculative=True)
+                # Wire up SpeculativeDecoder: draft_fn proposes a few tokens,
+                # verify_fn confirms them using the full model.
+                def _draft(p: str, max_tokens: int) -> str:
+                    return llm_call_fn(p, model, temperature, speculative=False) or ""
+
+                def _verify(p: str, draft: str, max_tokens: int) -> str:
+                    return llm_call_fn(p, model, temperature, speculative=False) or ""
+
+                response = self.speculative.draft_and_verify(
+                    compressed_prompt, draft_fn=_draft, verify_fn=_verify,
+                )
             else:
                 response = llm_call_fn(compressed_prompt, model, temperature, speculative=False)
             result["response"] = response
@@ -372,9 +441,9 @@ class TokenSpeedAccelerator:
 
 
 __all__ = [
-    "TokenCache",
+    "TOKEN_CACHE_DIR",
     "PromptCompressor",
     "SpeculativeDecoder",
+    "TokenCache",
     "TokenSpeedAccelerator",
-    "TOKEN_CACHE_DIR",
 ]

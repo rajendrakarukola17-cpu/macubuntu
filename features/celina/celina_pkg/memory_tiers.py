@@ -1,19 +1,18 @@
-"""
-Celina AI — Capabilities #6, #7 & #8 (Next-Generation Memory Architecture):
-  6. Four-Tier Decoupled Memory (`FourTierMemory`):
-       - Tier 1: Working Memory (session-isolated scratchpads & active checkpoints)
-       - Tier 2: Core Fact KV Store (backed by `MemoryDB` facts with Ebbinghaus decay)
-       - Tier 3: Episodic Session Learnings (distilled session takeaways)
-       - Tier 4: AST Graph RAG (`AstGraphRagStore`: stdlib Python `ast` + optional `tree-sitter`)
-  7. Knowledge Graph as a Priority Index (`PriorityGraphIndex`):
-       - 10 typed edge types linking memories, entities, skills, and goals
-       - 9-stage retrieval pipeline: normalize -> BM25 -> semantic -> 2-hop KG traversal
-         -> RRF priority fusion -> temporal Ebbinghaus decay -> goal/skill boost
-         -> pairwise reranking -> prompt-injection sanitization & diversity trim
-  8. Demand-Constructed Context (`DemandContextBuilder`):
-       - Builds a fresh, purpose-built context payload every turn by querying the
-         4 memory tiers + priority index within a strict token budget (nothing
-         accumulates blindly across turns).
+"""Celina AI — Capabilities #6, #7 & #8 (Next-Generation Memory Architecture):
+6. Four-Tier Decoupled Memory (`FourTierMemory`):
+- Tier 1: Working Memory (session-isolated scratchpads & active checkpoints)
+- Tier 2: Core Fact KV Store (backed by `MemoryDB` facts with Ebbinghaus decay)
+- Tier 3: Episodic Session Learnings (distilled session takeaways)
+- Tier 4: AST Graph RAG (`AstGraphRagStore`: stdlib Python `ast` + optional `tree-sitter`)
+7. Knowledge Graph as a Priority Index (`PriorityGraphIndex`):
+- 10 typed edge types linking memories, entities, skills, and goals
+- 9-stage retrieval pipeline: normalize -> BM25 -> semantic -> 2-hop KG traversal
+-> RRF priority fusion -> temporal Ebbinghaus decay -> goal/skill boost
+-> pairwise reranking -> prompt-injection sanitization & diversity trim
+8. Demand-Constructed Context (`DemandContextBuilder`):
+- Builds a fresh, purpose-built context payload every turn by querying the
+4 memory tiers + priority index within a strict token budget (nothing
+accumulates blindly across turns).
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config
 
@@ -51,7 +50,7 @@ _INJECTION_LINE_RE = re.compile(
     r"(?:ignore\s+(?:all\s+)?previous\s+instructions|disregard\s+system\s+prompt|"
     r"you\s+are\s+now\s+in\s+developer\s+mode|exfiltrate\s+~?/?\.ssh|"
     r"override\s+tier-?2|bypass\s+approval)",
-    re.I,
+    re.IGNORECASE,
 )
 
 
@@ -109,7 +108,7 @@ class WorkingMemoryStore:
 class AstGraphRagStore:
     """SQLite WAL structural code-symbol & call-graph index (stdlib `ast`, optional `tree-sitter`)."""
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         self.db_path = Path(db_path) if db_path is not None else (config.BASE_DIR / "ast_graph.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -147,7 +146,7 @@ class AstGraphRagStore:
                     PRIMARY KEY (src_id, edge_type, dst_name)
                 );
                 CREATE INDEX IF NOT EXISTS idx_ast_edges_dst ON ast_edges (dst_name);
-                """
+                """,
             )
             self._conn.commit()
 
@@ -162,7 +161,7 @@ class AstGraphRagStore:
         edges: list[tuple[str, str, str]] = []
 
         def _nid(sym: str, line: int) -> str:
-            return hashlib.sha256(f"{fstr}:{sym}:{line}".encode("utf-8")).hexdigest()[:16]
+            return hashlib.sha256(f"{fstr}:{sym}:{line}".encode()).hexdigest()[:16]
 
         mod_id = _nid("<module>", 1)
         nodes.append((mod_id, fstr, path.stem, "module", 1, path.name, now))
@@ -264,13 +263,12 @@ class RetrievedMemoryItem:
 
 
 class PriorityGraphIndex:
-    """
-    Knowledge Graph functioning as a priority index over flat memory:
-      - 10 typed edge types (`TYPED_EDGE_TYPES`) connecting memories, entities, skills & goals
-      - 9-stage retrieval pipeline returning ranked, sanitized, diverse records
+    """Knowledge Graph functioning as a priority index over flat memory:
+    - 10 typed edge types (`TYPED_EDGE_TYPES`) connecting memories, entities, skills & goals
+    - 9-stage retrieval pipeline returning ranked, sanitized, diverse records
     """
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         self.db_path = Path(db_path) if db_path is not None else (config.BASE_DIR / "priority_kg.db")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
@@ -315,7 +313,7 @@ class PriorityGraphIndex:
                 CREATE INDEX IF NOT EXISTS idx_pke_src ON kg_priority_edges (src_id);
                 CREATE INDEX IF NOT EXISTS idx_pke_dst ON kg_priority_edges (dst_id);
                 CREATE INDEX IF NOT EXISTS idx_pke_type ON kg_priority_edges (edge_type);
-                """
+                """,
             )
             self._conn.commit()
 
@@ -327,8 +325,8 @@ class PriorityGraphIndex:
         label: str,
         content: str,
         priority: float = 1.0,
-        updated_at: Optional[float] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        updated_at: float | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> str:
         ts = float(updated_at) if updated_at is not None else time.time()
         with self._lock:
@@ -382,20 +380,19 @@ class PriorityGraphIndex:
         query: str,
         *,
         top_k: int = 8,
-        active_goal_ids: Optional[list[str]] = None,
-        now: Optional[float] = None,
+        active_goal_ids: list[str] | None = None,
+        now: float | None = None,
     ) -> tuple[list[RetrievedMemoryItem], dict[str, int]]:
-        """
-        9-stage hybrid priority-graph retrieval pipeline:
-          1. Normalize query & extract tokens
-          2. BM25 lexical recall (SQLite FTS5)
-          3. Semantic cosine similarity recall (character/token TF vector)
-          4. Typed KG 2-hop graph traversal over the 10 edge types
-          5. Reciprocal Rank Fusion (RRF) priority index combination
-          6. Temporal Ebbinghaus decay weighting
-          7. Goal & skill relevance boosting
-          8. Pairwise query-document cross-reranking
-          9. Prompt-injection sanitization & top-k diversity trim
+        """9-stage hybrid priority-graph retrieval pipeline:
+        1. Normalize query & extract tokens
+        2. BM25 lexical recall (SQLite FTS5)
+        3. Semantic cosine similarity recall (character/token TF vector)
+        4. Typed KG 2-hop graph traversal over the 10 edge types
+        5. Reciprocal Rank Fusion (RRF) priority index combination
+        6. Temporal Ebbinghaus decay weighting
+        7. Goal & skill relevance boosting
+        8. Pairwise query-document cross-reranking
+        9. Prompt-injection sanitization & top-k diversity trim
         """
         ref_now = float(now) if now is not None else time.time()
         stage_counts: dict[str, int] = {}
@@ -452,7 +449,7 @@ class PriorityGraphIndex:
                     f"""
                     SELECT src_id, edge_type, dst_id, weight FROM kg_priority_edges
                     WHERE src_id IN ({placeholders}) OR dst_id IN ({placeholders})
-                    """,
+                    """,  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL, not user input
                     tuple(frontier) + tuple(frontier),
                 ).fetchall()
                 for er in edge_rows:
@@ -534,7 +531,7 @@ class PriorityGraphIndex:
                     stage_hits=hit_sources.get(nid, []),
                     updated_at=float(row["updated_at"]),
                     metadata=json.loads(row.get("meta_json") or "{}"),
-                )
+                ),
             )
             if len(results) >= max(1, int(top_k)):
                 break
@@ -569,7 +566,7 @@ class FourTierMemory:
     def __init__(
         self,
         *,
-        base_dir: Optional[Path] = None,
+        base_dir: Path | None = None,
         memory_db: Any = None,
     ):
         root = Path(base_dir) if base_dir is not None else config.BASE_DIR
@@ -609,8 +606,7 @@ class FourTierMemory:
 
 
 class DemandContextBuilder:
-    """
-    Capability #8: Demand-Constructed Context.
+    """Capability #8: Demand-Constructed Context.
     Every turn constructs a fresh, purpose-built context payload directly from the
     4 memory tiers + 9-stage priority index within a strict character/token budget.
     Nothing blindly accumulates or degrades across turns.
@@ -626,13 +622,13 @@ class DemandContextBuilder:
         session_id: str = "default",
         token_budget: int = 800,
         active_window: str = "",
-        active_goal_ids: Optional[list[str]] = None,
+        active_goal_ids: list[str] | None = None,
         top_k: int = 8,
     ) -> DemandContextPayload:
         char_budget = max(400, int(token_budget) * 4)
         working_snap = self.memory.working.snapshot(session_id)
         retrieved, stage_stats = self.memory.priority_index.retrieve_9stage(
-            query, top_k=top_k, active_goal_ids=active_goal_ids
+            query, top_k=top_k, active_goal_ids=active_goal_ids,
         )
         ast_hits = self.memory.ast_graph.find_symbol(query, limit=4)
 

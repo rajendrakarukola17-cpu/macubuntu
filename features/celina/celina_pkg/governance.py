@@ -1,15 +1,14 @@
-"""
-Celina AI — Capabilities #14 & #15 (Security & Governance Substrate):
-  14. System-Boundary Capability Enforcement (`GovernanceSubstrate`):
-        - Lives OUTSIDE the LLM; enforces scoped permissions even if the model is tricked
-        - Issues HMAC-SHA256 cryptographically signed ONE-USE execution grants
-          (`ExecutionGrant`) bound to (tool_name, arguments_hash, actor_uid, policy_hash, ttl)
-        - Enforces governed data provenance (`DataClassification`: PUBLIC < INTERNAL <
-          CONFIDENTIAL < SECRET) blocking sensitive data egress to lower-clearance sinks
-        - Enforces verified worker shutdown (`WorkerLease.shutdown_and_verify()`)
-  15. Fail-Closed Behaviour with Tamper Detection (`GovernedStateMachine`):
-        - Enforces legal state transitions with a SHA-256 tamper-evident hash chain
-        - Raises `GovernanceTamperError` on illegal transitions or modified state history
+"""Celina AI — Capabilities #14 & #15 (Security & Governance Substrate):
+14. System-Boundary Capability Enforcement (`GovernanceSubstrate`):
+- Lives OUTSIDE the LLM; enforces scoped permissions even if the model is tricked
+- Issues HMAC-SHA256 cryptographically signed ONE-USE execution grants
+(`ExecutionGrant`) bound to (tool_name, arguments_hash, actor_uid, policy_hash, ttl)
+- Enforces governed data provenance (`DataClassification`: PUBLIC < INTERNAL <
+CONFIDENTIAL < SECRET) blocking sensitive data egress to lower-clearance sinks
+- Enforces verified worker shutdown (`WorkerLease.shutdown_and_verify()`)
+15. Fail-Closed Behaviour with Tamper Detection (`GovernedStateMachine`):
+- Enforces legal state transitions with a SHA-256 tamper-evident hash chain
+- Raises `GovernanceTamperError` on illegal transitions or modified state history
 """
 
 from __future__ import annotations
@@ -21,11 +20,10 @@ import hmac
 import json
 import os
 import secrets
-import signal
 import subprocess
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from . import approval, capabilities, landlock_policy
 
@@ -70,7 +68,7 @@ class ExecutionGrant:
 class WorkerLease:
     """Tracks a spawned worker subprocess and verifies clean termination + grant revocation."""
 
-    def __init__(self, proc: subprocess.Popen, grant_id: str, substrate: "GovernanceSubstrate"):
+    def __init__(self, proc: subprocess.Popen, grant_id: str, substrate: GovernanceSubstrate):
         self.proc = proc
         self.grant_id = grant_id
         self._substrate = substrate
@@ -100,14 +98,13 @@ class WorkerLease:
 
 
 class GovernanceSubstrate:
-    """
-    Out-of-model authorization & execution control boundary:
-      - One-use HMAC-signed ExecutionGrants
-      - Data provenance & classification egress guard
-      - Capability manifest + Landlock policy hash binding
+    """Out-of-model authorization & execution control boundary:
+    - One-use HMAC-signed ExecutionGrants
+    - Data provenance & classification egress guard
+    - Capability manifest + Landlock policy hash binding
     """
 
-    def __init__(self, *, signing_key: Optional[bytes] = None, expected_uid: Optional[int] = None):
+    def __init__(self, *, signing_key: bytes | None = None, expected_uid: int | None = None):
         self._key = signing_key or secrets.token_bytes(32)
         self.expected_uid = int(os.getuid() if expected_uid is None else expected_uid)
         self._lock = threading.RLock()
@@ -148,15 +145,15 @@ class GovernanceSubstrate:
         *,
         tool_name: str,
         arguments: dict[str, Any],
-        actor_uid: Optional[int] = None,
+        actor_uid: int | None = None,
         is_tier2: bool = False,
         ttl_seconds: float = 30.0,
-        provenance: Optional[ProvenanceTag] = None,
+        provenance: ProvenanceTag | None = None,
     ) -> ExecutionGrant:
         uid = self.expected_uid if actor_uid is None else int(actor_uid)
         if uid != self.expected_uid:
             raise GovernanceError(
-                f"Governance boundary denied grant: actor UID {uid} != session owner {self.expected_uid}."
+                f"Governance boundary denied grant: actor UID {uid} != session owner {self.expected_uid}.",
             )
 
         cap_ok, cap_err = capabilities.check_tool_execution_boundary(tool_name, is_tier2=is_tier2)
@@ -198,7 +195,7 @@ class GovernanceSubstrate:
         tool_name: str,
         provenance: ProvenanceTag,
         *,
-        net_egress: Optional[str] = None,
+        net_egress: str | None = None,
     ) -> None:
         """Fail-closed provenance check: blocks CONFIDENTIAL/SECRET data from external sinks."""
         egress = net_egress
@@ -208,7 +205,7 @@ class GovernanceSubstrate:
         if egress not in {"none", "loopback_ollama"} and provenance.classification >= DataClassification.CONFIDENTIAL:
             raise GovernanceError(
                 f"Sensitive-data egress blocked: classification={provenance.classification.name} "
-                f"(source='{provenance.source}') cannot flow to network tool '{tool_name}' (egress={egress})."
+                f"(source='{provenance.source}') cannot flow to network tool '{tool_name}' (egress={egress}).",
             )
 
     def verify_and_consume_grant(
@@ -217,7 +214,7 @@ class GovernanceSubstrate:
         *,
         tool_name: str,
         arguments: dict[str, Any],
-        actor_uid: Optional[int] = None,
+        actor_uid: int | None = None,
     ) -> bool:
         """Verifies HMAC signature, expiry, UID, argument hash, and consumes one-use nonce atomically."""
         uid = self.expected_uid if actor_uid is None else int(actor_uid)
@@ -268,8 +265,7 @@ class GovernanceSubstrate:
 # ============================================================================
 
 class GovernedStateMachine:
-    """
-    Hash-chained state machine enforcing legal autonomous state transitions.
+    """Hash-chained state machine enforcing legal autonomous state transitions.
     Any illegal transition OR retroactive modification to transition history raises
     `GovernanceTamperError` (fail-closed).
     """
@@ -295,7 +291,7 @@ class GovernedStateMachine:
 
     @staticmethod
     def _hash_link(prev_hash: str, entity_id: str, frm: str, to: str, reason: str, seq: int) -> str:
-        raw = f"{prev_hash}|{entity_id}|{seq}|{frm}->{to}|{reason}".encode("utf-8")
+        raw = f"{prev_hash}|{entity_id}|{seq}|{frm}->{to}|{reason}".encode()
         return hashlib.sha256(raw).hexdigest()
 
     def _append_link(self, frm: str, to: str, reason: str) -> dict[str, Any]:
@@ -318,7 +314,7 @@ class GovernedStateMachine:
         allowed = self.ALLOWED_TRANSITIONS.get(self.state, frozenset())
         if next_state not in allowed:
             raise GovernanceTamperError(
-                f"Illegal governed state transition for '{self.entity_id}': {self.state} -> {next_state}"
+                f"Illegal governed state transition for '{self.entity_id}': {self.state} -> {next_state}",
             )
         prev_state = self.state
         self.state = next_state
@@ -347,7 +343,7 @@ class GovernedStateMachine:
         return list(self._chain)
 
 
-_DEFAULT_SUBSTRATE: Optional[GovernanceSubstrate] = None
+_DEFAULT_SUBSTRATE: GovernanceSubstrate | None = None
 
 
 def get_governance_substrate() -> GovernanceSubstrate:

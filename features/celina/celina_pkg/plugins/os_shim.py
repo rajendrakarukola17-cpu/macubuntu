@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Plugin #4: Universal OS Shim (Update 19)
+"""Celina AI (Celly) - Plugin #4: Universal OS Shim (Update 19)
 
 Cross-platform command abstraction layer. Gear 0 writes intent once,
 the Shim guarantees flawless execution on Windows, macOS, and Linux.
@@ -11,17 +10,18 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
 class ShimResult:
     """Result of a Shim command execution."""
+
     success: bool
     output: str
     command_used: str
@@ -31,6 +31,7 @@ class ShimResult:
 
 class OSPlatform:
     """Detected OS platform."""
+
     WINDOWS = "windows"
     MACOS = "macos"
     LINUX = "linux"
@@ -48,8 +49,7 @@ class OSPlatform:
 
 
 class UniversalOSShim:
-    """
-    Abstracts OS-specific commands behind a single cross-platform API.
+    """Abstracts OS-specific commands behind a single cross-platform API.
 
     Examples:
       shim.sleep_computer()        -> systemctl suspend / pmset sleepnow / rundll32
@@ -59,6 +59,7 @@ class UniversalOSShim:
       shim.empty_clipboard()       -> xclip -c / pbcopy < /dev/null / clip
       shim.open_file(path)         -> xdg-open / open / start
       shim.show_notification(...)  -> notify-send / osascript / powershell
+
     """
 
     def __init__(self):
@@ -84,9 +85,9 @@ class UniversalOSShim:
         """Shut down the computer."""
         if self.platform == OSPlatform.LINUX:
             return self._run(["systemctl", "poweroff"], "systemctl poweroff")
-        elif self.platform == OSPlatform.MACOS:
+        if self.platform == OSPlatform.MACOS:
             return self._run(["osascript", "-e", 'tell app "System Events" to shut down'], "osascript shutdown")
-        elif self.platform == OSPlatform.WINDOWS:
+        if self.platform == OSPlatform.WINDOWS:
             return self._run(["shutdown", "/s", "/t", "0"], "shutdown /s /t 0")
         return ShimResult(False, "Shutdown not supported on this platform.", "none", self.platform)
 
@@ -94,9 +95,9 @@ class UniversalOSShim:
         """Restart the computer."""
         if self.platform == OSPlatform.LINUX:
             return self._run(["systemctl", "reboot"], "systemctl reboot")
-        elif self.platform == OSPlatform.MACOS:
+        if self.platform == OSPlatform.MACOS:
             return self._run(["osascript", "-e", 'tell app "System Events" to restart'], "osascript restart")
-        elif self.platform == OSPlatform.WINDOWS:
+        if self.platform == OSPlatform.WINDOWS:
             return self._run(["shutdown", "/r", "/t", "0"], "shutdown /r /t 0")
         return ShimResult(False, "Restart not supported on this platform.", "none", self.platform)
 
@@ -129,17 +130,17 @@ class UniversalOSShim:
                     for item in d.iterdir():
                         try:
                             # P0-02: Safe move instead of destructive rmtree/unlink
-                            pending_dir = Path.home() / '.local' / 'share' / 'Trash' / 'files' / 'pending'
+                            pending_dir = Path.home() / ".local" / "share" / "Trash" / "files" / "pending"
                             pending_dir.mkdir(parents=True, exist_ok=True)
                             shutil.move(str(item), str(pending_dir / item.name))
                             removed += 1
                         except Exception:
                             continue
             return ShimResult(True, f"Emptied trash ({removed} items).", "python shutil", self.platform)
-        elif self.platform == OSPlatform.MACOS:
+        if self.platform == OSPlatform.MACOS:
             return self._run(["osascript", "-e", 'tell app "Finder" to empty trash'], "osascript empty trash")
-        elif self.platform == OSPlatform.WINDOWS:
-            ps = 'Clear-RecycleBin -Force -ErrorAction SilentlyContinue'
+        if self.platform == OSPlatform.WINDOWS:
+            ps = "Clear-RecycleBin -Force -ErrorAction SilentlyContinue"
             return self._run(["powershell", "-Command", ps], "powershell Clear-RecycleBin")
         return ShimResult(False, "Empty trash not supported on this platform.", "none", self.platform)
 
@@ -150,20 +151,30 @@ class UniversalOSShim:
             return ShimResult(False, f"File not found: {file_path}", "none", self.platform)
         if self.platform == OSPlatform.LINUX:
             return self._run(["xdg-open", str(path)], f"xdg-open {file_path}")
-        elif self.platform == OSPlatform.MACOS:
+        if self.platform == OSPlatform.MACOS:
             return self._run(["open", str(path)], f"open {file_path}")
-        elif self.platform == OSPlatform.WINDOWS:
-            return self._run(["start", "", str(path)], f"start {file_path}")
+        if self.platform == OSPlatform.WINDOWS:
+            # 'start' is a cmd.exe builtin, not an executable — use os.startfile
+            try:
+                os.startfile(str(path))
+                return ShimResult(True, f"Opened: {file_path}", "os.startfile", self.platform)
+            except Exception as exc:
+                return ShimResult(False, f"Failed to open: {exc}", "os.startfile", self.platform)
         return ShimResult(False, "Open file not supported on this platform.", "none", self.platform)
 
     def open_url(self, url: str) -> ShimResult:
         """Open a URL in the default browser."""
         if self.platform == OSPlatform.LINUX:
             return self._run(["xdg-open", url], f"xdg-open {url}")
-        elif self.platform == OSPlatform.MACOS:
+        if self.platform == OSPlatform.MACOS:
             return self._run(["open", url], f"open {url}")
-        elif self.platform == OSPlatform.WINDOWS:
-            return self._run(["start", "", url], f"start {url}")
+        if self.platform == OSPlatform.WINDOWS:
+            # 'start' is a cmd.exe builtin, not an executable — use os.startfile
+            try:
+                os.startfile(url)
+                return ShimResult(True, f"Opened URL: {url}", "os.startfile", self.platform)
+            except Exception as exc:
+                return ShimResult(False, f"Failed to open URL: {exc}", "os.startfile", self.platform)
         return ShimResult(False, "Open URL not supported on this platform.", "none", self.platform)
 
     # ------------------------------------------------------------------
@@ -191,7 +202,12 @@ class UniversalOSShim:
         elif self.platform == OSPlatform.MACOS:
             return self._run(["pbcopy"], "pbcopy", stdin_text=text)
         elif self.platform == OSPlatform.WINDOWS:
-            return self._run(["powershell", "-Command", f"Set-Clipboard -Value '{text}'"], "powershell Set-Clipboard")
+            # Escape single quotes for PowerShell single-quoted string (double them)
+            safe_text = text.replace("'", "''")
+            return self._run(
+                ["powershell", "-Command", f"Set-Clipboard -Value '{safe_text}'"],
+                "powershell Set-Clipboard",
+            )
         return ShimResult(False, "Clipboard write not supported.", "none", self.platform)
 
     def clear_clipboard(self) -> ShimResult:
@@ -199,7 +215,9 @@ class UniversalOSShim:
         if self.platform == OSPlatform.LINUX:
             for cmd in [["xsel", "--selection", "--clear"], ["xclip", "-selection", "c"]]:
                 if shutil.which(cmd[0]):
-                    return self._run(cmd + ["/dev/null"], " ".join(cmd))
+                    # xclip reads from stdin; send empty input to clear
+                    stdin_text = "" if cmd[0] == "xclip" else None
+                    return self._run(cmd, " ".join(cmd), stdin_text=stdin_text)
         elif self.platform == OSPlatform.MACOS:
             return self._run(["bash", "-c", "printf '' | pbcopy"], "pbcopy clear")
         elif self.platform == OSPlatform.WINDOWS:
@@ -216,13 +234,28 @@ class UniversalOSShim:
             if shutil.which("notify-send"):
                 return self._run(["notify-send", title, body], f"notify-send '{title}' '{body}'")
         elif self.platform == OSPlatform.MACOS:
-            script = f'display notification "{body}" with title "{title}"'
+            # Escape double quotes and backslashes for AppleScript string literals
+            safe_title = title.replace("\\", "\\\\").replace('"', '\\"')
+            safe_body = body.replace("\\", "\\\\").replace('"', '\\"')
+            script = f'display notification "{safe_body}" with title "{safe_title}"'
             return self._run(["osascript", "-e", script], "osascript notification")
         elif self.platform == OSPlatform.WINDOWS:
+            # XML-escape title/body to prevent XML injection in toast payload
+            def _xml_escape(s: str) -> str:
+                return (
+                    s.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace('"', "&quot;")
+                    .replace("'", "&apos;")
+                )
+
+            safe_title = _xml_escape(title)
+            safe_body = _xml_escape(body)
             ps = (
                 'Add-Type -AssemblyName System.Windows.Forms; '
-                f'$toastXml = New-Object Windows.Data.Xml.Dom.XmlDocument; '
-                f'$toastXml.LoadXml("<toast><visual><binding template=\"ToastGeneric\"><text>{title}</text><text>{body}</text></binding></visual></toast>"); '
+                '$toastXml = New-Object Windows.Data.Xml.Dom.XmlDocument; '
+                '$toastXml.LoadXml("<toast><visual><binding template="ToastGeneric"><text>' + safe_title + "</text><text>" + safe_body + '</text></binding></visual></toast>"); '
                 '$toast = New-Object Windows.UI.Notifications.ToastNotification($toastXml); '
                 '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier("Celina").Show($toast)'
             )
@@ -233,7 +266,7 @@ class UniversalOSShim:
     # Screenshot
     # ------------------------------------------------------------------
 
-    def take_screenshot(self, output_path: str = "/tmp/celina_screenshot.png") -> ShimResult:
+    def take_screenshot(self, output_path: str = "/tmp/celina_screenshot.png") -> ShimResult:  # nosec B108 — default output path (user-overridable), not temp file creation
         """Take a screenshot and save to output_path."""
         out = Path(output_path)
         if self.platform == OSPlatform.LINUX:
@@ -293,15 +326,15 @@ class UniversalOSShim:
     # Internal helper
     # ------------------------------------------------------------------
 
-    def _run(self, cmd: list[str], label: str, shell: bool = False, stdin_text: Optional[str] = None) -> ShimResult:
-        """Execute a command and return ShimResult."""
+    def _run(self, cmd: list[str], label: str, stdin_text: str | None = None) -> ShimResult:
+        """Execute a command and return ShimResult (shell=False always)."""
         try:
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=10,
-                shell=shell,
+                shell=False,
                 input=stdin_text,
             )
             if proc.returncode == 0:
@@ -331,7 +364,7 @@ class UniversalOSShim:
 # Global singleton
 # ---------------------------------------------------------------------------
 
-_shim: Optional[UniversalOSShim] = None
+_shim: UniversalOSShim | None = None
 
 
 def get_shim() -> UniversalOSShim:
@@ -343,12 +376,12 @@ def get_shim() -> UniversalOSShim:
 
 
 __all__ = [
-    "UniversalOSShim",
-    "ShimResult",
     "OSPlatform",
-    "get_shim",
+    "ShimResult",
+    "UniversalOSShim",
     "gear0_os_classify",
     "gear0_os_execute",
+    "get_shim",
 ]
 
 
@@ -356,9 +389,9 @@ __all__ = [
 # Gear 0 Plugin #4 dispatch: Universal OS Shim
 # ---------------------------------------------------------------------------
 
-_OS_QUERY_RE = __import__("re").compile(
-    r"^(?:please\s+)?(?:empty\s+trash|sleep|shutdown|restart|lock|trash|clipboard|notify|notification|screenshot|system info|sysinfo|open)\b",
-    __import__("re").IGNORECASE,
+_OS_QUERY_RE = re.compile(
+    r"^(?:please\s+)?(?:empty\s+trash|sleep|suspend|shutdown|restart|lock|trash|clipboard|notify|notification|screenshot|system info|sysinfo|open)\b",
+    re.IGNORECASE,
 )
 
 
@@ -373,7 +406,7 @@ _DESTRUCTIVE_OPS = frozenset({
 })
 
 
-def gear0_os_classify(query: str) -> Optional[str]:
+def gear0_os_classify(query: str) -> str | None:
     """Classify query into an OS shim handler name, or None."""
     low = query.strip().lower()
     if not _OS_QUERY_RE.match(low):
@@ -390,7 +423,7 @@ def gear0_os_classify(query: str) -> Optional[str]:
         return "empty_trash"
     if "clipboard" in low:
         return "get_clipboard"
-    if "notify" in low:
+    if any(w in low for w in ["notify", "notification"]):
         return "show_notification"
     if "screenshot" in low:
         return "take_screenshot"
@@ -401,7 +434,7 @@ def gear0_os_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_os_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_os_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0 Plugin #4 OS shim handler.
 
     Destructive operations (sleep, shutdown, restart, empty_trash, lock_screen)
@@ -409,12 +442,14 @@ def gear0_os_execute(handler: str, query: str, dry_run: bool = False) -> Optiona
     users must prefix with 'simulate:' or 'dry run:' to proceed.
     """
     try:
-        if handler in _DESTRUCTIVE_OPS and not dry_run:
-            return (
-                f"🛑 ActionGate tier-2 approval required for '{handler}'.\n"
-                f"  Prefix with 'simulate: ' or 'dry run: ' to preview without executing.\n"
-                f"  Example: 'simulate: shutdown' or 'dry run: sleep'."
-            )
+        if handler in _DESTRUCTIVE_OPS:
+            if not dry_run:
+                return (
+                    f"🛑 ActionGate tier-2 approval required for '{handler}'.\n"
+                    f"  Prefix with 'simulate: ' or 'dry run: ' to preview without executing.\n"
+                    f"  Example: 'simulate: shutdown' or 'dry run: sleep'."
+                )
+            return f"🔍 Dry run: would execute '{handler}' (simulation only, no action taken)"
 
         shim = get_shim()
         if handler == "sleep_computer":

@@ -1,5 +1,4 @@
-"""
-Celina AI — Zero-LLM-Exposure GNOME Keyring Auto-Login Helper (`celina-login-save`)
+"""Celina AI — Zero-LLM-Exposure GNOME Keyring Auto-Login Helper (`celina-login-save`)
 Stores service credentials directly in GNOME Keyring via `secret-tool` (never in chat,
 logs, cache, or LLM prompts) and fills them ONLY after explicit Tier-2 user approval.
 
@@ -16,9 +15,8 @@ import getpass
 import re
 import shutil
 import subprocess
-import sys
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from . import approval, automation, command_runner, tools
 
@@ -30,9 +28,8 @@ def normalize_service_name(raw: str) -> str:
     return re.sub(r"\s+", "-", (raw or "").strip().lower()).strip("-")
 
 
-def lookup_saved_login(service: str) -> tuple[Optional[str], Optional[str]]:
-    """
-    Looks up `(username, secret)` in GNOME Keyring via `secret-tool` strictly in Python memory.
+def lookup_saved_login(service: str) -> tuple[str | None, str | None]:
+    """Looks up `(username, secret)` in GNOME Keyring via `secret-tool` strictly in Python memory.
     Returns `(None, None)` if `secret-tool` is unavailable or no entry exists.
     """
     svc = normalize_service_name(service)
@@ -44,7 +41,7 @@ def lookup_saved_login(service: str) -> tuple[Optional[str], Optional[str]]:
         ["secret-tool", "search", "--all", "celina_service", svc],
         timeout=5.0,
     )
-    username: Optional[str] = None
+    username: str | None = None
     if meta_res.ok or meta_res.stdout or meta_res.stderr:
         combined = f"{meta_res.stdout}\n{meta_res.stderr}"
         m_user = re.search(r"attribute\.username\s*=\s*(.+)", combined)
@@ -122,16 +119,15 @@ def save_login_to_keyring(service: str, username: str, secret: str) -> tuple[boo
 def fill_saved_login(
     service: str,
     *,
-    approval_cb: Optional[ApprovalCallback] = None,
+    approval_cb: ApprovalCallback | None = None,
     dry_run: bool = False,
     open_page: bool = True,
 ) -> str:
-    """
-    Zero-LLM-Exposure Auto-Login:
-      - Looks up saved credentials in GNOME Keyring (`secret-tool`).
-      - If not stored yet, opens the login page safely and tells the user how to save once via `celina-login-save`.
-      - If stored, asks strict Tier-2 approval (displaying ONLY service & username, NEVER the secret)
-        and types directly via Wayland input broker without ever exposing the password to the LLM/logs.
+    """Zero-LLM-Exposure Auto-Login:
+    - Looks up saved credentials in GNOME Keyring (`secret-tool`).
+    - If not stored yet, opens the login page safely and tells the user how to save once via `celina-login-save`.
+    - If stored, asks strict Tier-2 approval (displaying ONLY service & username, NEVER the secret)
+      and types directly via Wayland input broker without ever exposing the password to the LLM/logs.
     """
     svc = normalize_service_name(service)
     if not _SAFE_SERVICE_RE.fullmatch(svc):
@@ -202,7 +198,7 @@ def fill_saved_login(
     return f"🔐 {opened_note}Auto-filled saved GNOME Keyring login for '{svc}' (password never exposed to AI)."
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Save service logins safely into GNOME Keyring for Celina auto-login (never exposed to AI).")
     parser.add_argument("service", nargs="?", help="Service name (e.g. spotify, github, gmail, notion)")
     parser.add_argument("--username", "-u", default="", help="Username or email (prompted if omitted)")

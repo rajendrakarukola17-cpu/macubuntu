@@ -1,13 +1,12 @@
-"""
-Celina AI (Celly) - Zero-Leak Privacy Firewall
+"""Celina AI (Celly) - Zero-Leak Privacy Firewall
 Scans outbound cloud payloads for secrets, PII (emails, phones, cards, Aadhaar, PAN,
 home paths), and private local file contents—enforcing redaction or explicit user
 consent before a single byte leaves the laptop.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Optional
 
 from . import config
 
@@ -161,10 +160,9 @@ def evaluate_cloud_outbound(
     source_label: str,
     vault: RedactionVault,
     has_local_data: bool = False,
-    consent_cb: Optional[PrivacyConsentCallback] = None,
+    consent_cb: PrivacyConsentCallback | None = None,
 ) -> tuple[str, str]:
-    """
-    Evaluates whether text may be sent to an external cloud model.
+    """Evaluates whether text may be sent to an external cloud model.
     Returns (decision, text_to_send) where decision is 'allow' | 'redact' | 'local'.
     """
     redacted_text, report = vault.redact(text)

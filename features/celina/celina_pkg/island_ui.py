@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Apple-Style Stub-Launch GTK3 Dynamic Island UI (v4.2)
+"""Celina AI (Celly) - Apple-Style Stub-Launch GTK3 Dynamic Island UI (v4.2)
 - Stub Launch & Lazy Loading (~18 MB boot RAM): At login, loads ONLY the floating pill &
   config; CelinaRouter, SQLite DBs, 60 tools, and fullscreen EdgeGlowOverlay stay unloaded
   until your first interaction.
@@ -26,7 +25,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 import gi
 
@@ -166,15 +165,14 @@ _TRACEBACK_RE = re.compile(
     r"(Traceback \(most recent call last\):|"
     r"(?:Syntax|Type|Value|Key|Index|Attribute|Import|ModuleNotFound|Runtime|Reference|NullPointer|ZeroDivision)Error:|"
     r"Exception in thread|panic:|fatal error:)",
-    re.I,
+    re.IGNORECASE,
 )
-_STACK_LINE_RE = re.compile(r'(File "[^"]+", line \d+|\bat\s+\S+:\d+|\bline\s+\d+\b|^\s+\^+\s*$)', re.M)
-_PUBLIC_URL_RE = re.compile(r"^https?://(?!(?:127\.|localhost|0\.0\.0\.0|10\.|192\.168\.))[^\s<>\"']{4,500}$", re.I)
+_STACK_LINE_RE = re.compile(r'(File "[^"]+", line \d+|\bat\s+\S+:\d+|\bline\s+\d+\b|^\s+\^+\s*$)', re.MULTILINE)
+_PUBLIC_URL_RE = re.compile(r"^https?://(?!(?:127\.|localhost|0\.0\.0\.0|10\.|192\.168\.))[^\s<>\"']{4,500}$", re.IGNORECASE)
 
 
-def _inspect_clipboard_suggestion(clip_text: str) -> Optional[tuple[str, str]]:
-    """
-    Movie Feature C: Zero-polling Clipboard Watchdog detector (runs ONLY on drawer expand).
+def _inspect_clipboard_suggestion(clip_text: str) -> tuple[str, str] | None:
+    """Movie Feature C: Zero-polling Clipboard Watchdog detector (runs ONLY on drawer expand).
     Returns (chip_label, action_prompt) if clipboard contains a traceback or public URL, else None.
     """
     txt = (clip_text or "").strip()
@@ -230,8 +228,7 @@ def send_ipc_command(cmd: str = "toggle", socket_path: str = SOCKET_PATH) -> boo
 
 
 def _probe_mpris_title_dbus(bus: Any) -> tuple[bool, str]:
-    """
-    Zero-fork in-process D-Bus MPRIS media check (<0.3 ms, 0 subprocesses).
+    """Zero-fork in-process D-Bus MPRIS media check (<0.3 ms, 0 subprocesses).
     Returns (has_any_mpris_player, formatted_title_or_empty).
     """
     try:
@@ -282,7 +279,7 @@ def _quick_db_has_unfired_reminders() -> bool:
 
         with contextlib.closing(sqlite3.connect(str(config.DB_PATH), timeout=2.0)) as conn:
             row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='reminders'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='reminders'",
             ).fetchone()
             if not row:
                 return False
@@ -297,17 +294,17 @@ class DynamicIsland(Gtk.Window):
         self,
         start_expanded: bool = False,
         start_voice: bool = False,
-        initial_prompt: Optional[str] = None,
+        initial_prompt: str | None = None,
     ):
         super().__init__(title=f"{config.get_assistant_name()} Dynamic Island")
         # LAZY: Never instantiate AI router, SQLite DBs, or fullscreen overlay at login!
         self._router: Any = None
         self._edge_glow: Any = None
         self._has_pending_reminders = False
-        self._reminder_timer_id: Optional[int] = None
-        self._media_timer_id: Optional[int] = None
+        self._reminder_timer_id: int | None = None
+        self._media_timer_id: int | None = None
         self._dbus: Any = None
-        self._dbus_sub_id: Optional[int] = None
+        self._dbus_sub_id: int | None = None
 
         self.expanded = False
         self.mode = "auto"
@@ -318,9 +315,9 @@ class DynamicIsland(Gtk.Window):
         )
         self.speak_enabled = config.SPEAK_ENABLED
         self._busy = False
-        self._server_sock: Optional[socket.socket] = None
-        self._pending_approval: Optional[tuple[threading.Event, list[bool]]] = None
-        self._pending_privacy: Optional[tuple[threading.Event, list[str]]] = None
+        self._server_sock: socket.socket | None = None
+        self._pending_approval: tuple[threading.Event, list[bool]] | None = None
+        self._pending_privacy: tuple[threading.Event, list[str]] | None = None
         self._wake_listener: Any = None
 
         # Apple Intelligence Edge Lighting state (0% CPU when idle!)
@@ -328,9 +325,9 @@ class DynamicIsland(Gtk.Window):
         self._pill_glow_phase = 0.0
         self._pill_glow_alpha = 0.0
         self._pill_glow_target = 0.0
-        self._pill_glow_timer: Optional[int] = None
+        self._pill_glow_timer: int | None = None
         self._pill_glow_last_ts: float = 0.0
-        self._pill_fade_timer: Optional[int] = None
+        self._pill_fade_timer: int | None = None
         self._last_stream_text: str = ""
 
         # NORMAL floating window so GNOME/XWayland reliably gives keyboard focus
@@ -351,7 +348,7 @@ class DynamicIsland(Gtk.Window):
         provider = Gtk.CssProvider()
         provider.load_from_data(CSS)
         Gtk.StyleContext.add_provider_for_screen(
-            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+            screen, provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
 
         # Main Pill Container (with Apple Intelligence Cairo halo overlay)
@@ -381,7 +378,7 @@ class DynamicIsland(Gtk.Window):
         top_bar.pack_end(self.os_badge_label, False, False, 2)
 
         # Actionable iPhone ANCS quick pills (hidden unless an active iOS notification arrives)
-        self._ios_action_hide_id: Optional[int] = None
+        self._ios_action_hide_id: int | None = None
         self.ios_action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=3)
         ios_ok = Gtk.Button(label="✓")
         ios_ok.get_style_context().add_class("approve-btn")
@@ -410,9 +407,9 @@ class DynamicIsland(Gtk.Window):
         from . import biometric_anim
 
         self._bio_state = biometric_anim.BiometricAnimState()
-        self._bio_timer_id: Optional[int] = None
+        self._bio_timer_id: int | None = None
         self._bio_last_tick: float = 0.0
-        self._bio_observer: Optional[Any] = None
+        self._bio_observer: Any | None = None
         self.bio_area = Gtk.DrawingArea()
         self.bio_area.set_size_request(132, 118)
         self.bio_area.connect("draw", self._on_bio_draw)
@@ -425,7 +422,7 @@ class DynamicIsland(Gtk.Window):
         self.entry = Gtk.Entry()
         self.entry.set_name("prompt-entry")
         self.entry.set_placeholder_text(
-            f"Ask {config.get_assistant_display_label()}... ('quick:', 'deep:', 'simulate:', '/name')"
+            f"Ask {config.get_assistant_display_label()}... ('quick:', 'deep:', 'simulate:', '/name')",
         )
         self.entry.connect("activate", self._on_submit)
         self.drawer.pack_start(self.entry, False, False, 0)
@@ -491,7 +488,7 @@ class DynamicIsland(Gtk.Window):
         self.drawer.pack_start(self.privacy_box, False, False, 0)
 
         # --- Clipboard Watchdog Smart Chip (zero background polling; checks ONLY on drawer expand) ---
-        self._clip_chip_prompt: Optional[str] = None
+        self._clip_chip_prompt: str | None = None
         self.clip_chip_btn = Gtk.Button(label="")
         self.clip_chip_btn.get_style_context().add_class("smart-chip")
         self.clip_chip_btn.set_tooltip_text("1-click contextual action from your current clipboard")
@@ -505,7 +502,7 @@ class DynamicIsland(Gtk.Window):
         scroll.set_max_content_height(280)
 
         self.response_label = Gtk.Label(
-            label=f"Ready. Ask {config.get_assistant_display_label()} anything in English, తెలుగు, or हिन्दी — or press Super+Alt+C to speak."
+            label=f"Ready. Ask {config.get_assistant_display_label()} anything in English, తెలుగు, or हिन्दी — or press Super+Alt+C to speak.",
         )
         self.response_label.set_name("response-view")
         self.response_label.set_line_wrap(True)
@@ -526,7 +523,7 @@ class DynamicIsland(Gtk.Window):
         self.voice_btn = Gtk.Button(label="🎤 Voice")
         self.voice_btn.get_style_context().add_class("pill-btn")
         self.voice_btn.set_tooltip_text(
-            f"Speak to {config.get_assistant_name()} (auto-stops on silence, Super+Alt+C)"
+            f"Speak to {config.get_assistant_name()} (auto-stops on silence, Super+Alt+C)",
         )
         self.voice_btn.connect("clicked", lambda _: self.trigger_voice())
         actions.pack_start(self.voice_btn, False, False, 0)
@@ -859,7 +856,7 @@ class DynamicIsland(Gtk.Window):
                 on_resolve=lambda ok, lbl: GLib.idle_add(self.resolve_biometric_anim, ok, lbl),
                 on_retry=lambda lbl: GLib.idle_add(self._bio_state.pulse_retry, lbl),
                 on_unlock_welcome=lambda kind: GLib.idle_add(
-                    self.trigger_biometric_anim, kind, True, "Face ID" if kind == "face" else "Touch ID"
+                    self.trigger_biometric_anim, kind, True, "Face ID" if kind == "face" else "Touch ID",
                 ),
             )
             obs.start()
@@ -870,7 +867,7 @@ class DynamicIsland(Gtk.Window):
     def trigger_biometric_anim(
         self,
         kind: str = "face",
-        auto_matched: Optional[bool] = None,
+        auto_matched: bool | None = None,
         label: str = "",
     ) -> bool:
         """Starts the 60 FPS Cairo Face ID or Touch ID animation inside the Dynamic Island."""
@@ -926,10 +923,10 @@ class DynamicIsland(Gtk.Window):
         name = config.get_assistant_name()
         self.set_title(f"{name} Dynamic Island")
         self.entry.set_placeholder_text(
-            f"Ask {config.get_assistant_display_label()}... ('quick:', 'deep:', 'simulate:', '/name')"
+            f"Ask {config.get_assistant_display_label()}... ('quick:', 'deep:', 'simulate:', '/name')",
         )
         self.voice_btn.set_tooltip_text(
-            f"Speak to {name} (auto-stops on silence, Super+Alt+C)"
+            f"Speak to {name} (auto-stops on silence, Super+Alt+C)",
         )
 
     # --- Lazy Properties (Stub Launch) ---
@@ -937,11 +934,12 @@ class DynamicIsland(Gtk.Window):
     def router(self):
         """Lazy-loads AI brain, SQLite DBs, and skills ONLY on first interaction."""
         if self._router is None:
-            from . import automation, router as router_mod
+            from . import automation
+            from . import router as router_mod
 
             self._router = router_mod.CelinaRouter()
             automation.register_capture_overlay_hook(
-                self._hide_for_screenshot, self._restore_after_screenshot
+                self._hide_for_screenshot, self._restore_after_screenshot,
             )
         return self._router
 
@@ -1002,8 +1000,7 @@ class DynamicIsland(Gtk.Window):
         return True
 
     def _check_proactive_world_triggers(self) -> None:
-        """
-        Proactive World Model (0 subprocesses, 0 extra timers, <0.1 ms):
+        """Proactive World Model (0 subprocesses, 0 extra timers, <0.1 ms):
         Checks /proc/meminfo and /sys/class/power_supply/BAT* during existing maintenance wakeups.
         """
         if self._busy:
@@ -1015,7 +1012,7 @@ class DynamicIsland(Gtk.Window):
         alert_msg = ""
         try:
             mem_info: dict[str, int] = {}
-            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            with open("/proc/meminfo", encoding="utf-8") as f:
                 for line in f:
                     parts = line.split(":")
                     if len(parts) == 2:
@@ -1039,11 +1036,11 @@ class DynamicIsland(Gtk.Window):
                         cap_p = os.path.join(ps_dir, entry, "capacity")
                         st_p = os.path.join(ps_dir, entry, "status")
                         if os.path.isfile(cap_p):
-                            with open(cap_p, "r", encoding="utf-8") as cf:
+                            with open(cap_p, encoding="utf-8") as cf:
                                 cap = int(cf.read().strip())
                             st = ""
                             if os.path.isfile(st_p):
-                                with open(st_p, "r", encoding="utf-8") as sf:
+                                with open(st_p, encoding="utf-8") as sf:
                                     st = sf.read().strip().lower()
                             if st == "discharging" and cap <= bat_limit:
                                 alert_msg = f"🪫 Battery {cap}% · plug in charger"
@@ -1275,7 +1272,7 @@ class DynamicIsland(Gtk.Window):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _apply_clipboard_chip(self, suggestion: Optional[tuple[str, str]]) -> bool:
+    def _apply_clipboard_chip(self, suggestion: tuple[str, str] | None) -> bool:
         if not self.expanded or suggestion is None or self._busy:
             self._clip_chip_prompt = None
             self.clip_chip_btn.hide()
@@ -1308,7 +1305,7 @@ class DynamicIsland(Gtk.Window):
     def _show_why_receipt(self, _btn) -> None:
         if self._router is None:
             self.response_label.set_text(
-                f"No turn trace recorded yet. Ask {config.get_assistant_name()} a question first, then tap ⓘ Why!"
+                f"No turn trace recorded yet. Ask {config.get_assistant_name()} a question first, then tap ⓘ Why!",
             )
             return
         self.response_label.set_text(self._router.get_last_receipt())
@@ -1366,7 +1363,7 @@ class DynamicIsland(Gtk.Window):
             self._media_timer_id = None
             return False
 
-        self._set_title_if_idle(title if title else self._ready_label())
+        self._set_title_if_idle(title or self._ready_label())
         return True
 
     def _set_title_if_idle(self, text: str) -> bool:
@@ -1642,7 +1639,7 @@ class DynamicIsland(Gtk.Window):
         threading.Thread(target=worker, daemon=True).start()
         return False
 
-    def _on_voice_finished(self, transcript: str, err: Optional[str]) -> bool:
+    def _on_voice_finished(self, transcript: str, err: str | None) -> bool:
         self._busy = False
         self.entry.set_sensitive(True)
         self.voice_btn.set_sensitive(True)
@@ -1675,7 +1672,7 @@ class DynamicIsland(Gtk.Window):
         self._refresh_identity_ui()
         is_rec = self._is_recording_skill()
         self.title_label.set_text(
-            f"🔴 REC: {self._recording_skill_name()}" if is_rec else self._ready_label()
+            f"🔴 REC: {self._recording_skill_name()}" if is_rec else self._ready_label(),
         )
         self.response_label.set_text(f"[{src}]\n{reply}")
         self._set_dot("#ef4444" if is_rec else "#a855f7")
@@ -1692,7 +1689,7 @@ class DynamicIsland(Gtk.Window):
         from . import voice
 
         self._wake_listener = voice.WakeWordListener(
-            on_wake=lambda: GLib.idle_add(self.trigger_voice)
+            on_wake=lambda: GLib.idle_add(self.trigger_voice),
         )
         self._wake_listener.start()
 
@@ -1828,14 +1825,14 @@ def main() -> None:
     toggle_requested = "--toggle" in sys.argv
     voice_requested = "--voice" in sys.argv
     quit_requested = "--quit" in sys.argv
-    auth_anim: Optional[str] = None
+    auth_anim: str | None = None
     if "--auth-anim" in sys.argv:
         idx = sys.argv.index("--auth-anim")
         if idx + 1 < len(sys.argv):
             cand = sys.argv[idx + 1].strip().lower()
             if cand in {"face", "touch", "fail"}:
                 auth_anim = cand
-    ask_prompt: Optional[str] = None
+    ask_prompt: str | None = None
     for flag in ("--ask", "--prompt"):
         if flag in sys.argv:
             idx = sys.argv.index(flag)

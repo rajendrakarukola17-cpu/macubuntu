@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Automatic Model Router (v4.5, Update 18)
+"""Celina AI (Celly) - Automatic Model Router (v4.5, Update 18)
 
 Selects the best local model based on system RAM and capabilities:
 
@@ -16,8 +15,6 @@ from __future__ import annotations
 import logging
 import shutil
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 
 log = logging.getLogger("celina.model_router")
 
@@ -67,7 +64,7 @@ def detect_total_ram_gb() -> float:
     except Exception:
         # Fallback: read /proc/meminfo
         try:
-            with open("/proc/meminfo", "r") as f:
+            with open("/proc/meminfo") as f:
                 for line in f:
                     if line.startswith("MemTotal:"):
                         kb = int(line.split()[1])
@@ -112,11 +109,10 @@ class ModelSelection:
 
 
 def select_best_model(
-    preferred_model: Optional[str] = None,
+    preferred_model: str | None = None,
     min_free_disk_gb: float = 5.0,
 ) -> ModelSelection:
-    """
-    Automatically select the best model for the current system.
+    """Automatically select the best model for the current system.
 
     Selection logic:
     1. If user specified a preferred model and it's available, use it.
@@ -185,7 +181,7 @@ def select_best_model(
                 reason=f"8 GB RAM detected, Edge0-8B fits in {tier['active_ram_gb']} GB active RAM",
                 config=tier,
             )
-        elif has_ollama:
+        if has_ollama:
             tier = MODEL_TIERS["qwen3:1.7b_q4km"]
             return ModelSelection(
                 model_id="qwen3:1.7b_q4km",
@@ -198,21 +194,20 @@ def select_best_model(
                 reason=f"8 GB RAM detected, qwen3:1.7b Q4_K_M via Ollama ({tier['active_ram_gb']} GB)",
                 config=tier,
             )
-        else:
-            # No local runtime available - must use cloud
-            return ModelSelection(
-                model_id="openrouter/free",
-                model_name="OpenRouter/free",
-                provider="cloud",
-                active_ram_gb=0.0,
-                disk_gb=0.0,
-                description="Cloud fallback via OpenRouter/free",
-                best_for="No local model runtime available",
-                reason="No Edge0 or Ollama available, falling back to cloud",
-                config={},
-            )
+        # No local runtime available - must use cloud
+        return ModelSelection(
+            model_id="openrouter/free",
+            model_name="OpenRouter/free",
+            provider="cloud",
+            active_ram_gb=0.0,
+            disk_gb=0.0,
+            description="Cloud fallback via OpenRouter/free",
+            best_for="No local model runtime available",
+            reason="No Edge0 or Ollama available, falling back to cloud",
+            config={},
+        )
 
-    elif ram_gb <= 16.0:
+    if ram_gb <= 16.0:
         # 8-16 GB: compressed 35B if possible, otherwise 8B
         if has_edge0 and disk_gb >= MODEL_TIERS["edge0-35b-compressed"]["disk_gb"]:
             tier = MODEL_TIERS["edge0-35b-compressed"]
@@ -227,7 +222,7 @@ def select_best_model(
                 reason=f"{ram_gb} GB RAM, Edge0-35B compressed to {tier['active_ram_gb']} GB active RAM",
                 config=tier,
             )
-        elif has_edge0 and disk_gb >= MODEL_TIERS["edge0-8b"]["disk_gb"]:
+        if has_edge0 and disk_gb >= MODEL_TIERS["edge0-8b"]["disk_gb"]:
             tier = MODEL_TIERS["edge0-8b"]
             return ModelSelection(
                 model_id="edge0-8b",
@@ -240,7 +235,7 @@ def select_best_model(
                 reason=f"{ram_gb} GB RAM, insufficient disk for 35B, using Edge0-8B ({tier['active_ram_gb']} GB)",
                 config=tier,
             )
-        elif has_ollama:
+        if has_ollama:
             tier = MODEL_TIERS["qwen3:1.7b_q4km"]
             return ModelSelection(
                 model_id="qwen3:1.7b_q4km",
@@ -253,85 +248,82 @@ def select_best_model(
                 reason=f"{ram_gb} GB RAM, no Edge0 available, using qwen3:1.7b ({tier['active_ram_gb']} GB)",
                 config=tier,
             )
-        else:
-            return ModelSelection(
-                model_id="openrouter/free",
-                model_name="OpenRouter/free",
-                provider="cloud",
-                active_ram_gb=0.0,
-                disk_gb=0.0,
-                description="Cloud fallback via OpenRouter/free",
-                best_for="No local model runtime available",
-                reason="No Edge0 or Ollama available, falling back to cloud",
-                config={},
-            )
+        return ModelSelection(
+            model_id="openrouter/free",
+            model_name="OpenRouter/free",
+            provider="cloud",
+            active_ram_gb=0.0,
+            disk_gb=0.0,
+            description="Cloud fallback via OpenRouter/free",
+            best_for="No local model runtime available",
+            reason="No Edge0 or Ollama available, falling back to cloud",
+            config={},
+        )
 
-    else:
-        # 16+ GB: standard 35B if possible
-        if has_edge0 and disk_gb >= MODEL_TIERS["edge0-35b-standard"]["disk_gb"]:
-            tier = MODEL_TIERS["edge0-35b-standard"]
-            return ModelSelection(
-                model_id="edge0-35b-standard",
-                model_name=tier["name"],
-                provider=tier["provider"],
-                active_ram_gb=tier["active_ram_gb"],
-                disk_gb=tier["disk_gb"],
-                description=tier["description"],
-                best_for=tier["best_for"],
-                reason=f"{ram_gb} GB RAM, Edge0-35B standard ({tier['active_ram_gb']} GB active)",
-                config=tier,
-            )
-        elif has_edge0 and disk_gb >= MODEL_TIERS["edge0-35b-compressed"]["disk_gb"]:
-            tier = MODEL_TIERS["edge0-35b-compressed"]
-            return ModelSelection(
-                model_id="edge0-35b-compressed",
-                model_name=tier["name"],
-                provider=tier["provider"],
-                active_ram_gb=tier["active_ram_gb"],
-                disk_gb=tier["disk_gb"],
-                description=tier["description"],
-                best_for=tier["best_for"],
-                reason=f"{ram_gb} GB RAM, Edge0-35B compressed ({tier['active_ram_gb']} GB active)",
-                config=tier,
-            )
-        elif has_edge0 and disk_gb >= MODEL_TIERS["edge0-8b"]["disk_gb"]:
-            tier = MODEL_TIERS["edge0-8b"]
-            return ModelSelection(
-                model_id="edge0-8b",
-                model_name=tier["name"],
-                provider=tier["provider"],
-                active_ram_gb=tier["active_ram_gb"],
-                disk_gb=tier["disk_gb"],
-                description=tier["description"],
-                best_for=tier["best_for"],
-                reason=f"{ram_gb} GB RAM, insufficient disk for 35B, using Edge0-8B ({tier['active_ram_gb']} GB)",
-                config=tier,
-            )
-        elif has_ollama:
-            tier = MODEL_TIERS["qwen3:1.7b_q4km"]
-            return ModelSelection(
-                model_id="qwen3:1.7b_q4km",
-                model_name=tier["name"],
-                provider=tier["provider"],
-                active_ram_gb=tier["active_ram_gb"],
-                disk_gb=tier["disk_gb"],
-                description=tier["description"],
-                best_for=tier["best_for"],
-                reason=f"{ram_gb} GB RAM, no Edge0 available, using qwen3:1.7b ({tier['active_ram_gb']} GB)",
-                config=tier,
-            )
-        else:
-            return ModelSelection(
-                model_id="openrouter/free",
-                model_name="OpenRouter/free",
-                provider="cloud",
-                active_ram_gb=0.0,
-                disk_gb=0.0,
-                description="Cloud fallback via OpenRouter/free",
-                best_for="No local model runtime available",
-                reason="No Edge0 or Ollama available, falling back to cloud",
-                config={},
-            )
+    # 16+ GB: standard 35B if possible
+    if has_edge0 and disk_gb >= MODEL_TIERS["edge0-35b-standard"]["disk_gb"]:
+        tier = MODEL_TIERS["edge0-35b-standard"]
+        return ModelSelection(
+            model_id="edge0-35b-standard",
+            model_name=tier["name"],
+            provider=tier["provider"],
+            active_ram_gb=tier["active_ram_gb"],
+            disk_gb=tier["disk_gb"],
+            description=tier["description"],
+            best_for=tier["best_for"],
+            reason=f"{ram_gb} GB RAM, Edge0-35B standard ({tier['active_ram_gb']} GB active)",
+            config=tier,
+        )
+    if has_edge0 and disk_gb >= MODEL_TIERS["edge0-35b-compressed"]["disk_gb"]:
+        tier = MODEL_TIERS["edge0-35b-compressed"]
+        return ModelSelection(
+            model_id="edge0-35b-compressed",
+            model_name=tier["name"],
+            provider=tier["provider"],
+            active_ram_gb=tier["active_ram_gb"],
+            disk_gb=tier["disk_gb"],
+            description=tier["description"],
+            best_for=tier["best_for"],
+            reason=f"{ram_gb} GB RAM, Edge0-35B compressed ({tier['active_ram_gb']} GB active)",
+            config=tier,
+        )
+    if has_edge0 and disk_gb >= MODEL_TIERS["edge0-8b"]["disk_gb"]:
+        tier = MODEL_TIERS["edge0-8b"]
+        return ModelSelection(
+            model_id="edge0-8b",
+            model_name=tier["name"],
+            provider=tier["provider"],
+            active_ram_gb=tier["active_ram_gb"],
+            disk_gb=tier["disk_gb"],
+            description=tier["description"],
+            best_for=tier["best_for"],
+            reason=f"{ram_gb} GB RAM, insufficient disk for 35B, using Edge0-8B ({tier['active_ram_gb']} GB)",
+            config=tier,
+        )
+    if has_ollama:
+        tier = MODEL_TIERS["qwen3:1.7b_q4km"]
+        return ModelSelection(
+            model_id="qwen3:1.7b_q4km",
+            model_name=tier["name"],
+            provider=tier["provider"],
+            active_ram_gb=tier["active_ram_gb"],
+            disk_gb=tier["disk_gb"],
+            description=tier["description"],
+            best_for=tier["best_for"],
+            reason=f"{ram_gb} GB RAM, no Edge0 available, using qwen3:1.7b ({tier['active_ram_gb']} GB)",
+            config=tier,
+        )
+    return ModelSelection(
+        model_id="openrouter/free",
+        model_name="OpenRouter/free",
+        provider="cloud",
+        active_ram_gb=0.0,
+        disk_gb=0.0,
+        description="Cloud fallback via OpenRouter/free",
+        best_for="No local model runtime available",
+        reason="No Edge0 or Ollama available, falling back to cloud",
+        config={},
+    )
 
 
 def get_model_selection_summary() -> dict:
@@ -358,11 +350,11 @@ def get_model_selection_summary() -> dict:
 
 __all__ = [
     "MODEL_TIERS",
-    "detect_total_ram_gb",
-    "detect_free_disk_gb",
-    "edge0_available",
-    "ollama_available",
     "ModelSelection",
-    "select_best_model",
+    "detect_free_disk_gb",
+    "detect_total_ram_gb",
+    "edge0_available",
     "get_model_selection_summary",
+    "ollama_available",
+    "select_best_model",
 ]

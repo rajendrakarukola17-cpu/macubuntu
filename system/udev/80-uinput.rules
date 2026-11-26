@@ -1,0 +1,5 @@
+# macubuntu — Wayland system-wide text injection (ydotool / uinput)
+# Grants the input group read/write on /dev/uinput so ydotoold can inject
+# keystrokes system-wide under Wayland without root. static_node=uinput keeps
+# a stable /dev/uinput node so YDOTOOL_SOCKET can be discovered reliably.
+KERNEL=="uinput", GROUP="input", MODE="0660", static_node=uinput

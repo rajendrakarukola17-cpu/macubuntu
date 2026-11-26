@@ -1,5 +1,4 @@
-"""
-Celina AI — Capability #10: MCP-Native System Exposure (`celina-mcp-server`)
+"""Celina AI — Capability #10: MCP-Native System Exposure (`celina-mcp-server`)
 
 Wraps ALL Celina Linux OS tools (94 tools across 8 domains) as a standards-compliant
 JSON-RPC 2.0 Model Context Protocol (MCP) Server over stdio (`python3 -m celina_pkg.mcp_server`)
@@ -15,7 +14,8 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from . import capability_bus, config, tools
 
@@ -30,16 +30,16 @@ class CelinaMCPServer:
     def __init__(
         self,
         *,
-        bus: Optional[capability_bus.UnifiedCapabilityBus] = None,
-        approval_cb: Optional[ApprovalCallback] = None,
-        caller_uid: Optional[int] = None,
+        bus: capability_bus.UnifiedCapabilityBus | None = None,
+        approval_cb: ApprovalCallback | None = None,
+        caller_uid: int | None = None,
         deferred_loading: bool = True,
     ):
         self.bus = bus or capability_bus.get_capability_bus()
         self.approval_cb = approval_cb
         self.caller_uid = int(os.getuid() if caller_uid is None else caller_uid)
         self.deferred_loading = bool(deferred_loading)
-        self._tool_cache: Optional[dict[str, dict[str, Any]]] = None
+        self._tool_cache: dict[str, dict[str, Any]] | None = None
 
     def _get_tool_catalog(self) -> dict[str, dict[str, Any]]:
         if self._tool_cache is None:
@@ -71,7 +71,7 @@ class CelinaMCPServer:
     def list_tools(
         self,
         *,
-        domain: Optional[str] = None,
+        domain: str | None = None,
         include_schemas: bool = True,
     ) -> list[dict[str, Any]]:
         """Lists exposed OS tools with optional deferred domain/schema loading."""
@@ -87,17 +87,19 @@ class CelinaMCPServer:
                         "name": entry["name"],
                         "description": entry["description"][:140],
                         "annotations": entry["annotations"],
-                    }
+                    },
                 )
             else:
                 out.append(entry)
         return out
 
-    def handle_request(self, request: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def handle_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Handles a single JSON-RPC 2.0 MCP message and returns the JSON-RPC response dict (or None for notifications)."""
         req_id = request.get("id")
         method = str(request.get("method") or "")
-        params = request.get("params") if isinstance(request.get("params"), dict) else {}
+        params = request.get("params")
+        if not isinstance(params, dict):
+            params = {}
 
         # Notifications carry no id and expect no reply
         if method.startswith("notifications/"):
@@ -145,13 +147,14 @@ class CelinaMCPServer:
                             "name": "Celina v5 Autonomous TaskGraph",
                             "mimeType": "application/json",
                         },
-                    ]
+                    ],
                 },
             }
 
         if method == "tools/call":
             tname = str(params.get("name") or "").strip()
-            targs = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
+            _targs_raw = params.get("arguments")
+            targs: dict[str, Any] = _targs_raw if isinstance(_targs_raw, dict) else {}
             if not tname or tname not in self._get_tool_catalog():
                 return {
                     "jsonrpc": "2.0",
@@ -163,6 +166,7 @@ class CelinaMCPServer:
                 tool_name=tname,
                 arguments=targs,
                 caller_uid=self.caller_uid,
+                uid_provenance="in_process",
                 root_goal_id=str(params.get("root_goal_id") or ""),
                 task_id=str(params.get("task_id") or ""),
             )
@@ -185,7 +189,7 @@ class CelinaMCPServer:
             "error": {"code": -32601, "message": f"Method not found: '{method}'"},
         }
 
-    def serve_stdio(self, stdin=None, stdout=None) -> int:
+    def serve_stdio(self, stdin: Any | None = None, stdout: Any | None = None) -> int:
         in_stream = stdin or sys.stdin
         out_stream = stdout or sys.stdout
         for raw_line in in_stream:

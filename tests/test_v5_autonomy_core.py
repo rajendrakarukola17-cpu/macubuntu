@@ -236,7 +236,7 @@ def test_legato_gui_executor_and_retry_exhaustion(tmp_path: Path):
                     "gear": "fast",
                 }
 
-        eng = AutonomyEngine(graph, exec_gui, _BrokenRouter(), ApprovalEngine(), observe_only=False)
+        eng = AutonomyEngine(graph, exec_gui, _BrokenRouter(), ApprovalEngine(lambda _t, _d: True), observe_only=False)
         assert eng.step() == "t-fail"
         assert graph.get_task("t-fail")["status"] == "pending"  # 1/2 -> retried
         assert eng.step() == "t-fail"

@@ -10,6 +10,7 @@ Installer, Supply-Chain, Dry-Run, Verification & Rollback Test Suite:
 
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -87,7 +88,7 @@ class TestSupplyChainLockfileAndCloneGuard:
             assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_v)
             if kind == "git":
                 assert re.fullmatch(r"[0-9a-f]{40}", ref), f"Git ref must be 40-hex commit SHA: {ln}"
-            elif kind in ("file", "docker"):
+            elif kind in ("file", "docker", "model", "uvx", "npm"):
                 assert re.fullmatch(r"[0-9a-f]{64}", sha), f"{kind} SHA-256 must be 64-hex: {ln}"
             else:
                 pytest.fail(f"Unknown lockfile kind: {kind}")
@@ -146,10 +147,37 @@ class TestVerificationExitCodesAndStaticSafety:
     ):
         fake_home = tmp_path / "verify_home"
         fake_home.mkdir()
+        sandbox = tmp_path / "repo"
+        (sandbox / "core").mkdir(parents=True)
+        (sandbox / "stages").mkdir()
+        (sandbox / "profiles").mkdir()
+        shutil.copy2(repo_root / "profiles" / "default-8gb.env", sandbox / "profiles" / "default-8gb.env")
+        for name in ("common.sh", "detect.sh"):
+            shutil.copy2(repo_root / "core" / name, sandbox / "core" / name)
+        center = sandbox / "apps" / "macubuntu-center"
+        center.mkdir(parents=True)
+        for name in ("main.py", "installer.py", "backend.py"):
+            shutil.copy2(repo_root / "apps" / "macubuntu-center" / name, center / name)
+        stage = sandbox / "stages" / "99-verify.sh"
+        source = (repo_root / "stages" / "99-verify.sh").read_text()
+        state_call = "\nwrite_state_json\n\nprint_summary\n"
+        assert source.count(state_call) == 1
+        # Exit-policy test deliberately replaces only privileged state persistence.
+        stage.write_text(source.replace(state_call, "\n: # state write mocked\n\nprint_summary\n"))
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        marker = tmp_path / "sudo-was-called"
+        fake_sudo = fake_bin / "sudo"
+        fake_sudo.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n")
+        fake_sudo.chmod(0o700)
+        runtime = tmp_path / "runtime"
+        runtime.mkdir()
         r = _run_bash(
-            f'REPO_DIR="{repo_root}" DRY_RUN=0 ENABLE_CELINA=true bash "{repo_root}/stages/99-verify.sh"',
-            env_extra={"HOME": str(fake_home)},
+            f'REPO_DIR="{sandbox}" DRY_RUN=0 ENABLE_CELINA=true bash "{stage}"',
+            env_extra={"HOME": str(fake_home), "TMPDIR": str(tmp_path), "WORKDIR": str(runtime),
+                       "PATH": f"{fake_bin}:{os.environ['PATH']}"},
         )
+        assert not marker.exists(), "stage verification must not invoke sudo in the test"
         assert r.returncode != 0, "99-verify.sh MUST exit nonzero when required checks fail!"
         assert "SETUP COMPLETE" not in r.stdout
         assert "VERIFICATION FAILED" in r.stdout
@@ -434,7 +462,7 @@ class TestRepoWideIntegrityAndHygiene:
             if kind == "git":
                 assert re.fullmatch(r"[0-9a-f]{40}", ref), f"Bad git 40-hex commit SHA for {lid}: {ref}"
                 assert sha == "-", f"git lock entry field 5 must be '-' for {lid}"
-            elif kind in ("file", "docker"):
+            elif kind in ("file", "docker", "uvx", "npm"):
                 assert re.fullmatch(r"[0-9a-f]{64}", sha), f"Bad {kind} 64-hex SHA-256 for {lid}: {sha}"
             else:
                 raise AssertionError(f"Unknown lock kind '{kind}' for {lid}")
@@ -573,9 +601,8 @@ class TestSeniorReviewHardeningAndRelease:
         assert "OOMScoreAdjust=-300" in ev
         assert "MemoryMax=384M" in ev
 
-        ol = (repo_root / "system/systemd/ollama-8gb-ram.conf").read_text(encoding="utf-8")
-        assert "OOMScoreAdjust=300" in ol
-        assert "ManagedOOMMemoryPressure=kill" in ol
+        # ollama-8gb-ram.conf removed — unified into Stage 35 tier-adapted
+        # ollama.service.d/90-macubuntu-qos.conf
 
         detect = repo_root / "core/detect.sh"
         # 8GB RAM + 4GB ZRAM requires >= 12GB real swap
@@ -659,3 +686,253 @@ class TestSeniorReviewHardeningAndRelease:
 
 
 
+
+
+# ============================================================================
+# Task 6 — Real Non-Dry-Run Rollback & Regression Tests
+# ============================================================================
+
+class TestP5SnapshotRollback:
+    """Real (non-dry-run) P5 snapshot/rollback tests using isolated SNAPSHOT_ROOT
+    and WORKDIR inside tmp_path, with a lightweight sudo pass-through shim."""
+
+    def _make_sudo_shim(self, tmp_path):
+        """Create a sudo shim that executes commands directly (no real root needed)."""
+        sudo_stub = tmp_path / "bin" / "sudo"
+        sudo_stub.parent.mkdir(parents=True, exist_ok=True)
+        sudo_stub.write_text("#!/usr/bin/env bash\nexec \"$@\"\n", encoding="utf-8")
+        sudo_stub.chmod(0o755)
+        return sudo_stub
+
+    def test_write_root_file_new_file_then_rollback(self, repo_root, tmp_path):
+        """write_root_file on non-existent destination succeeds, records existed:false,
+        creates the file, and rollback_all deletes it cleanly."""
+        snap_root = tmp_path / "snapshots"
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        sudo_shim = self._make_sudo_shim(tmp_path)
+
+        home = tmp_path / "home"
+        home.mkdir()
+
+        env = {
+            "PATH": f"{sudo_shim.parent}:/usr/bin:/bin",
+            "HOME": str(home),
+            "DRY_RUN": "0",
+            "WORKDIR": str(workdir),
+            "SNAPSHOT_ROOT": str(snap_root),
+            "SNAPSHOT_MAX": "20",
+        }
+
+        common = str(repo_root / "core" / "common.sh")
+        script = f'''
+            source "{common}"
+            init_runtime_state
+            export DRY_RUN=0
+            export WORKDIR="{workdir}"
+            export SNAPSHOT_ROOT="{snap_root}"
+
+            dst="{workdir}/new_root_file.conf"
+            printf "[Section]\\nkey=value\\n" | write_root_file "$dst" 644
+            test -f "$dst" || {{ echo "write_root_file should create the file"; exit 1; }}
+
+            snapshot_file "$dst"
+
+            rollback_all
+            test ! -f "$dst" || {{ echo "rollback_all should remove newly created file"; exit 1; }}
+        '''
+        r = _run_bash(script, env_extra=env)
+        assert r.returncode == 0, f"write_root_file new file + rollback failed:\n{r.stdout}\n{r.stderr}"
+
+    def test_copy_root_file_existing_idempotent_then_rollback(self, repo_root, tmp_path):
+        """copy_root_file on existing file twice preserves original pre-run bytes;
+        rollback_all restores exact original content."""
+        snap_root = tmp_path / "snapshots"
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        sudo_shim = self._make_sudo_shim(tmp_path)
+
+        home = tmp_path / "home"
+        home.mkdir()
+
+        env = {
+            "PATH": f"{sudo_shim.parent}:/usr/bin:/bin",
+            "HOME": str(home),
+            "DRY_RUN": "0",
+            "WORKDIR": str(workdir),
+            "SNAPSHOT_ROOT": str(snap_root),
+        }
+
+        common = str(repo_root / "core" / "common.sh")
+        src = workdir / "source.conf"
+        src.write_text("original content\n", encoding="utf-8")
+        dst = workdir / "dest.conf"
+        dst.write_text("original dest content\n", encoding="utf-8")
+        import hashlib
+        original_dst_hash = hashlib.sha256(dst.read_bytes()).hexdigest()
+
+        script = f'''
+            source "{common}"
+            init_runtime_state
+            export DRY_RUN=0
+            export WORKDIR="{workdir}"
+            export SNAPSHOT_ROOT="{snap_root}"
+
+            src="{src}"
+            dst="{dst}"
+
+            copy_root_file "$src" "$dst" 644
+            test "$(cat "$dst")" = "$(cat "$src")" || {{ echo "First copy should overwrite dst"; exit 1; }}
+
+            copy_root_file "$src" "$dst" 644
+
+            rollback_all
+            restored_hash="$(sha256sum "$dst" | cut -d' ' -f1)"
+            test "$restored_hash" = "{original_dst_hash}" || {{ echo "rollback_all should restore original dst content"; exit 1; }}
+        '''
+        r = _run_bash(script, env_extra=env)
+        assert r.returncode == 0, f"copy_root_file idempotent + rollback failed:\n{r.stdout}\n{r.stderr}"
+
+    def test_multi_file_transaction_rollback(self, repo_root, tmp_path):
+        """Modifying File 1 AND creating File 2 in same run rolls back BOTH."""
+        snap_root = tmp_path / "snapshots"
+        workdir = tmp_path / "work"
+        workdir.mkdir()
+        sudo_shim = self._make_sudo_shim(tmp_path)
+
+        home = tmp_path / "home"
+        home.mkdir()
+
+        env = {
+            "PATH": f"{sudo_shim.parent}:/usr/bin:/bin",
+            "HOME": str(home),
+            "DRY_RUN": "0",
+            "WORKDIR": str(workdir),
+            "SNAPSHOT_ROOT": str(snap_root),
+        }
+
+        common = str(repo_root / "core" / "common.sh")
+        file1 = workdir / "file1.conf"
+        file1.write_text("original file1\n", encoding="utf-8")
+        file2 = workdir / "file2.conf"
+
+        script = f'''
+            source "{common}"
+            init_runtime_state
+            export DRY_RUN=0
+            export WORKDIR="{workdir}"
+            export SNAPSHOT_ROOT="{snap_root}"
+
+            f1="{file1}"
+            f2="{file2}"
+
+            echo "modified file1" | write_root_file "$f1" 644
+            echo "new file2" | write_root_file "$f2" 644
+
+            test -f "$f1" && test -f "$f2" || {{ echo "Both files should exist before rollback"; exit 1; }}
+
+            rollback_all
+
+            test -f "$f1" || {{ echo "file1 should still exist (restored)"; exit 1; }}
+            test ! -f "$f2" || {{ echo "file2 should be removed (was new)"; exit 1; }}
+            test "$(cat "$f1")" = "original file1" || {{ echo "file1 should be restored to original"; exit 1; }}
+        '''
+        r = _run_bash(script, env_extra=env)
+        assert r.returncode == 0, f"multi-file rollback failed:\n{r.stdout}\n{r.stderr}"
+
+
+class TestEvidenceLedgerRegression:
+    """Unit tests for EvidenceLedger record_execution (no AttributeError on .append)."""
+
+    def test_api_actuators_record_api_evidence(self, repo_root, tmp_path, monkeypatch):
+        """_record_api_evidence() writes to isolated EvidenceLedger without AttributeError."""
+        import sys
+        sys.path.insert(0, str(repo_root / "features" / "celina"))
+
+        from celina_pkg import evidence, api_actuators
+
+        iso_ledger = evidence.EvidenceLedger(
+            ledger_path=tmp_path / "api_ledger.jsonl",
+            anchor_path=tmp_path / "api_anchor.json",
+            verify_anchor_on_open=False,
+        )
+        api_actuators._API_LEDGER = iso_ledger
+
+        api_actuators._record_api_evidence(
+            tool_name="spotify_api_play",
+            summary_args={"service": "spotify_api", "query": "test"},
+            status="ok",
+            summary="Playing test track",
+        )
+        entries = iso_ledger.list_entries(limit=5)
+        assert len(entries) == 1
+        assert entries[0]["tool"] == "spotify_api_play"
+
+        api_actuators._TOKEN_CACHE["spotify-api"] = "old-token"
+        assert api_actuators._TOKEN_CACHE.get("spotify-api") == "old-token"
+        api_actuators._invalidate_token_cache("spotify-api")
+        assert "spotify-api" not in api_actuators._TOKEN_CACHE
+
+    def test_artemis_bridge_record_execution(self, repo_root, tmp_path, monkeypatch):
+        """artemis_bridge records denied token failure via record_execution() without AttributeError."""
+        import sys
+        sys.path.insert(0, str(repo_root / "features" / "celina"))
+
+        from celina_pkg import evidence
+
+        iso_ledger = evidence.EvidenceLedger(
+            ledger_path=tmp_path / "artemis_ledger.jsonl",
+            anchor_path=tmp_path / "artemis_anchor.json",
+            verify_anchor_on_open=False,
+        )
+
+        iso_ledger.record_execution(
+            tool_name="artemis_run_task",
+            arguments={"device": "default"},
+            result_text="Denied: approval failed",
+            policy_decision="denied",
+        )
+        entries = iso_ledger.list_entries(limit=5)
+        assert len(entries) == 1
+        assert entries[0]["tool"] == "artemis_run_task"
+        assert entries[0]["outcome"] == "denied"
+
+
+class TestStage35NoSmoothOverwrite:
+    """Verify stages/35-memory-zram.sh does not overwrite smooth.conf after wave_ab."""
+
+    def test_stage35_smooth_conf_not_overwritten_after_wave(self, repo_root, tmp_path):
+        """90-macubuntu-smooth.conf is copied BEFORE stage_perf_fusion_wave_ab(),
+        and the wave's MESA_SHADER_CACHE_MAX_SIZE merge preserves existing values."""
+        stage35 = repo_root / "stages" / "35-memory-zram.sh"
+        content = stage35.read_text(encoding="utf-8")
+
+        smooth_copy_idx = content.find('copy_user_file "$REPO_DIR/system/environment.d/90-macubuntu-smooth.conf"')
+        # Find the CALL to stage_perf_fusion_wave_ab (not the function def)
+        import re
+        call_matches = [m.start() for m in re.finditer(r'stage_perf_fusion_wave_ab\b', content)]
+        wave_call_idx = call_matches[-1] if call_matches else -1
+        assert smooth_copy_idx != -1, "smooth.conf copy_user_file not found in stage 35"
+        assert wave_call_idx != -1, "stage_perf_fusion_wave_ab call not found in stage 35"
+        assert smooth_copy_idx < wave_call_idx, \
+            "smooth.conf must be copied BEFORE stage_perf_fusion_wave_ab()"
+
+        after_wave = content[wave_call_idx:]
+        assert 'copy_user_file "$REPO_DIR/system/environment.d/90-macubuntu-smooth.conf"' not in after_wave, \
+            "smooth.conf must not be re-copied after stage_perf_fusion_wave_ab()"
+
+        lines = content.split('\n')
+        in_function = False
+        brace_depth = 0
+        for i, line in enumerate(lines):
+            stripped = line.strip()
+            if stripped.endswith('() {') or stripped.startswith('function '):
+                in_function = True
+                brace_depth += 1
+            if in_function:
+                brace_depth += line.count('{') - line.count('}')
+                if brace_depth <= 0:
+                    in_function = False
+                    brace_depth = 0
+            elif stripped.startswith('local '):
+                assert False, f"Top-level 'local' at line {i+1}: {stripped}"

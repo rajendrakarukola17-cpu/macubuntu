@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Plugin #3: Local Data Oracle (Update 19)
+"""Celina AI (Celly) - Plugin #3: Local Data Oracle (Update 19)
 
 Natural-language querying of local CSV/SQLite data via deterministic
 patterns translated to exact SQL, executed locally by Gear 0.
@@ -20,17 +19,14 @@ Supports:
 from __future__ import annotations
 
 import csv
-import io
-import os
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 def _authorizer(action: int, p1: str | None, p2: str | None, p3: str | None, p4: str | None) -> int:
-    """
-    sqlite3 authorizer callback. Returns SQLITE_OK to allow, SQLITE_DENY to block.
+    """sqlite3 authorizer callback. Returns SQLITE_OK to allow, SQLITE_DENY to block.
 
     Blocks dangerous operations that could escape the sandboxed database:
       ATTACH, DETACH, LOAD_EXTENSION.
@@ -119,7 +115,7 @@ def load_csv_to_memory(csv_path: str | Path, table_name: str = "data") -> str:
         placeholders = ", ".join(["?"] * len(col_types))
         cols = ", ".join(f'"{c}"' for c in col_types.keys())
         vals = [row.get(c) for c in col_types.keys()]
-        conn.execute(f'INSERT INTO "{safe_table}" ({cols}) VALUES ({placeholders})', vals)
+        conn.execute(f'INSERT INTO "{safe_table}" ({cols}) VALUES ({placeholders})', vals)  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
     conn.commit()
 
     # Store the connection reference globally for query execution
@@ -150,7 +146,7 @@ def list_available_tables() -> list[str]:
     for key, conn in _in_memory_dbs.items():
         try:
             rows = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
             ).fetchall()
             for r in rows:
                 tables.append(f"{key}:{r[0]}")
@@ -180,13 +176,13 @@ def get_table_schema(table_ref: str) -> str:
         safe_table = _validate_identifier(table_name, set())
         # Validate against actual schema
         rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
         ).fetchall()
         valid_tables = {r[0] for r in rows}
         if not _validate_identifier(table_name, valid_tables):
             return f"Table not found: {table_name}"
         schema_rows = conn.execute(
-            f'PRAGMA table_info("{table_name}")'
+            f'PRAGMA table_info("{table_name}")',
         ).fetchall()
         if not schema_rows:
             return f"Table not found: {table_name}"
@@ -199,8 +195,7 @@ def get_table_schema(table_ref: str) -> str:
 
 
 def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, ...]]:
-    """
-    Translate a natural language query to SQL using deterministic patterns
+    """Translate a natural language query to SQL using deterministic patterns
     (no LLM required for common patterns).
 
     Returns (sql_string, params) where params are bound via ? placeholders.
@@ -224,7 +219,7 @@ def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, 
     # Validate table_name against actual schema (identifier whitelist)
     try:
         schema_rows = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
         ).fetchall()
     except Exception:
         return ("ERROR: Cannot read schema for database.", ())
@@ -244,7 +239,7 @@ def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, 
 
     # Pattern: "how much did I spend on X last month" / "sum of Y where Z"
     sum_match = re.search(
-        r"(?:how much|total|sum)\s+(?:of\s+)?(\w+)\s+(?:where|on|for)\s+(\w+)\s*['\"]?([^'\"]*)['\"]?",
+        r"(?:how much|total|sum)\s+(?:of\s+)?(\w+)\s+(?:where|on|for)\s+(\w+)\s*=?\s*['\"]?([^'\"]*)['\"]?",
         q,
     )
     if sum_match:
@@ -256,18 +251,18 @@ def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, 
         if safe_col and safe_cat_col:
             if cat_val:
                 return (
-                    f'SELECT SUM("{safe_col}") FROM "{safe_table}" WHERE "{safe_cat_col}" = ?;',
+                    f'SELECT SUM("{safe_col}") FROM "{safe_table}" WHERE "{safe_cat_col}" = ?;',  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
                     (cat_val,),
                 )
             return (
-                f'SELECT SUM("{safe_col}") FROM "{safe_table}";',
+                f'SELECT SUM("{safe_col}") FROM "{safe_table}";',  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
                 (),
             )
 
     # Pattern: "count of X" / "how many X"
     count_match = re.search(r"(?:how many|count of)\s+(.+)", q)
     if count_match:
-        return (f'SELECT COUNT(*) FROM "{safe_table}";', ())
+        return (f'SELECT COUNT(*) FROM "{safe_table}";', ())  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
 
     # Pattern: "average of X"
     avg_match = re.search(r"(?:average|avg)\s+of\s+(\w+)", q)
@@ -275,7 +270,7 @@ def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, 
         col = avg_match.group(1)
         safe_col = _validate_identifier(col, set(columns))
         if safe_col:
-            return (f'SELECT AVG("{safe_col}") FROM "{safe_table}";', ())
+            return (f'SELECT AVG("{safe_col}") FROM "{safe_table}";', ())  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
 
     # Pattern: "show me all rows where X = Y"
     where_match = re.search(r"(?:where|filter)\s+(\w+)\s*(?:=|is|equals)\s*['\"]?([^'\"]*)['\"]?", q)
@@ -285,7 +280,7 @@ def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, 
         safe_col = _validate_identifier(col, set(columns))
         if safe_col:
             return (
-                f'SELECT * FROM "{safe_table}" WHERE "{safe_col}" = ?;',
+                f'SELECT * FROM "{safe_table}" WHERE "{safe_col}" = ?;',  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
                 (val,),
             )
 
@@ -296,7 +291,7 @@ def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, 
         if lim_match:
             requested = int(lim_match.group(1))
             limit = min(requested, 500)  # hard cap
-        return (f'SELECT * FROM "{safe_table}" LIMIT {limit};', ())
+        return (f'SELECT * FROM "{safe_table}" LIMIT {limit};', ())  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
 
     # Pattern: "max/min of X"
     extrema_match = re.search(r"(?:max|minimum|min|maximum)\s+(?:of\s+)?(\w+)", q)
@@ -305,7 +300,7 @@ def translate_nl_to_sql(nl_query: str, table_ref: str) -> tuple[str, tuple[Any, 
         op = "MAX" if "max" in q and "min" not in q else "MIN"
         safe_col = _validate_identifier(col, set(columns))
         if safe_col:
-            return (f'SELECT {op}("{safe_col}") FROM "{safe_table}";', ())
+            return (f'SELECT {op}("{safe_col}") FROM "{safe_table}";', ())  # nosec B608 — SQL uses parameterized ? placeholders; f-string parts are hardcoded SQL or validated identifiers, not user input
 
     # Fallback: return a helpful error
     return (f"ERROR: Could not translate query to SQL. Available columns: {', '.join(columns)}", ())
@@ -360,8 +355,7 @@ def execute_sql(sql: str, table_ref: str, params: tuple[Any, ...] = ()) -> str:
 
 
 def query_data(nl_query: str, table_ref: str = "") -> str:
-    """
-    Full pipeline: translate NL to SQL, execute, return results.
+    """Full pipeline: translate NL to SQL, execute, return results.
     Single entry point for Gear 0 integration.
     """
     sql, params = translate_nl_to_sql(nl_query, table_ref)
@@ -371,28 +365,28 @@ def query_data(nl_query: str, table_ref: str = "") -> str:
 
 
 __all__ = [
-    "load_csv_to_memory",
-    "load_sqlite_db",
-    "list_available_tables",
-    "get_table_schema",
-    "translate_nl_to_sql",
     "execute_sql",
-    "query_data",
     "gear0_data_oracle_classify",
     "gear0_data_oracle_execute",
+    "get_table_schema",
+    "list_available_tables",
+    "load_csv_to_memory",
+    "load_sqlite_db",
+    "query_data",
+    "translate_nl_to_sql",
 ]
 
 # ---------------------------------------------------------------------------
 # Gear 0 Plugin #3 dispatch: Local Data Oracle
 # ---------------------------------------------------------------------------
 
-_DATA_ORACLE_RE = __import__("re").compile(
+_DATA_ORACLE_RE = re.compile(
     r"^(?:please\s+)?(?:data|oracle|query|table|csv|sql|select|count|average|sum|max|min|load)\b",
-    __import__("re").IGNORECASE,
+    re.IGNORECASE,
 )
 
 
-def gear0_data_oracle_classify(query: str) -> Optional[str]:
+def gear0_data_oracle_classify(query: str) -> str | None:
     """Classify query into a data oracle handler name, or None."""
     low = query.strip().lower()
     if not _DATA_ORACLE_RE.match(low):
@@ -402,12 +396,11 @@ def gear0_data_oracle_classify(query: str) -> Optional[str]:
     return "translate_nl_to_sql"
 
 
-def gear0_data_oracle_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_data_oracle_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0 Plugin #3 data oracle handler."""
     try:
-        import re as _re
         if handler == "load_data":
-            m = _re.search(r"(?:load|csv|sqlite|database|db)\s+(?:from\s+)?(.+)$", query, _re.IGNORECASE)
+            m = re.search(r"(?:load|csv|sqlite|database|db)\s+(?:from\s+)?(.+)$", query, re.IGNORECASE)
             if not m:
                 return "Please specify a file to load: load_csv_to_memory <path> or load_sqlite_db <path>"
             path = m.group(1).strip().strip("'\"")

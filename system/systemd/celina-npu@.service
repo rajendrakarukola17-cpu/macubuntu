@@ -1,0 +1,38 @@
+# ============================================================================
+# system/systemd/celina-npu@.service — Single-Owner NPU Worker (per-user)
+#
+# Runs celina_pkg.neural.npu_worker as a single systemd --user service inside
+# celina-ai.slice. Holds exactly one NPU device context to avoid Ubuntu 26.04
+# intel_vpu 64-context exhaustion (ivpu_open(): -16).
+#
+# Install: cp system/systemd/celina-npu@.service ~/.config/systemd/user/
+#          systemctl --user daemon-reload
+#          systemctl --user enable --now celina-npu@$USER.service
+# ============================================================================
+
+[Unit]
+Description=Celina Single-Owner NPU Worker (instance %i)
+Documentation=file:///home/user/macubuntu/features/celina/celina_pkg/neural/npu_worker.py
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=exec
+User=%i
+Group=render
+RuntimeDirectory=celina
+RuntimeDirectoryMode=0700
+WorkingDirectory=/home/user/macubuntu
+Environment=PYTHONPATH=/home/user/macubuntu/features/celina
+ExecStart=/usr/bin/python3 -m celina_pkg.neural.npu_worker --whisper-model-dir /home/%i/.cache/celina/models/whisper --hw-profile /etc/macubuntu/hardware.json --cache-dir /home/%i/.cache/celina/npu_blobs
+Restart=on-failure
+RestartSec=5
+# Hardening: no new privileges; no /dev/accel fd leaks beyond the single worker
+# Note: ProtectSystem/ProtectHome/PrivateTmp omitted per systemd --user policy
+# (see test_audit_p0_p1_fixes.py: forbidden in user units, cause CAPABILITIES/NAMESPACE)
+NoNewPrivileges=true
+# NPU device access via render group (configured by lib/npu_detect.sh configure_npu_permissions)
+SupplementaryGroups=render
+
+[Install]
+WantedBy=default.target

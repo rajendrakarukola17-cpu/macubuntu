@@ -1,0 +1,569 @@
+{
+  "comment": "Celina AI seccomp-BPF sandbox policy — default no-network, minimal syscalls",
+  "default_action": "SCMP_ACT_ERRNO",
+  "arch_map": [
+    {"architecture": "SCMP_ARCH_X86_64", "subarches": ["x32"]}
+  ],
+  "syscalls": [
+    {
+      "name": "read",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "write",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "open",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "openat",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "close",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "stat",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "fstat",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "lstat",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "poll",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "lseek",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "mmap",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "mprotect",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "munmap",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "brk",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "rt_sigaction",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "rt_sigprocmask",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "ioctl",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "pread64",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "pwrite64",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "readv",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "writev",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "access",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "pipe",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "pipe2",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "select",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "sched_yield",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "mremap",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "msync",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "mincore",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "madvise",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "shmget",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "shmat",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "shmctl",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "dup",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "dup2",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "pause",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "nanosleep",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "getitimer",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "alarm",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "setitimer",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "getpid",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "sendfile",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "socket",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [],
+      "comment": "Block socket creation — default no-network (Celina requests network explicitly via capability manifest)"
+    },
+    {
+      "name": "connect",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [],
+      "comment": "Block connect — default no-network"
+    },
+    {
+      "name": "accept",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [],
+      "comment": "Block accept — default no-network"
+    },
+    {
+      "name": "bind",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [],
+      "comment": "Block bind — default no-network"
+    },
+    {
+      "name": "listen",
+      "action": "SCMP_ACT_ERRNO",
+      "args": [],
+      "comment": "Block listen — default no-network"
+    },
+    {
+      "name": "exit",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "exit_group",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "wait4",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "kill",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "uname",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "fcntl",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "flock",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "fsync",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "fdatasync",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "truncate",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "ftruncate",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "getdents",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "getcwd",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "chdir",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "fchdir",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "rename",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "mkdir",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "rmdir",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "creat",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "link",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "unlink",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "symlink",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "readlink",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "chmod",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "fchmod",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "chown",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "fchown",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "lchown",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "umask",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "gettimeofday",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "getrlimit",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "getrusage",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "sysinfo",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "times",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "ptrace",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block ptrace — anti-debugging / anti-injection"
+    },
+    {
+      "name": "personality",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "prctl",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "arch_prctl",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "set_thread_area",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "mprotect",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "sigaltstack",
+      "action": "SCMP_ACT_ALLOW",
+      "args": []
+    },
+    {
+      "name": "modify_ldt",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block modify_ldt"
+    },
+    {
+      "name": "adjtimex",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block clock manipulation"
+    },
+    {
+      "name": "settimeofday",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block clock manipulation"
+    },
+    {
+      "name": "reboot",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block reboot"
+    },
+    {
+      "name": "swapoff",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block swapoff"
+    },
+    {
+      "name": "swapon",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block swapon"
+    },
+    {
+      "name": "init_module",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block kernel module loading"
+    },
+    {
+      "name": "finit_module",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block kernel module loading"
+    },
+    {
+      "name": "delete_module",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block kernel module unloading"
+    },
+    {
+      "name": "mount",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block mount"
+    },
+    {
+      "name": "umount",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block umount"
+    },
+    {
+      "name": "umount2",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block umount2"
+    },
+    {
+      "name": "syslog",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block syslog"
+    },
+    {
+      "name": "lookup_dcookie",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block lookup_dcookie"
+    },
+    {
+      "name": "perf_event_open",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block perf_event_open"
+    },
+    {
+      "name": "vm86",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block vm86"
+    },
+    {
+      "name": "vm86old",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block vm86old"
+    },
+    {
+      "name": "iopl",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block iopl"
+    },
+    {
+      "name": "ioperm",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block ioperm"
+    },
+    {
+      "name": "modify_ldt",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block modify_ldt"
+    },
+    {
+      "name": "kcmp",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block kcmp"
+    },
+    {
+      "name": "process_vm_readv",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block process_vm_readv"
+    },
+    {
+      "name": "process_vm_writev",
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block process_vm_writev"
+    }
+  ]
+}

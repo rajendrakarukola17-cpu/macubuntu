@@ -1,5 +1,4 @@
-"""
-Celina v5 Reliability & Stability Framework (`autonomy/reliability.py`)
+"""Celina v5 Reliability & Stability Framework (`autonomy/reliability.py`)
 
 Unifies three production agent-reliability layers cleanly inside Celina:
   1. `AgentSRE` (SLOs, Error Budgets, OWASP ASI07 Cost Limits & ASI08 Kill Switch):
@@ -30,9 +29,10 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from .. import config
 
@@ -70,12 +70,11 @@ class SRECheckResult:
 
 
 class AgentSRE:
-    """
-    Production Agent SRE controller preventing cascading failures (OWASP ASI08)
+    """Production Agent SRE controller preventing cascading failures (OWASP ASI08)
     and uncontrolled spend (OWASP ASI07) via SLOs, error budgets, and a kill switch.
     """
 
-    def __init__(self, policy: Optional[AgentSLOPolicy] = None):
+    def __init__(self, policy: AgentSLOPolicy | None = None):
         self.policy = policy or AgentSLOPolicy()
         self._lock = threading.Lock()
         self._kill_switch = False
@@ -186,7 +185,7 @@ class AgentSRE:
                     "cost_usd": cost,
                     "tier": int(tier),
                     "ts": time.time(),
-                }
+                },
             )
             if len(self._outcomes) > 200:
                 self._outcomes = self._outcomes[-200:]
@@ -249,8 +248,7 @@ class AgentFuseDecision:
 
 
 class AgentFuse:
-    """
-    Logical circuit breaker supervising an agent's execution graph.
+    """Logical circuit breaker supervising an agent's execution graph.
     Detects tool loops, goal drift, logic traps, and runaway spend, then
     escalates cleanly along a deterministic recovery ladder.
     """
@@ -316,9 +314,8 @@ class AgentFuse:
         )
 
     def monitor(self, telemetry_event: dict[str, Any]) -> AgentFuseDecision:
-        """
-        Inspects a telemetry tick:
-          {goal, tool_name, arguments_hash, error_code, cost_usd, action_summary}
+        """Inspects a telemetry tick:
+        {goal, tool_name, arguments_hash, error_code, cost_usd, action_summary}
         """
         with self._lock:
             goal = str(telemetry_event.get("goal") or "")
@@ -386,8 +383,7 @@ class AgentFuse:
 
 
 class EditableStateMachineRun:
-    """
-    agent6-inspired editable, snapshot-resumable stateful workflow run with
+    """agent6-inspired editable, snapshot-resumable stateful workflow run with
     optional git snapshot metadata and a hard metered USD budget.
     """
 
@@ -397,9 +393,9 @@ class EditableStateMachineRun:
         goal: str,
         steps: list[dict[str, Any]],
         *,
-        state_dir: Optional[Path] = None,
+        state_dir: Path | None = None,
         budget_usd: float = 0.50,
-        repo_dir: Optional[Path] = None,
+        repo_dir: Path | None = None,
     ):
         self.run_id = str(run_id)
         self.goal = str(goal)
@@ -444,7 +440,7 @@ class EditableStateMachineRun:
         return self.state_path
 
     @classmethod
-    def load(cls, path: Path) -> "EditableStateMachineRun":
+    def load(cls, path: Path) -> EditableStateMachineRun:
         raw = json.loads(Path(path).read_text(encoding="utf-8"))
         inst = cls(
             run_id=raw["run_id"],
@@ -485,7 +481,7 @@ class EditableStateMachineRun:
             self.save()
             raise AgentSREError(
                 f"Hard USD budget exceeded for run '{self.run_id}': "
-                f"${self.spent_usd + step_cost_usd:.4f} > ${self.budget_usd:.4f}"
+                f"${self.spent_usd + step_cost_usd:.4f} > ${self.budget_usd:.4f}",
             )
         if self.cursor >= len(self.steps):
             self.status = "completed"
@@ -535,11 +531,11 @@ class TaskResult:
     error: str = ""
 
     _VALID_STATUSES: frozenset[str] = frozenset(
-        {"done", "observed", "blocked", "pending", "failed", "repaired"}
+        {"done", "observed", "blocked", "pending", "failed", "repaired"},
     )
 
     @classmethod
-    def model_validate(cls, value: Any) -> "TaskResult":
+    def model_validate(cls, value: Any) -> TaskResult:
         if isinstance(value, cls):
             obj = value
         elif isinstance(value, dict):
@@ -578,11 +574,10 @@ def reliable(
     fuse_limit: int = 5,
     max_seconds: float = 30.0,
     max_cost_usd: float = 0.50,
-    medic_repair_fn: Optional[Callable[[Any, Exception], Any]] = None,
+    medic_repair_fn: Callable[[Any, Exception], Any] | None = None,
     max_medic_repairs: int = 2,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """
-    AgentFuse single-decorator circuit breaker (`Fuse + Sentinel + Medic + Budget`).
+    """AgentFuse single-decorator circuit breaker (`Fuse + Sentinel + Medic + Budget`).
     Scopes Fuse counters per bound instance (when decorating methods) so independent
     engine instances stay isolated while repeated identical inputs trip the fuse.
     """
@@ -613,15 +608,15 @@ def reliable(
                 counts[in_hash] = counts.get(in_hash, 0) + 1
                 if counts[in_hash] >= max(2, int(fuse_limit)):
                     raise CircuitBreakerTripped(
-                        f"Fuse tripped on {fn.__name__}: identical input seen {counts[in_hash]} times (limit={fuse_limit})."
+                        f"Fuse tripped on {fn.__name__}: identical input seen {counts[in_hash]} times (limit={fuse_limit}).",
                     )
                 if spent_by_scope.get(scope, 0.0) > float(max_cost_usd):
                     raise CircuitBreakerTripped(
-                        f"Budget tripped on {fn.__name__}: spend ${spent_by_scope[scope]:.4f} > ${max_cost_usd:.4f}."
+                        f"Budget tripped on {fn.__name__}: spend ${spent_by_scope[scope]:.4f} > ${max_cost_usd:.4f}.",
                     )
 
             t0 = time.monotonic()
-            last_exc: Optional[Exception] = None
+            last_exc: Exception | None = None
             raw_out: Any = None
             try:
                 raw_out = fn(*args, **kwargs)
@@ -631,7 +626,7 @@ def reliable(
             elapsed = time.monotonic() - t0
             if elapsed > float(max_seconds):
                 raise CircuitBreakerTripped(
-                    f"Time budget tripped on {fn.__name__}: {elapsed:.2f}s > {max_seconds:.2f}s."
+                    f"Time budget tripped on {fn.__name__}: {elapsed:.2f}s > {max_seconds:.2f}s.",
                 )
 
             if last_exc is None:
@@ -669,13 +664,12 @@ def reliable(
 
 
 class GuardLoop:
-    """
-    Production loop supervisor combining:
-      - Hard tool-call count, wall-clock timeout, and USD budget caps
-      - Per-tool circuit breakers: after `same_error_threshold` (default 3)
-        consecutive identical-error failures, disables that tool for the session
-        and records a tamper-evident security event in `EvidenceLedger`
-      - OpenTelemetry span wrapping for every protected call
+    """Production loop supervisor combining:
+    - Hard tool-call count, wall-clock timeout, and USD budget caps
+    - Per-tool circuit breakers: after `same_error_threshold` (default 3)
+      consecutive identical-error failures, disables that tool for the session
+      and records a tamper-evident security event in `EvidenceLedger`
+    - OpenTelemetry span wrapping for every protected call
     """
 
     def __init__(
@@ -685,8 +679,8 @@ class GuardLoop:
         max_seconds: float = 120.0,
         max_cost_usd: float = 0.50,
         same_error_threshold: int = 3,
-        evidence_ledger: Optional[Any] = None,
-        tracer: Optional[Any] = None,
+        evidence_ledger: Any | None = None,
+        tracer: Any | None = None,
     ):
         self.max_tool_calls = int(max_tool_calls)
         self.max_seconds = float(max_seconds)
@@ -733,19 +727,19 @@ class GuardLoop:
         with self._lock:
             if tool_name in self._disabled_tools:
                 raise CircuitBreakerTripped(
-                    f"GuardLoop per-tool breaker open for '{tool_name}': {self._disabled_tools[tool_name]}"
+                    f"GuardLoop per-tool breaker open for '{tool_name}': {self._disabled_tools[tool_name]}",
                 )
             if self._tool_calls >= self.max_tool_calls:
                 raise CircuitBreakerTripped(
-                    f"GuardLoop tool-call limit exceeded ({self._tool_calls}/{self.max_tool_calls})."
+                    f"GuardLoop tool-call limit exceeded ({self._tool_calls}/{self.max_tool_calls}).",
                 )
             if (time.monotonic() - self._started_at) > self.max_seconds:
                 raise CircuitBreakerTripped(
-                    f"GuardLoop session timeout exceeded (>{self.max_seconds:.1f}s)."
+                    f"GuardLoop session timeout exceeded (>{self.max_seconds:.1f}s).",
                 )
             if self._spent_usd + max(0.0, float(cost_usd)) > self.max_cost_usd:
                 raise CircuitBreakerTripped(
-                    f"GuardLoop USD budget exceeded (${self._spent_usd + cost_usd:.4f} > ${self.max_cost_usd:.4f})."
+                    f"GuardLoop USD budget exceeded (${self._spent_usd + cost_usd:.4f} > ${self.max_cost_usd:.4f}).",
                 )
             self._tool_calls += 1
             self._spent_usd += max(0.0, float(cost_usd))
@@ -763,7 +757,7 @@ class GuardLoop:
         try:
             out = fn(*args, **kwargs)
             # Also detect structured ExecResult failures (success=False)
-            if hasattr(out, "success") and getattr(out, "success") is False:
+            if hasattr(out, "success") and out.success is False:
                 err_sig = str(getattr(out, "error", "") or "execution_failed").strip().lower()[:160]
                 self._record_tool_error(tool_name, err_sig)
             else:

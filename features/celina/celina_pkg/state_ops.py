@@ -1,17 +1,16 @@
-"""
-Celina Operational Trust & State Lifecycle Engine (v4.4):
-  1. UndoJournal (`celina undo`): Automatic SHA-256 pre-execution snapshots for
-     every `files_office` Tier-2 mutation tool with tamper-checked atomic rollback.
-  2. Tamper-Evident Export/Import (`celina-export` / `celina-import`): Versioned
-     `.tar.gz` archive of Celina's entire identity (WAL-safe SQLite online backups
-     of memory.db / cache.db / spotlight_index.db, KG, goals, trusted & quarantined
-     skills, Astra checkpoints, undo history, neural-schema.json) with SHA-256
-     MANIFEST.json verification, Tar-Slip defense, and pre-import safety backup.
-  3. Schema & Tool Migration (`celina migrate [--dry-run]`): Reports exact tools
-     added/removed/tier-changed between versions and executes idempotent SQLite +
-     neural-schema.json migrations while preserving personal settings.
-  4. Project Astra Checkpoints (`celina checkpoints`): Inspect or clean durable
-     step recovery logs from long-running or interrupted autonomous GUI missions.
+"""Celina Operational Trust & State Lifecycle Engine (v4.4):
+1. UndoJournal (`celina undo`): Automatic SHA-256 pre-execution snapshots for
+every `files_office` Tier-2 mutation tool with tamper-checked atomic rollback.
+2. Tamper-Evident Export/Import (`celina-export` / `celina-import`): Versioned
+`.tar.gz` archive of Celina's entire identity (WAL-safe SQLite online backups
+of memory.db / cache.db / spotlight_index.db, KG, goals, trusted & quarantined
+skills, Astra checkpoints, undo history, neural-schema.json) with SHA-256
+MANIFEST.json verification, Tar-Slip defense, and pre-import safety backup.
+3. Schema & Tool Migration (`celina migrate [--dry-run]`): Reports exact tools
+added/removed/tier-changed between versions and executes idempotent SQLite +
+neural-schema.json migrations while preserving personal settings.
+4. Project Astra Checkpoints (`celina checkpoints`): Inspect or clean durable
+step recovery logs from long-running or interrupted autonomous GUI missions.
 """
 
 from __future__ import annotations
@@ -30,9 +29,9 @@ import tarfile
 import tempfile
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from . import config
 
@@ -87,7 +86,10 @@ def _safe_sqlite_online_backup(src_db: Path, dst_db: Path) -> bool:
     if not src_db.is_file():
         return False
     dst_db.parent.mkdir(parents=True, exist_ok=True)
-    src_conn = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True, timeout=5.0)
+    from urllib.parse import quote
+
+    uri = f"file:{quote(str(src_db), safe='/')}?mode=ro"
+    src_conn = sqlite3.connect(uri, uri=True, timeout=5.0)
     dst_conn = sqlite3.connect(str(dst_db), timeout=5.0)
     try:
         src_conn.backup(dst_conn)
@@ -107,16 +109,15 @@ def _safe_sqlite_online_backup(src_db: Path, dst_db: Path) -> bool:
 # ============================================================================
 
 class UndoJournal:
-    """
-    Lightweight, Celina-owned pre-execution backup & atomic rollback store for
+    """Lightweight, Celina-owned pre-execution backup & atomic rollback store for
     `files_office` Tier-2 mutation tools. Stored under `~/.local/share/celina/undo/`
     with `0700` dir / `0600` blob permissions.
     """
 
     def __init__(
         self,
-        undo_dir: Optional[Path] = None,
-        home_root: Optional[Path] = None,
+        undo_dir: Path | None = None,
+        home_root: Path | None = None,
         max_entries: int = MAX_UNDO_ENTRIES,
     ):
         self.undo_dir = Path(undo_dir) if undo_dir is not None else config.UNDO_DIR
@@ -157,7 +158,7 @@ class UndoJournal:
                             pass
         _atomic_write_json(self.journal_path, entries)
 
-    def _snapshot_file(self, src: Path, blob_name: str) -> tuple[Optional[str], Optional[str], Optional[int], Optional[int]]:
+    def _snapshot_file(self, src: Path, blob_name: str) -> tuple[str | None, str | None, int | None, int | None]:
         """Copies `src` bytes into `blobs_dir/blob_name` (0600) and returns (blob_name, sha256, size, mode)."""
         if not src.is_file():
             return None, None, None, None
@@ -175,37 +176,36 @@ class UndoJournal:
         tool_name: str,
         target_path: Path | str,
         *,
-        dst_path: Optional[Path | str] = None,
+        dst_path: Path | str | None = None,
     ) -> str:
-        """
-        Captures a tamper-checked SHA-256 snapshot BEFORE a `files_office` tool touches disk.
+        """Captures a tamper-checked SHA-256 snapshot BEFORE a `files_office` tool touches disk.
         Returns a unique `action_id` (e.g. `act_20261115_174500_a1b2c3`).
         """
         target = Path(target_path).expanduser().resolve()
         dst = Path(dst_path).expanduser().resolve() if dst_path is not None else None
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         action_id = f"act_{stamp}_{secrets.token_hex(3)}"
 
         existed = target.exists()
-        blob_file: Optional[str] = None
-        pre_sha: Optional[str] = None
-        size_bytes: Optional[int] = None
-        orig_mode: Optional[int] = None
+        blob_file: str | None = None
+        pre_sha: str | None = None
+        size_bytes: int | None = None
+        orig_mode: int | None = None
         is_dir = target.is_dir()
 
         if existed and target.is_file():
             blob_file, pre_sha, size_bytes, orig_mode = self._snapshot_file(target, f"{action_id}.bak")
 
         dst_existed = bool(dst and dst.exists())
-        dst_blob: Optional[str] = None
-        dst_pre_sha: Optional[str] = None
-        dst_mode: Optional[int] = None
+        dst_blob: str | None = None
+        dst_pre_sha: str | None = None
+        dst_mode: int | None = None
         if dst and dst.is_file():
             dst_blob, dst_pre_sha, _dsz, dst_mode = self._snapshot_file(dst, f"{action_id}.dst.bak")
 
         entry: dict[str, Any] = {
             "action_id": action_id,
-            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "timestamp_utc": datetime.now(UTC).isoformat(),
             "tool": tool_name,
             "target_path": str(target),
             "dst_path": str(dst) if dst else None,
@@ -230,7 +230,7 @@ class UndoJournal:
             self._save_entries(entries)
         return action_id
 
-    def finalize_mutation(self, action_id: str, *, succeeded: bool = True, final_path: Optional[Path | str] = None) -> None:
+    def finalize_mutation(self, action_id: str, *, succeeded: bool = True, final_path: Path | str | None = None) -> None:
         """Marks an undo entry committed (recording post-SHA256) or removes it if the mutation failed."""
         with self._lock:
             entries = self._load_entries()
@@ -250,7 +250,7 @@ class UndoJournal:
                     continue
                 item["committed"] = True
                 check_p = Path(final_path).expanduser().resolve() if final_path else Path(
-                    item.get("dst_path") or item["target_path"]
+                    item.get("dst_path") or item["target_path"],
                 )
                 if check_p.is_file():
                     try:
@@ -267,7 +267,7 @@ class UndoJournal:
                 entries = [e for e in entries if not e.get("undone")]
             return list(reversed(entries[-max(1, int(limit)) :]))
 
-    def _restore_blob_atomically(self, blob_name: str, expected_sha: Optional[str], dest: Path, mode: Optional[int]) -> None:
+    def _restore_blob_atomically(self, blob_name: str, expected_sha: str | None, dest: Path, mode: int | None) -> None:
         blob_path = self.blobs_dir / blob_name
         if not blob_path.is_file():
             raise FileNotFoundError(f"Undo snapshot blob missing: {blob_name}")
@@ -275,7 +275,7 @@ class UndoJournal:
         if expected_sha and actual_sha != expected_sha:
             raise ValueError(
                 f"Undo snapshot integrity check FAILED for {blob_name} "
-                f"(expected {expected_sha[:12]}..., got {actual_sha[:12]}...)"
+                f"(expected {expected_sha[:12]}..., got {actual_sha[:12]}...)",
             )
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(f".{dest.name}.celina.undo.{secrets.token_hex(3)}.tmp")
@@ -287,14 +287,13 @@ class UndoJournal:
                 pass
         os.replace(tmp, dest)
 
-    def undo_action(self, action_id: Optional[str] = None) -> tuple[bool, str]:
-        """
-        Atomically rolls back a recorded Tier-2 file mutation.
+    def undo_action(self, action_id: str | None = None) -> tuple[bool, str]:
+        """Atomically rolls back a recorded Tier-2 file mutation.
         If `action_id` is None, rolls back the most recent committed non-undone action.
         """
         with self._lock:
             entries = self._load_entries()
-            target_idx: Optional[int] = None
+            target_idx: int | None = None
             if action_id:
                 for idx in range(len(entries) - 1, -1, -1):
                     if entries[idx].get("action_id") == action_id:
@@ -328,6 +327,8 @@ class UndoJournal:
                 if tool_name == "move_file" and dst is not None:
                     if not dst.exists():
                         return False, f"Error: Moved destination no longer exists at {dst}; cannot reverse move."
+                    if target.exists():
+                        return False, f"Error: Cannot undo move; target '{target}' exists. Move it aside first."
                     target.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(dst), str(target))
                     if entry.get("dst_existed_before") and entry.get("dst_blob_file"):
@@ -363,13 +364,13 @@ class UndoJournal:
                 return False, f"Error: Undo failed for {aid}: {exc}"
 
             entry["undone"] = True
-            entry["undone_at_utc"] = datetime.now(timezone.utc).isoformat()
+            entry["undone_at_utc"] = datetime.now(UTC).isoformat()
             entries[target_idx] = entry
             self._save_entries(entries)
             return True, msg
 
 
-_DEFAULT_UNDO_JOURNAL: Optional[UndoJournal] = None
+_DEFAULT_UNDO_JOURNAL: UndoJournal | None = None
 
 
 def get_undo_journal() -> UndoJournal:
@@ -400,21 +401,20 @@ def _collect_dir_files(root: Path, arc_prefix: str) -> list[tuple[Path, str]]:
 
 
 def export_state(
-    output_path: Optional[Path | str] = None,
+    output_path: Path | str | None = None,
     *,
     include_secrets: bool = False,
-    base_dir: Optional[Path] = None,
-    config_dir: Optional[Path] = None,
+    base_dir: Path | None = None,
+    config_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """
-    Produces a tamper-evident, versioned `.tar.gz` snapshot of Celina's identity
+    """Produces a tamper-evident, versioned `.tar.gz` snapshot of Celina's identity
     (WAL-safe SQLite backups, KG, goals, skills, checkpoints, undo journal, schema)
     with a SHA-256 `MANIFEST.json` and companion `.sha256` file.
     """
     src_base = Path(base_dir) if base_dir is not None else config.BASE_DIR
     src_cfg = Path(config_dir) if config_dir is not None else config.CONFIG_DIR
 
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     out_file = (
         Path(output_path).expanduser().resolve()
         if output_path is not None
@@ -480,14 +480,14 @@ def export_state(
                     "sha256": _sha256_file(fpath),
                     "size_bytes": st.st_size,
                     "mode": oct(st.st_mode & 0o777),
-                }
+                },
             )
 
         canonical_table = json.dumps(manifest_files, sort_keys=True, separators=(",", ":")).encode("utf-8")
         manifest: dict[str, Any] = {
             "format_version": EXPORT_FORMAT_VERSION,
             "celina_version": CELINA_STATE_VERSION,
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "created_at_utc": datetime.now(UTC).isoformat(),
             "hostname": socket.gethostname(),
             "includes_secrets": bool(include_secrets),
             "file_count": len(manifest_files),
@@ -542,7 +542,9 @@ def _validate_arcname(name: str) -> bool:
         return False
     if name == "MANIFEST.json":
         return True
-    return parts[0] in ("data", "config")
+    if parts[0] in ("data", "config"):
+        return len(parts) >= 2  # must be data/foo or config/foo, never bare "data"/"config"
+    return False
 
 
 def import_state(
@@ -550,11 +552,10 @@ def import_state(
     *,
     dry_run: bool = False,
     create_safety_backup: bool = True,
-    base_dir: Optional[Path] = None,
-    config_dir: Optional[Path] = None,
+    base_dir: Path | None = None,
+    config_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """
-    Verifies a `celina-export` archive (Tar-Slip protection + `MANIFEST.json` envelope
+    """Verifies a `celina-export` archive (Tar-Slip protection + `MANIFEST.json` envelope
     + per-file SHA-256 verification) BEFORE touching disk, creates an automatic pre-import
     safety backup when existing state is present, and restores with 0700/0600 permissions.
     """
@@ -573,7 +574,7 @@ def import_state(
         if expected_arc_sha != actual_arc_sha:
             raise ValueError(
                 f"Archive SHA-256 mismatch vs {sidecar.name}: "
-                f"expected {expected_arc_sha[:16]}..., got {actual_arc_sha[:16]}..."
+                f"expected {expected_arc_sha[:16]}..., got {actual_arc_sha[:16]}...",
             )
 
     with tempfile.TemporaryDirectory(prefix="celina-import-") as tmp_s:
@@ -624,7 +625,7 @@ def import_state(
             if actual_sha != str(item["sha256"]):
                 raise ValueError(
                     f"SHA-256 verification FAILED for '{aname}' "
-                    f"(expected {str(item['sha256'])[:12]}..., got {actual_sha[:12]}...)"
+                    f"(expected {str(item['sha256'])[:12]}..., got {actual_sha[:12]}...)",
                 )
 
             rel = Path(aname)
@@ -656,9 +657,9 @@ def import_state(
             }
 
         # 3. Create automatic pre-import safety backup if existing state exists
-        safety_backup_path: Optional[str] = None
+        safety_backup_path: str | None = None
         if create_safety_backup and ((dst_base / "memory.db").exists() or (dst_cfg / "neural-schema.json").exists()):
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             sb = dst_base / "backups" / f"pre-import-safety-{stamp}.tar.gz"
             res = export_state(sb, include_secrets=False, base_dir=dst_base, config_dir=dst_cfg)
             safety_backup_path = res["archive_path"]
@@ -706,12 +707,11 @@ def _extract_tier_map(schema: dict[str, Any]) -> dict[str, str]:
 def migrate_state(
     *,
     dry_run: bool = False,
-    schema_path: Optional[Path | str] = None,
-    template_schema_path: Optional[Path | str] = None,
-    base_dir: Optional[Path] = None,
+    schema_path: Path | str | None = None,
+    template_schema_path: Path | str | None = None,
+    base_dir: Path | None = None,
 ) -> dict[str, Any]:
-    """
-    Compares on-disk `neural-schema.json` against the target schema (defaulting to
+    """Compares on-disk `neural-schema.json` against the target schema (defaulting to
     `config.DEFAULT_NEURAL_SCHEMA` or an explicit template JSON), reports exact tool
     additions, removals, and tier transitions, and (unless `dry_run=True`) persists the
     migrated schema + runs non-destructive SQLite schema migrations.
@@ -841,7 +841,7 @@ def format_migrate_report(rep: dict[str, Any]) -> str:
 # 4. CLI Dispatch (`python3 -m celina_pkg.state_ops ...`)
 # ============================================================================
 
-def run_cli(argv: Optional[list[str]] = None) -> int:
+def run_cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="celina",
         description="Celina operational safety commands: export, import, undo, migrate, checkpoints",
@@ -997,7 +997,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
         for c in items:
             print(
                 f"  {c['task_id']}  [{c['status']:11s}]  "
-                f"steps={c['completed_steps']}/{c['max_steps']}  goal={c['goal'][:60]}"
+                f"steps={c['completed_steps']}/{c['max_steps']}  goal={c['goal'][:60]}",
             )
         return 0
 
@@ -1028,7 +1028,7 @@ def run_cli(argv: Optional[list[str]] = None) -> int:
             uid = it.get("undo_action_id") or "-"
             print(
                 f"  #{it['seq']:04d}  [{it['outcome']:7s}]  {it['tool']:22s}  "
-                f"undo={uid:22s}  hash={str(it['entry_hash'])[:12]}"
+                f"undo={uid:22s}  hash={str(it['entry_hash'])[:12]}",
             )
         return 0
 

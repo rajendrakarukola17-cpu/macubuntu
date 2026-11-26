@@ -18,7 +18,8 @@
       "role": "perception",
       "sandbox": "bwrap_loopback_only",
       "command": "uvx",
-      "args": ["shadow-vision"],
+      "args": ["--from", "shadow-vision==0.1.0", "shadow-vision"],
+      "integrity": "sha256:2384ab65ea7c597fcd637699df99e76c798b1d0d3270b844132bea4c27ac3781",
       "env": {
         "VISION_BACKEND": "ollama",
         "VISION_MODEL": "qwen3-vl:2b-instruct",
@@ -87,7 +88,8 @@
       "role": "isolated_kde_desktop",
       "sandbox": "bwrap_unshare_net",
       "command": "uvx",
-      "args": ["kwin-mcp"],
+      "args": ["--from", "kwin-mcp==0.12.0", "kwin-mcp"],
+      "integrity": "sha256:105d14641a423d1f613861397eba78757b6efa6e237e498fb92b9b6b2d061976",
       "description": "Isolated KDE Plasma 6 Wayland virtual KWin session (kwin_wayland --virtual + private EIS + AT-SPI2)."
     },
     "linux-system-mcp": {
@@ -97,7 +99,8 @@
       "role": "system_bridge",
       "sandbox": "bwrap_unshare_net",
       "command": "npx",
-      "args": ["-y", "linux-system-mcp"],
+      "args": ["-y", "linux-system-mcp@1.2.1"],
+      "integrity": "sha256:86de583a95390b99cc78e308ac7408d77e87a7e09e1e5803bd37f5409dfefc4e",
       "description": "Linux system bridge — GUI dialogs, notifications, timeout shell, GUI sudo, and mid-execution ask_user confirmation."
     },
     "vadgr-computer-use": {
@@ -115,45 +118,145 @@
       "order": 11,
       "priority": "recommended",
       "role": "memory_graph",
-      "sandbox": "bwrap_unshare_net",
       "command": "celina-memory-mcp",
       "args": [],
       "description": "Built-in sovereign SQLite demand-constructed memory MCP server (swadb/Engrama: 10 typed edges, 9-stage retrieval, 9 memory tools)."
+    },
+    "mcp-filesystem": {
+      "enabled": false,
+      "order": 12,
+      "priority": "optional",
+      "role": "file_access",
+      "sandbox": "bwrap_unshare_net",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "Scoped, allow-listed directory access (reads, moves, searches) with explicit approval boundaries."
+    },
+    "mcp-memory": {
+      "enabled": false,
+      "order": 13,
+      "priority": "optional",
+      "role": "knowledge_graph",
+      "sandbox": "bwrap_unshare_net",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "Persistent knowledge-graph memory paired with Celina's 17 SQLite tables."
+    },
+    "mcp-sequential-thinking": {
+      "enabled": false,
+      "order": 14,
+      "priority": "optional",
+      "role": "reasoning",
+      "sandbox": "bwrap_unshare_net",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sequential-thinking@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "Dynamic, reflective step-by-step reasoning for TreePlanner and cross-app workflows."
+    },
+    "mcp-git": {
+      "enabled": false,
+      "order": 15,
+      "priority": "optional",
+      "role": "version_control",
+      "sandbox": "bwrap_unshare_net",
+      "command": "npx",
+      "args": ["-y", "mcp-server-git@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "Repository inspection — git log, diff, blame, status within sandboxed worktrees."
+    },
+    "mcp-fetch": {
+      "enabled": false,
+      "order": 16,
+      "priority": "optional",
+      "role": "web_access",
+      "sandbox": "bwrap_unshare_net",
+      "command": "npx",
+      "args": ["-y", "mcp-server-fetch@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "Web-to-Markdown conversion — read-only fetch of public URLs for research."
+    },
+    "mcp-time": {
+      "enabled": false,
+      "order": 17,
+      "priority": "optional",
+      "role": "scheduling",
+      "sandbox": "bwrap_unshare_net",
+      "command": "npx",
+      "args": ["-y", "mcp-server-time@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "Timezone-aware scheduling — current time, conversions, calendar math."
+    },
+    "mcp-dbus-desktop": {
+      "enabled": false,
+      "order": 18,
+      "priority": "optional",
+      "role": "desktop_bridge",
+      "sandbox": "bwrap_unshare_net",
+      "command": "celina-mcp-dbus-desktop",
+      "args": [],
+      "description": "Exposes D-Bus services to Celina — scx_loader (CPU scheduler), MPRIS media, notifications, GNOME window/workspace placement."
+    },
+    "mcp-proactive-observer": {
+      "enabled": false,
+      "order": 19,
+      "priority": "optional",
+      "role": "anticipatory",
+      "sandbox": "bwrap_unshare_net",
+      "command": "celina-mcp-proactive-observer",
+      "args": [],
+      "description": "Anticipatory layer — ebpf_sensor, os_events, window focus, calendar events → rule + local-LLM scoring loop → silent dismissible pills in celina-island."
+    },
+    "mcp-media-ondemand": {
+      "enabled": false,
+      "order": 20,
+      "priority": "optional",
+      "role": "media_on_demand",
+      "sandbox": "bwrap_unshare_net",
+      "command": "celina-mcp-media-ondemand",
+      "args": [],
+      "description": "Local quantized image generator (stable-diffusion.cpp) + Whisper/NLLB live-translation pipeline behind systemd socket activation — zero RAM/VRAM until invoked."
     }
   },
   "servers": {
     "git": {
       "enabled": false,
       "transport": "stdio",
-      "command": ["uvx", "mcp-server-git", "--repository", "${HOME}"],
+      "command": ["uvx", "--from", "mcp-server-git==2026.11.18", "mcp-server-git", "--repository", "${HOME}"],
+      "integrity": "sha256:4a1b5ee4edbc657eddec4b3ba809e458b50a03150f0295c3eaad426c8a19ffc2",
       "description": "Official open-source MCP Git server (local repo status, diffs, commits, zero cloud API).",
       "auto_approve_read_only": true
     },
     "sqlite": {
       "enabled": false,
       "transport": "stdio",
-      "command": ["uvx", "mcp-server-sqlite", "--db-path", "${HOME}/.local/share/celina/memory.db"],
+      "command": ["uvx", "--from", "mcp-server-sqlite==2025.4.25", "mcp-server-sqlite", "--db-path", "${HOME}/.local/share/celina/memory.db"],
+      "integrity": "sha256:5ba5706aa29d249a3cde8226577e021c07792d3198e9db40fd005578d2a0801d",
       "description": "Open-source local SQLite MCP server for querying and analyzing local .db files.",
       "auto_approve_read_only": true
     },
     "playwright": {
       "enabled": false,
       "transport": "stdio",
-      "command": ["npx", "-y", "@playwright/mcp@latest", "--headless"],
+      "command": ["npx", "-y", "@playwright/mcp@0.0.86", "--headless"],
+      "integrity": "sha256:a72b824664ebf803f3ae57ad9500a50ede12af44203482e74bcc64f9149d6ea1",
       "description": "Official open-source Playwright MCP server for reliable browser automation & web form workflows.",
       "auto_approve_read_only": false
     },
     "context7": {
       "enabled": false,
       "transport": "stdio",
-      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "command": ["npx", "-y", "@upstash/context7-mcp@4.7.3"],
+      "integrity": "sha256:ffa998e5c835fc5eff2ae59770531340e4d7ed42be00740c52893097425548af",
       "description": "Open-source Context7 MCP server for live, up-to-date programming library & framework docs.",
       "auto_approve_read_only": true
     },
     "time": {
       "enabled": false,
       "transport": "stdio",
-      "command": ["uvx", "mcp-server-time"],
+      "command": ["uvx", "--from", "mcp-server-time==2026.11.18", "mcp-server-time"],
+      "integrity": "sha256:acb3ba2e0faf812ce49989fbe74d363501cf7720c8d7a103debef9815e838a34",
       "description": "Official open-source MCP Time & Timezone conversion server.",
       "auto_approve_read_only": true
     },
@@ -186,6 +289,22 @@
       },
       "description": "Notion MCP connector for notes & workspace pages (set NOTION_TOKEN in ~/.config/celina/env).",
       "auto_approve_read_only": true
+    },
+    "activitywatch": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": ["npx", "-y", "@activitywatch/mcp-server@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "ActivityWatch MCP server — queries local desktop telemetry (active windows, browser URLs, AFK intervals) via AQL for anticipatory behavior context.",
+      "auto_approve_read_only": true
+    },
+    "homeassistant": {
+      "enabled": false,
+      "transport": "stdio",
+      "command": ["npx", "-y", "home-assistant-mcp-server@latest"],
+      "integrity": "sha256:placeholder-verify-before-enable",
+      "description": "Home Assistant MCP server — reads sensors and controls Matter/Zigbee/Wi-Fi lights, thermostats, and relays over LAN with scoped entity permissions.",
+      "auto_approve_read_only": false
     }
   }
 }

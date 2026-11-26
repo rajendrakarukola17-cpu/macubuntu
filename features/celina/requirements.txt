@@ -3,20 +3,27 @@
 #   pip-compile --generate-hashes features/celina/requirements.txt -o features/celina/requirements.lock
 # When features/celina/requirements.lock is present, features/celina/install.sh automatically
 # enforces `pip install --require-hashes -r requirements.lock`.
+#
+# pip-audit (2026-11-14): all known vulnerabilities resolved — see commit for details.
+#   requests 2.32.3 → 2.33.0 (PYSEC-2026-1872, PYSEC-2026-2275)
+#   urllib3 2.3.0 → 2.8.0 (8x PYSEC-2026-*)
+#   idna 3.10 → 3.15 (PYSEC-2026-215)
+#   certifi 2025.1.31 → 2026.10.18 (PYSEC-2026-4320)
+#   pypdf 5.3.0 → 6.21.4 (50+ PYSEC/CVE-2026-*)
 
 # Core HTTP & Local/Cloud API transport
-requests==2.32.3
-urllib3==2.3.0
-certifi==2025.1.31
+requests==2.33.0
+urllib3==2.8.0
+certifi==2026.10.18
 charset-normalizer==3.4.1
-idna==3.10
+idna==3.15
 
 # Document & Office Suite (DOCX / XLSX / PPTX / ODT / PDF)
 python-docx==1.1.2
 openpyxl==3.1.5
 python-pptx==1.0.2
 odfpy==1.4.1
-pypdf==5.3.0
+pypdf==6.21.4
 
 # Offline Neural Voice (Piper TTS + Faster-Whisper STT + Audio Capture)
 piper-tts==1.2.0

@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 # -n sets receiver name; -p binds deterministic AirPlay ports (7000/7001/7011/6000/6001) for LAN-only UFW
-ExecStart=/usr/bin/uxplay -n %H-AirPlay -p -nh
+ExecStart=/usr/bin/uxplay -n %H-AirPlay -p -nh -vs waylandsink
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

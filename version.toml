@@ -1,0 +1,26 @@
+# macubuntu / Celina — Single Version Source (P1)
+# All version fields across the repository are derived from this file.
+# The installer, manifest, neural-schema, and ARCHITECTURE.md must agree.
+
+[celina]
+# Deployed Celina AI OS version. Read by install.sh, embedded in
+# celina-capabilities.json (celina_version) and neural-schema.json (schema_version).
+version = "4.4"
+
+[manifest]
+# OS capability manifest schema version. Embedded in
+# celina-capabilities.json (manifest_version).
+version = "1.0"
+
+[schema]
+# Neural schema version. Embedded in neural-schema.json (schema_version).
+version = "4.4"
+
+[doc]
+# ARCHITECTURE.md document version. Informational only; not code-enforced.
+version = "4.5"
+
+[release]
+# Packaging/release semver. Single source of truth shared by build-deb.sh
+# and build-release.sh. Must match VERSION and debian/changelog.
+semver = "4.4.0"

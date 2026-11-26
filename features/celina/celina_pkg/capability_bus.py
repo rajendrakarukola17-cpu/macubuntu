@@ -1,29 +1,33 @@
-"""
-Celina AI — Capability #9: Unified Capability Bus (D-Bus / Unix Socket / MCP)
+"""Celina AI — Capability #9: Unified Capability Bus (D-Bus / Unix Socket / MCP)
 
 Single authoritative policy engine shared by ALL THREE transports:
   1. `dbus`        — Session D-Bus (`org.macubuntu.Celina` / `org.macubuntu.Celina.Autonomy`)
   2. `unix_socket` — Local AF_UNIX socket (`0600`) with kernel `SO_PEERCRED` peer-UID verification
   3. `mcp`         — Inbound MCP server (`mcp_server.py`) & external MCP callers
 
-Every transport passes through the EXACT same pipeline:
-  peer-UID check -> prompt-injection scan -> net_policy offline/opt-in guard ->
-  OS capability manifest boundary -> GovernanceSubstrate one-use HMAC grant ->
-  Tier-2 approval gate -> OpenTelemetry durable span -> intent-linked evidence audit.
+Tier-2 and non-read-only requests through this bus are disabled until broker-owned
+execution is integrated. Only explicitly configured Tier-1 requests classified
+read-only are passed onward. This classification has not been independently
+verified; checks do not establish isolation from a malicious same-UID process.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 import os
 import socket
 import struct
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
-from . import approval, capabilities, config, evidence, governance, net_policy, telemetry, tools
+log = logging.getLogger(__name__)
+
+from . import approval, config, evidence, governance, net_policy, telemetry, tools
+from .approval_broker import ApprovalProtocolError, canonical_payload
 
 VALID_TRANSPORTS: frozenset[str] = frozenset({"dbus", "unix_socket", "mcp", "cli"})
 ApprovalCallback = Callable[[str, str], bool]
@@ -35,10 +39,11 @@ class BusRequest:
     tool_name: str
     arguments: dict[str, Any]
     caller_uid: int
+    uid_provenance: str = "untrusted"   # "dbus" | "unix_socket" | "in_process" | "untrusted"
     root_goal_id: str = ""
     task_id: str = ""
-    trace_id: Optional[str] = None
-    provenance: Optional[governance.ProvenanceTag] = None
+    trace_id: str | None = None
+    provenance: governance.ProvenanceTag | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -63,11 +68,11 @@ class UnifiedCapabilityBus:
     def __init__(
         self,
         *,
-        expected_uid: Optional[int] = None,
-        substrate: Optional[governance.GovernanceSubstrate] = None,
-        tracer: Optional[telemetry.CelinaTracer] = None,
-        ledger: Optional[evidence.EvidenceLedger] = None,
-        executor: Optional[Callable[..., str]] = None,
+        expected_uid: int | None = None,
+        substrate: governance.GovernanceSubstrate | None = None,
+        tracer: telemetry.CelinaTracer | None = None,
+        ledger: evidence.EvidenceLedger | None = None,
+        executor: Callable[..., str] | None = None,
     ):
         self.expected_uid = int(os.getuid() if expected_uid is None else expected_uid)
         self.substrate = substrate or governance.GovernanceSubstrate(expected_uid=self.expected_uid)
@@ -79,8 +84,8 @@ class UnifiedCapabilityBus:
         self,
         req: BusRequest,
         *,
-        approval_cb: Optional[ApprovalCallback] = None,
-        online_probe: Optional[Callable[[], bool]] = None,
+        approval_cb: ApprovalCallback | None = None,
+        online_probe: Callable[[], bool] | None = None,
     ) -> BusResponse:
         transport = (req.transport or "").strip().lower()
         if transport not in VALID_TRANSPORTS:
@@ -116,8 +121,60 @@ class UnifiedCapabilityBus:
                     error=err,
                 )
 
+            # 1b. Fail-closed: MCP transport does not provide a trustworthy caller UID.
+            #     Require explicit provenance from dbus / unix_socket / in_process.
+            if req.uid_provenance not in {"dbus", "unix_socket", "in_process"}:
+                err = f"Transport '{transport}' does not provide a trustworthy caller UID; refusing Tier-2 access."
+                span.status = "error:untrusted_transport"
+                return BusResponse(
+                    ok=False,
+                    transport=transport,
+                    tool_name=req.tool_name,
+                    result="",
+                    policy_decision="deny:untrusted_transport",
+                    trace_id=span.trace_id,
+                    span_id=span.span_id,
+                    error=err,
+                )
+
+            # A boolean callback or same-UID identity cannot establish the
+            # approved broker boundary. Snapshot/validate before risk checks so
+            # caller mutations cannot change which arguments are dispatched.
+            try:
+                frozen = canonical_payload(req.tool_name, req.arguments, "bus", "classification", "bus")
+                args = json.loads(frozen)["arguments"]
+                risk = approval.classify_risk(req.tool_name, args)
+            except (ApprovalProtocolError, TypeError, ValueError, RecursionError):
+                span.status = "error:invalid_arguments"
+                return BusResponse(
+                    ok=False, transport=transport, tool_name=req.tool_name, result="",
+                    policy_decision="deny:invalid_arguments", trace_id=span.trace_id,
+                    span_id=span.span_id, error="Denied: invalid or unsupported capability request.",
+                )
+            is_t2 = req.tool_name in config.TIER2_APPROVAL_TOOLS
+            if (is_t2 or req.tool_name not in config.TIER1_AUTO_TOOLS
+                    or risk != approval.RiskLevel.READ_ONLY):
+                span.status = "error:approval_broker_unavailable"
+                return BusResponse(
+                    ok=False,
+                    transport=transport,
+                    tool_name=req.tool_name,
+                    result="",
+                    policy_decision="deny:approval_broker_unavailable",
+                    trace_id=span.trace_id,
+                    span_id=span.span_id,
+                    error="Denied: this capability requires a trusted approval broker, which is not available.",
+                )
+            req = dataclasses.replace(req, arguments=args)
+
             # 2. Prompt-injection scan on serialized arguments -> security audit event
-            args_str = json.dumps(req.arguments or {}, sort_keys=True, default=str)
+            #    Uses approval._jsonable for canonical serialisation (same as compute_arguments_hash)
+            args_str = json.dumps(
+                approval._jsonable(req.arguments or {}),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
             inj_hits = evidence.detect_prompt_injection(args_str)
             if inj_hits:
                 try:
@@ -130,8 +187,20 @@ class UnifiedCapabilityBus:
                         trace_id=span.trace_id,
                         actor_identity=f"uid:{req.caller_uid}@{transport}",
                     )
-                except OSError:
-                    pass
+                except Exception as exc:
+                    log.error("EVIDENCE LEDGER SECURITY EVENT WRITE FAILED for %s on %s: %s",
+                              req.tool_name, transport, exc)
+                    span.status = "error:evidence_write_failed"
+                    return BusResponse(
+                        ok=False,
+                        transport=transport,
+                        tool_name=req.tool_name,
+                        result="",
+                        policy_decision="deny:evidence_failure",
+                        trace_id=span.trace_id,
+                        span_id=span.span_id,
+                        error="Denied: evidence ledger is unavailable; refusing to record security event.",
+                    )
                 span.status = "error:prompt_injection_blocked"
                 return BusResponse(
                     ok=False,
@@ -145,11 +214,19 @@ class UnifiedCapabilityBus:
                 )
 
             # 3. Centralized net_policy offline & opt-in guard for web_comms tools
-            url_hint = req.arguments.get("url") if isinstance(req.arguments, dict) else None
+            #    Inspect all common URL keys, not just "url".
+            _URL_KEYS = ("url", "webhook_url", "endpoint", "target_url", "href")
+            url_hint = None
+            if isinstance(req.arguments, dict):
+                for _k in _URL_KEYS:
+                    _v = req.arguments.get(_k)
+                    if isinstance(_v, str):
+                        url_hint = _v
+                        break
             try:
                 net_policy.check_web_comms_allowed(
                     req.tool_name,
-                    url=str(url_hint) if isinstance(url_hint, str) else None,
+                    url=url_hint,
                     online_probe=online_probe,
                 )
             except (net_policy.OfflineError, net_policy.URLPolicyError) as exc:
@@ -166,7 +243,6 @@ class UnifiedCapabilityBus:
                 )
 
             # 4. System-boundary capability + GovernanceSubstrate one-use HMAC grant
-            is_t2 = req.tool_name in config.TIER2_APPROVAL_TOOLS
             try:
                 grant = self.substrate.issue_grant(
                     tool_name=req.tool_name,
@@ -194,55 +270,17 @@ class UnifiedCapabilityBus:
                     error=str(exc),
                 )
 
-            # 5. Tier-2 fail-closed HITL gate enforced uniformly at the bus boundary
-            effective_approval_cb = approval_cb
-            if is_t2:
-                if approval_cb is None:
-                    err = f"Denied: Tier-2 tool '{req.tool_name}' on {transport} requires explicit interactive approval."
-                    span.status = "error:approval_required"
-                    return BusResponse(
-                        ok=False,
-                        transport=transport,
-                        tool_name=req.tool_name,
-                        result="",
-                        policy_decision="deny:tier2_no_approval",
-                        grant_id=grant.grant_id,
-                        trace_id=span.trace_id,
-                        span_id=span.span_id,
-                        error=err,
-                    )
-                if self._executor is not tools.execute_tool:
-                    # Enforce HITL directly at the bus when a custom/MCP executor is attached
-                    try:
-                        approved = bool(
-                            approval_cb(
-                                f"Approve {req.tool_name} ({transport})",
-                                json.dumps(req.arguments or {}, sort_keys=True)[:300],
-                            )
-                        )
-                    except TypeError:
-                        approved = bool(approval_cb(req.tool_name, req.arguments or {}))
-                    if not approved:
-                        err = f"Denied: User rejected Tier-2 tool '{req.tool_name}' on {transport}."
-                        span.status = "error:approval_denied"
-                        return BusResponse(
-                            ok=False,
-                            transport=transport,
-                            tool_name=req.tool_name,
-                            result="",
-                            policy_decision="deny:tier2_user_rejected",
-                            grant_id=grant.grant_id,
-                            trace_id=span.trace_id,
-                            span_id=span.span_id,
-                            error=err,
-                        )
-
-            # 6. Execute through single unified tool pipeline
-            result_str = str(self._executor(req.tool_name, req.arguments or {}, approval_cb=effective_approval_cb))
+            # 5. Execute only the non-Tier-2 route. This does not certify the
+            # classification list or prevent other direct executor entry points.
+            result_str = str(self._executor(req.tool_name, req.arguments or {}, approval_cb=approval_cb))
             span.set_io(inputs=req.arguments or {}, outputs={"result_preview": result_str[:240]})
             span.set_attribute("governance.grant_id", grant.grant_id)
 
+            # Currently unreachable because all Tier-2 requests return above.
+            # A broker migration must redesign evidence ordering: recording a
+            # failure after an actuator runs cannot undo that operation.
             if is_t2:
+                evidence_ok = True
                 try:
                     self.ledger.record_execution(
                         tool_name=req.tool_name,
@@ -255,8 +293,24 @@ class UnifiedCapabilityBus:
                         actor_identity=f"uid:{req.caller_uid}@{transport}",
                         policy_decision=f"allow:grant={grant.grant_id}",
                     )
-                except OSError:
-                    pass
+                except Exception as exc:
+                    evidence_ok = False
+                    log.error("EVIDENCE LEDGER WRITE FAILED for %s on %s: %s",
+                              req.tool_name, transport, exc)
+
+                if not evidence_ok:
+                    span.status = "error:evidence_write_failed"
+                    return BusResponse(
+                        ok=False,
+                        transport=transport,
+                        tool_name=req.tool_name,
+                        result="",
+                        policy_decision="deny:evidence_failure",
+                        grant_id=grant.grant_id,
+                        trace_id=span.trace_id,
+                        span_id=span.span_id,
+                        error="Denied: evidence ledger is unavailable; refusing to record successful Tier-2 action.",
+                    )
 
             ok = not result_str.startswith(("Denied:", "Cancelled", "Blocked", "Error:"))
             if not ok:
@@ -283,24 +337,23 @@ def get_unix_socket_peer_uid(conn: socket.socket) -> int:
 
 
 class UnixSocketCapabilityServer:
-    """
-    Lightweight local AF_UNIX JSON-line server (`0600`) routing directly into `UnifiedCapabilityBus`
+    """Lightweight local AF_UNIX JSON-line server (`0600`) routing directly into `UnifiedCapabilityBus`
     with kernel-enforced `SO_PEERCRED` peer-UID authentication.
     """
 
     def __init__(
         self,
         bus: UnifiedCapabilityBus,
-        socket_path: Optional[Path] = None,
+        socket_path: Path | None = None,
         *,
-        approval_cb: Optional[ApprovalCallback] = None,
+        approval_cb: ApprovalCallback | None = None,
     ):
         self.bus = bus
         self.socket_path = Path(socket_path) if socket_path is not None else (config.BASE_DIR / "run" / "celina-bus.sock")
         self.approval_cb = approval_cb
-        self._sock: Optional[socket.socket] = None
+        self._sock: socket.socket | None = None
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> Path:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,7 +375,7 @@ class UnixSocketCapabilityServer:
         while not self._stop.is_set():
             try:
                 conn, _ = self._sock.accept()
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 break
@@ -336,6 +389,7 @@ class UnixSocketCapabilityServer:
                         tool_name=str(payload.get("tool_name", "")),
                         arguments=payload.get("arguments") if isinstance(payload.get("arguments"), dict) else {},
                         caller_uid=peer_uid,
+                        uid_provenance="unix_socket",
                         root_goal_id=str(payload.get("root_goal_id", "")),
                         task_id=str(payload.get("task_id", "")),
                     )
@@ -362,7 +416,7 @@ class UnixSocketCapabilityServer:
                 pass
 
 
-_DEFAULT_BUS: Optional[UnifiedCapabilityBus] = None
+_DEFAULT_BUS: UnifiedCapabilityBus | None = None
 
 
 def get_capability_bus() -> UnifiedCapabilityBus:

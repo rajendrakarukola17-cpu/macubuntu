@@ -17,7 +17,9 @@ Environment=CELINA_DAEMON_ROLE=voice
 # the documented scx_lavd watchdog-ejection Wayland compositor freeze risk!
 ExecStartPre=-/bin/sh -c '[ "${CELINA_ENABLE_SCX_LAVD:-0}" = "1" ] && command -v scxctl >/dev/null 2>&1 && scxctl switch -s lavd --mode lowlatency || true'
 ExecStart=/bin/sh -c 'exec "${HOME}/.local/bin/celina-island" --voice-daemon'
-ExecStopPost=-/bin/sh -c 'command -v scxctl >/dev/null 2>&1 && scxctl stop || true'
+# Only revert scx_lavd -> EEVDF if we opted into scx_lavd on start.
+# Never kill system-wide scx_bpfland on normal stop/restart!
+ExecStopPost=-/bin/sh -c '[ "${CELINA_ENABLE_SCX_LAVD:-0}" = "1" ] && command -v scxctl >/dev/null 2>&1 && scxctl stop || true'
 Restart=on-failure
 RestartSec=3s
 

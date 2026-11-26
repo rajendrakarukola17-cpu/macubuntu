@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Connector Registry (Update 23)
+"""Celina AI (Celly) - Connector Registry (Update 23)
 
 Central registry for all connectors. Connectors are registered here and can be
 looked up by name. The registry is NOT part of the Gear 0 dispatch chain.
@@ -7,9 +6,7 @@ looked up by name. The registry is NOT part of the Gear 0 dispatch chain.
 
 from __future__ import annotations
 
-from typing import Optional
-
-from .base import BaseConnector, ConnectorConfig, ConnectorStatus
+from .base import BaseConnector, ConnectorConfig
 
 
 class ConnectorRegistry:
@@ -24,11 +21,11 @@ class ConnectorRegistry:
         self._connectors[connector.name] = connector
         self._configs[connector.name] = config
 
-    def get(self, name: str) -> Optional[BaseConnector]:
+    def get(self, name: str) -> BaseConnector | None:
         """Return a connector by name, or None if not registered."""
         return self._connectors.get(name)
 
-    def get_config(self, name: str) -> Optional[ConnectorConfig]:
+    def get_config(self, name: str) -> ConnectorConfig | None:
         """Return a connector config by name."""
         return self._configs.get(name)
 
@@ -68,7 +65,7 @@ class ConnectorRegistry:
 # Module-level registry singleton
 # ---------------------------------------------------------------------------
 
-_REGISTRY: Optional[ConnectorRegistry] = None
+_REGISTRY: ConnectorRegistry | None = None
 
 
 def get_registry() -> ConnectorRegistry:

@@ -1,21 +1,20 @@
-"""
-Celina AI (Celly) - Gear 0-Graph: Local Personal Knowledge Base (Update 19)
+"""Celina AI (Celly) - Gear 0-Graph: Local Personal Knowledge Base (Update 19)
 
 SQLite key-value / alias graph for Siri-like contact and alias resolution.
+
 Examples:
   - "Call Mom" → SQLite lookup: Mom = +1234567890 → tel:+1234567890
   - "Open my work project" → SQLite lookup: work project = /home/user/dev/celina → open VS Code
 
 Zero LLM tokens, sub-2ms lookup, <5MB RAM.
+
 """
 
 from __future__ import annotations
 
-import json
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any, Optional
 
 _GRAPH_DB_PATH = Path.home() / ".celina" / "storage" / "shared" / "graph.db"
 
@@ -64,7 +63,7 @@ def graph_set(alias: str, kind: str, value: str) -> str:
         return f"Failed to save alias: {exc}"
 
 
-def graph_get(alias: str) -> Optional[dict[str, str]]:
+def graph_get(alias: str) -> dict[str, str] | None:
     """Look up an alias → value mapping."""
     try:
         conn = _get_conn()
@@ -80,7 +79,7 @@ def graph_get(alias: str) -> Optional[dict[str, str]]:
         return None
 
 
-def graph_list(kind: Optional[str] = None) -> list[dict[str, str]]:
+def graph_list(kind: str | None = None) -> list[dict[str, str]]:
     """List all aliases, optionally filtered by kind."""
     try:
         conn = _get_conn()
@@ -91,7 +90,7 @@ def graph_list(kind: Optional[str] = None) -> list[dict[str, str]]:
             ).fetchall()
         else:
             rows = conn.execute(
-                "SELECT alias, kind, value FROM aliases ORDER BY alias"
+                "SELECT alias, kind, value FROM aliases ORDER BY alias",
             ).fetchall()
         conn.close()
         return [{"alias": r[0], "kind": r[1], "value": r[2]} for r in rows]
@@ -158,7 +157,7 @@ def handle_open_my(alias: str) -> str:
 # Master dispatch for graph commands
 # ---------------------------------------------------------------------------
 
-def gear0_graph_classify(query: str) -> Optional[str]:
+def gear0_graph_classify(query: str) -> str | None:
     """Classify query into a graph handler name, or None."""
     import re as _re
 
@@ -182,7 +181,7 @@ def gear0_graph_classify(query: str) -> Optional[str]:
     return None
 
 
-def gear0_graph_execute(handler: str, query: str, dry_run: bool = False) -> Optional[str]:
+def gear0_graph_execute(handler: str, query: str, dry_run: bool = False, **kwargs) -> str | None:
     """Execute a Gear 0-Graph handler."""
     import re as _re
 
@@ -217,8 +216,8 @@ def gear0_graph_execute(handler: str, query: str, dry_run: bool = False) -> Opti
 __all__ = [
     "gear0_graph_classify",
     "gear0_graph_execute",
-    "graph_set",
+    "graph_delete",
     "graph_get",
     "graph_list",
-    "graph_delete",
+    "graph_set",
 ]

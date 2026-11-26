@@ -1,5 +1,4 @@
-"""
-Celina AI (Celly) - Zero-Idle-RAM Ephemeral MCP (Model Context Protocol) Client (v4.2)
+"""Celina AI (Celly) - Zero-Idle-RAM Ephemeral MCP (Model Context Protocol) Client (v4.2)
 - Pure Python stdlib + requests (zero heavy SDK bloat!)
 - Supports BOTH local 'stdio' MCP servers (uvx / npx / python) AND remote Streamable HTTP MCP servers
 - Timely Offload: Local stdio servers NEVER launch at boot; they spin up on-demand and auto-terminate
@@ -18,10 +17,9 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
-
-import requests
+from typing import Any, Optional
 
 from . import approval, config, net_policy
 
@@ -67,7 +65,7 @@ def validate_mcp_name(name: str) -> str:
     clean = (name or "").strip()
     if not _MCP_NAME_RE.fullmatch(clean):
         raise ValueError(
-            f"Invalid MCP server name '{name}'. Use 1-64 chars matching [A-Za-z0-9._-]."
+            f"Invalid MCP server name '{name}'. Use 1-64 chars matching [A-Za-z0-9._-].",
         )
     return clean
 
@@ -79,7 +77,7 @@ def parse_mcp_command(command: str | list[str]) -> list[str]:
             raise ValueError("MCP command must not be empty.")
         if _SHELL_METACHARS_RE.search(raw):
             raise ValueError(
-                "Shell metacharacters (;, |, &&, ||, `, $(, <, >) are forbidden in MCP commands."
+                "Shell metacharacters (;, |, &&, ||, `, $(, <, >) are forbidden in MCP commands.",
             )
         argv = shlex.split(raw)
     elif isinstance(command, list):
@@ -100,12 +98,11 @@ def add_mcp_server(
     cfg_path: Path = config.MCP_CONFIG_FILE,
     description: str = "",
     approve: bool = False,
-    approval_cb: Optional[ApprovalCallback] = None,
-    allowed_tools: Optional[list[str]] = None,
-    env: Optional[dict[str, str]] = None,
+    approval_cb: ApprovalCallback | None = None,
+    allowed_tools: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """
-    Opt-in MCP server loader (`celina config add-mcp <name> <command>`).
+    """Opt-in MCP server loader (`celina config add-mcp <name> <command>`).
     Each MCP server gets:
       - one opt-in entry (`opt_in=True`)
       - one explicit allowlist entry (`command` argv, zero ambient secrets inherited)
@@ -121,7 +118,7 @@ def add_mcp_server(
     if not approve:
         if approval_cb is None:
             raise PermissionError(
-                f"Adding MCP server '{clean_name}' requires explicit approval (pass approve=True or approval_cb)."
+                f"Adding MCP server '{clean_name}' requires explicit approval (pass approve=True or approval_cb).",
             )
         summary = f"Command: {' '.join(argv)}\nIsolated env: yes (ambient API keys stripped)\nKill switch: enabled"
         if not bool(approval_cb(f"Approve Opt-In MCP Server '{clean_name}'?", summary)):
@@ -129,7 +126,7 @@ def add_mcp_server(
 
     cfg = load_mcp_config(cfg_path)
     servers = dict(cfg.get("servers") or {})
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now = datetime.datetime.now(datetime.UTC).isoformat()
     entry = {
         "transport": "stdio",
         "command": argv,
@@ -171,7 +168,7 @@ def revoke_mcp_server(
     scfg["enabled"] = False
     scfg["kill_switch"] = True
     scfg["revoked"] = True
-    scfg["revoked_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    scfg["revoked_at"] = datetime.datetime.now(datetime.UTC).isoformat()
     scfg["explicit_auto_approve_tools"] = []
     servers[clean_name] = scfg
     cfg["servers"] = servers
@@ -218,11 +215,11 @@ _SAFE_STDIO_ENV_KEYS = (
 class _StdioMCPProcess:
     """Manages one ephemeral local MCP server subprocess over newline-delimited JSON-RPC 2.0."""
 
-    def __init__(self, name: str, command: list[str], extra_env: Optional[dict[str, str]] = None):
+    def __init__(self, name: str, command: list[str], extra_env: dict[str, str] | None = None):
         self.name = name
         self.command = [_expand_env(c) for c in command]
         self.extra_env = {k: _expand_env(v) for k, v in (extra_env or {}).items()}
-        self._proc: Optional[subprocess.Popen] = None
+        self._proc: subprocess.Popen | None = None
         self._read_buf = bytearray()
         self._lock = threading.Lock()
         self._req_id = 0
@@ -231,7 +228,7 @@ class _StdioMCPProcess:
     def is_alive(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
 
-    def _ensure_started(self) -> Optional[str]:
+    def _ensure_started(self) -> str | None:
         if self.is_alive():
             return None
         if not self.command or not shutil.which(self.command[0]):
@@ -279,8 +276,8 @@ class _StdioMCPProcess:
             pass
 
     def _rpc_locked(
-        self, method: str, params: dict[str, Any], timeout: float = 15.0
-    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        self, method: str, params: dict[str, Any], timeout: float = 15.0,
+    ) -> tuple[dict[str, Any] | None, str | None]:
         if not self._proc or not self._proc.stdin or not self._proc.stdout:
             return None, "MCP process not running."
         self._req_id += 1
@@ -331,7 +328,7 @@ class _StdioMCPProcess:
         finally:
             sel.close()
 
-    def call(self, method: str, params: dict[str, Any]) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+    def call(self, method: str, params: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
         with self._lock:
             self.last_used = time.time()
             err = self._ensure_started()
@@ -393,13 +390,13 @@ class MCPManager:
             running = name in self._procs and self._procs[name].is_alive()
             state = "REVOKED (kill-switch)" if revoked else ("ACTIVE" if running else ("ENABLED (standby 0 MB)" if enabled else "disabled"))
             lines.append(
-                f"• {name} [{scfg.get('transport', 'stdio')} | {state}] — {scfg.get('description', '')}"
+                f"• {name} [{scfg.get('transport', 'stdio')} | {state}] — {scfg.get('description', '')}",
             )
         return "\n".join(lines)
 
     def _http_rpc(
-        self, scfg: dict[str, Any], method: str, params: dict[str, Any]
-    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        self, scfg: dict[str, Any], method: str, params: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, str | None]:
         url = _expand_env(str(scfg.get("url", ""))).strip()
         if not url:
             return None, "MCP server is missing 'url'."
@@ -433,8 +430,8 @@ class MCPManager:
             return None, f"HTTP MCP error: {exc}"
 
     def _dispatch(
-        self, server_name: str, method: str, params: dict[str, Any]
-    ) -> tuple[Optional[dict[str, Any]], Optional[str]]:
+        self, server_name: str, method: str, params: dict[str, Any],
+    ) -> tuple[dict[str, Any] | None, str | None]:
         servers, _ = self._get_servers()
         scfg = servers.get(server_name)
         if not scfg:
@@ -478,12 +475,11 @@ class MCPManager:
         self,
         server_name: str,
         tool_name: str,
-        arguments: Optional[dict[str, Any]] = None,
-        approval_cb: Optional[ApprovalCallback] = None,
-        server_annotation_hint: Optional[dict[str, Any]] = None,
+        arguments: dict[str, Any] | None = None,
+        approval_cb: ApprovalCallback | None = None,
+        server_annotation_hint: dict[str, Any] | None = None,
     ) -> str:
-        """
-        Executes an MCP tool call.
+        """Executes an MCP tool call.
         Security Invariant (Phase 4 Item 10):
           - NEVER classifies tools as read-only by name prefix (get_/list_/read_/search_).
           - ALL unknown MCP tools default to explicit argument-bound user approval.
@@ -505,7 +501,7 @@ class MCPManager:
         explicit_allow = {str(x).strip() for x in (scfg.get("explicit_auto_approve_tools") or [])}
         final_args = {"server_name": sname, "tool_name": tname, "arguments": arguments or {}}
 
-        token: Optional[approval.ApprovalToken] = None
+        token: approval.ApprovalToken | None = None
         if tname not in explicit_allow:
             hint_note = ""
             if isinstance(server_annotation_hint, dict) and "readOnlyHint" in server_annotation_hint:
@@ -570,7 +566,7 @@ class MCPManager:
         return stopped
 
 
-_DEFAULT_MCP: Optional[MCPManager] = None
+_DEFAULT_MCP: MCPManager | None = None
 
 
 def get_mcp() -> MCPManager:

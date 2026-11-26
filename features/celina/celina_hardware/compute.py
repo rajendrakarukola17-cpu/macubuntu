@@ -85,8 +85,6 @@ def _read_driver_name(device_dir: Path) -> str:
     try:
         if driver_link.is_symlink():
             return os.path.basename(os.readlink(driver_link))
-        if driver_link.exists():
-            return driver_link.name
     except OSError:
         pass
     uevent = _read_sys_str(device_dir / "uevent")
@@ -108,7 +106,7 @@ def detect_compute_topology(
 
     accel_dir = dev_root / "accel"
     if accel_dir.is_dir():
-        for node in sorted(accel_dir.glob("accel*")):
+        for node in sorted(accel_dir.glob("accel[0-9]*")):
             name = node.name
             dev_sys = sys_root / "class" / "accel" / name / "device"
             vid = _read_sys_str(dev_sys / "vendor")
@@ -133,7 +131,7 @@ def detect_compute_topology(
 
     dri_dir = dev_root / "dri"
     if dri_dir.is_dir():
-        for node in sorted(dri_dir.glob("renderD*")):
+        for node in sorted(dri_dir.glob("renderD[0-9]*")):
             name = node.name
             dev_sys = sys_root / "class" / "drm" / name / "device"
             vid = _read_sys_str(dev_sys / "vendor")
@@ -164,11 +162,29 @@ def detect_compute_topology(
     # Determine safe Ollama drop-in overrides (NEVER inject unsupported NPU vars into Ollama!)
     ollama_env: dict[str, str] = {}
     gpu_backends = {g.backend for g in gpus}
+
+    # Detect AMD Strix Halo via sysfs PCI device ID (0x1002:0x1586) —
+    # do NOT set OLLAMA_VULKAN=1 on Strix Halo (avoids Qwen3.5 hang).
+    strix_halo = False
+    for g in gpus:
+        if g.vendor == "amd":
+            dev_name = g.device_path.replace("/dev/dri/", "")
+            dev_sys = Path("/sys/class/drm") / dev_name / "device"
+            vid = _read_sys_str(dev_sys / "vendor")
+            did = _read_sys_str(dev_sys / "device")
+            if vid == "0x1002" and did == "0x1586":
+                strix_halo = True
+                break
+
     if "cuda" in gpu_backends:
         recommended = "npu_decoupled" if npus else "cuda"
     elif "rocm-vulkan" in gpu_backends:
-        recommended = "npu_decoupled" if npus else "rocm_vulkan"
-        ollama_env["OLLAMA_VULKAN"] = "1"
+        if strix_halo:
+            recommended = "npu_decoupled" if npus else "rocm"
+            # Strix Halo: NO OLLAMA_VULKAN=1 (avoid Qwen3.5 hang)
+        else:
+            recommended = "npu_decoupled" if npus else "rocm_vulkan"
+            ollama_env["OLLAMA_VULKAN"] = "1"
     elif "vulkan" in gpu_backends:
         recommended = "npu_decoupled" if npus else "vulkan"
         ollama_env["OLLAMA_VULKAN"] = "1"
@@ -207,12 +223,21 @@ def _sanitize_local_endpoint(raw_url: str, default_url: str) -> str:
     Enforces loopback-only local inference endpoints (anti-SSRF) and normalizes
     wildcard bind addresses (`0.0.0.0` / `::`) to `127.0.0.1`.
     Falls back to `default_url` if the URL is invalid or points to a non-loopback host.
+    Preserves the default port when `raw_url` omits one (e.g. `localhost` -> `http://localhost:11434`).
+    Strips arbitrary paths and rejects out-of-range ports.
     """
     candidate = (raw_url or "").strip()
     if not candidate:
         return default_url
+    # Bare IPv6 wildcard or loopback without scheme -> normalize to default
+    if candidate in {"::", "[::]", "0.0.0.0"}:
+        return default_url
     if not candidate.startswith(("http://", "https://")):
-        candidate = f"http://{candidate}"
+        # Bracket bare IPv6 host like "::1" or "::1:11434" safely
+        if candidate.count(":") > 1 and not candidate.startswith("["):
+            candidate = f"http://[{candidate}]"
+        else:
+            candidate = f"http://{candidate}"
     try:
         parsed = urllib.parse.urlparse(candidate)
     except ValueError:
@@ -224,14 +249,20 @@ def _sanitize_local_endpoint(raw_url: str, default_url: str) -> str:
         host = "127.0.0.1"
     if host not in _LOOPBACK_HOSTS:
         return default_url
+    # Preserve default port when raw_url omits one; reject out-of-range ports
+    default_port = urllib.parse.urlparse(default_url).port
     try:
         port = parsed.port
     except ValueError:
         return default_url
+    if port is not None and not (1 <= port <= 65535):
+        return default_url
+    effective_port = port if port is not None else default_port
     netloc = f"[{host}]" if ":" in host else host
-    if port is not None:
-        netloc = f"{netloc}:{port}"
-    return urllib.parse.urlunparse((parsed.scheme, netloc, parsed.path or "", "", "", "")).rstrip("/")
+    if effective_port is not None:
+        netloc = f"{netloc}:{effective_port}"
+    # Strip arbitrary paths — local inference endpoints have no meaningful path
+    return urllib.parse.urlunparse((parsed.scheme, netloc, "", "", "", "")).rstrip("/")
 
 
 def resolve_inference_endpoint(
