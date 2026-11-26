@@ -1,7 +1,0 @@
-Manifest A: canonical hash OK (5ebf8fb45183b9a1...)
-Manifest B: canonical hash OK (5ebf8fb45183b9a1...)
-Manifest copies byte-identical (raw sha256=907e3bfea9bddddb...)
-Manifest A: manifest_version=1.0 != version.toml version=4.4 (version drift — review, not an integrity violation)
-Manifest B: manifest_version=1.0 != version.toml version=4.4 (version drift — review, not an integrity violation)
-
-Manifest integrity: OK

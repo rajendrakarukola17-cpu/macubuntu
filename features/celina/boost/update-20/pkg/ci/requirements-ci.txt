@@ -1,6 +1,0 @@
-# CI gates for Update 20 — "Truth & Safety"
-bandit>=1.7.5          # Security linter: catches shell=True, rm -rf, rmtree, etc.
-ruff>=0.8.0            # Fast Python linter: catches syntax corruption, unused imports
-mypy>=1.11.0           # Static type checker
-pip-audit>=2.6.0       # Dependency vulnerability scanner
-pip-licenses>=4.3.0    # License compliance checker
