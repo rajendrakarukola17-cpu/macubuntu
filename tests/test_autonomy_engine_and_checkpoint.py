@@ -117,7 +117,8 @@ def test_prompt_injection_blocked_never_routed_or_executed(tmp_path: Path):
         order_index=0,
     )
 
-    tid = eng.step()
+    with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+        tid = eng.step()
 
     # Task must be blocked, router must NOT be called, executor must NOT run
     assert tid is not None
@@ -173,7 +174,8 @@ def test_authoritative_tier_overrides_router_tier1(tmp_path: Path):
         order_index=0,
     )
 
-    tid = eng.step()
+    with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+        tid = eng.step()
     assert tid is not None
     leaf_row = graph.get_task(leaf_id)
     assert leaf_row is not None, "Task row must exist"
@@ -342,20 +344,21 @@ def test_agentfuse_retry_cap_stops_at_max_attempts(tmp_path: Path):
 
     executor.execute = always_fail  # type: ignore[method-assign]
 
-    # Step 1: first failure -> AgentFuse doesn't trip yet (1 call), normal retry -> pending
-    r1 = eng.step()
-    assert r1 is not None
-    assert graph.get_task(leaf_id)["status"] == "pending"
+    with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+        # Step 1: first failure -> AgentFuse doesn't trip yet (1 call), normal retry -> pending
+        r1 = eng.step()
+        assert r1 is not None
+        assert graph.get_task(leaf_id)["status"] == "pending"
 
-    # Step 2: AgentFuse trips (2 identical calls), attempts_so_far=2 >= max_att=2 -> blocked
-    r2 = eng.step()
-    assert r2 is not None
-    status_after = graph.get_task(leaf_id)["status"]
-    assert status_after == "blocked", f"Expected blocked after exhaustion, got {status_after}"
+        # Step 2: AgentFuse trips (2 identical calls), attempts_so_far=2 >= max_att=2 -> blocked
+        r2 = eng.step()
+        assert r2 is not None
+        status_after = graph.get_task(leaf_id)["status"]
+        assert status_after == "blocked", f"Expected blocked after exhaustion, got {status_after}"
 
-    # Step 3: task stays blocked — no more retries, no infinite loop
-    r3 = eng.step()
-    assert r3 is None or graph.get_task(leaf_id)["status"] == "blocked"
+        # Step 3: task stays blocked — no more retries, no infinite loop
+        r3 = eng.step()
+        assert r3 is None or graph.get_task(leaf_id)["status"] == "blocked"
     graph.close()
 
 
@@ -403,7 +406,8 @@ def test_no_stuck_running_on_timeout(tmp_path: Path):
 
     executor.execute = boom  # type: ignore[method-assign]
 
-    tid = eng.step()
+    with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+        tid = eng.step()
     assert tid is not None
     row = graph.get_task(leaf_id)
     assert row is not None

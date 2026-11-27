@@ -405,7 +405,8 @@ def test_cap11_landlock_policy_hash_sensitive_paths_and_subprocess(tmp_path: Pat
     assert not any(".ssh" in str(p) for p in all_granted)
 
     # Subprocess executes cleanly with Landlock audit metadata attached
-    res = landlock_policy.run_under_landlock([sys.executable, "-c", "print('landlock_ok')"], prof, strict=False)
+    py_sys = "/usr/bin/python3" if Path("/usr/bin/python3").exists() else sys.executable
+    res = landlock_policy.run_under_landlock([py_sys, "-c", "print('landlock_ok')"], prof, strict=False)
     assert res["returncode"] == 0
     assert "landlock_ok" in res["stdout"]
     assert res["policy_hash"] == h1
@@ -592,7 +593,7 @@ def test_cap17_saga_lifo_compensation_and_capability_fallback(tmp_path: Path):
             fake_router.route_for_autonomy.return_value = {
                 "tool_name": "libreoffice_edit",
                 "tier": 1,
-                "arguments": {},
+                "arguments": {"path": str(tmp_path / "quarterly.odt"), "doc_path": str(tmp_path / "quarterly.odt"), "instruction": "update"},
                 "arguments_hash": "h1",
                 "why_receipt_hash": "w1",
             }
@@ -608,7 +609,8 @@ def test_cap17_saga_lifo_compensation_and_capability_fallback(tmp_path: Path):
                 observe_only=False,
                 tracer=telemetry.CelinaTracer(store=store),
             )
-            eng.step()
+            with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+                eng.step()
             # Router received FORST scaffold anchor & trace_id in context
             ctx_passed = fake_router.route_for_autonomy.call_args.kwargs["context"]
             assert "scaffold_anchor" in ctx_passed and ctx_passed["trace_id"]

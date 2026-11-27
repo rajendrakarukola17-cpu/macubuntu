@@ -186,7 +186,8 @@ def test_agentfuse_reliable_decorator_guardloop_and_engine_wiring(tmp_path: Path
                 guard_loop=gl,
             )
             task = graph.next_runnable()
-            res = eng._execute_one(task)
+            with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+                res = eng._execute_one(task)
             assert isinstance(res, reliability.TaskResult)
             assert res.task_id == "t-ok" and res.status == "done"
         finally:

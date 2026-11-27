@@ -24,6 +24,8 @@ from unittest.mock import patch, MagicMock
 
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "features" / "celina"))
 
 from celina_pkg import tools  # noqa: E402
@@ -75,6 +77,7 @@ def test_handle_fast_intent_time_hi_script(monkeypatch):
 # Volume
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_volume_unmute_te(monkeypatch):
     """CB: unmute in Telugu script → set_volume(mute=False)."""
     with patch.object(tools, "set_volume", return_value="unmuted") as sv:
@@ -83,6 +86,7 @@ def test_handle_fast_intent_volume_unmute_te(monkeypatch):
         sv.assert_called_once_with(mute=False)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_volume_unmute_hi(monkeypatch):
     """CB: unmute in Hindi → set_volume(mute=False)."""
     with patch.object(tools, "set_volume", return_value="unmuted") as sv:
@@ -91,6 +95,7 @@ def test_handle_fast_intent_volume_unmute_hi(monkeypatch):
         sv.assert_called_once_with(mute=False)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_volume_mute_te(monkeypatch):
     """CB: mute in Telugu script → set_volume(mute=True)."""
     with patch.object(tools, "set_volume", return_value="muted") as sv:
@@ -99,6 +104,7 @@ def test_handle_fast_intent_volume_mute_te(monkeypatch):
         sv.assert_called_once_with(mute=True)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_volume_mute_hi(monkeypatch):
     """CB: mute in Hindi → set_volume(mute=True)."""
     with patch.object(tools, "set_volume", return_value="muted") as sv:
@@ -107,6 +113,7 @@ def test_handle_fast_intent_volume_mute_hi(monkeypatch):
         sv.assert_called_once_with(mute=True)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_volume_set_regex(monkeypatch):
     """CB: volume set regex match → set_volume(level=N)."""
     with patch.object(tools, "set_volume", return_value="set") as sv:
@@ -115,6 +122,7 @@ def test_handle_fast_intent_volume_set_regex(monkeypatch):
         sv.assert_called_once_with(level=75)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_volume_up_multi_lang(monkeypatch):
     """CB: volume up in multiple languages → set_volume(delta=10)."""
     with patch.object(tools, "set_volume", return_value="up") as sv:
@@ -124,6 +132,7 @@ def test_handle_fast_intent_volume_up_multi_lang(monkeypatch):
         assert sv.call_count >= 5
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_volume_down_multi_lang(monkeypatch):
     """CB: volume down in multiple languages → set_volume(delta=-10)."""
     with patch.object(tools, "set_volume", return_value="down") as sv:
@@ -137,6 +146,7 @@ def test_handle_fast_intent_volume_down_multi_lang(monkeypatch):
 # Brightness
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_brightness_regex(monkeypatch):
     """CB: brightness set regex match → set_brightness(N)."""
     with patch.object(tools, "set_brightness", return_value="bright") as sb:
@@ -145,6 +155,7 @@ def test_handle_fast_intent_brightness_regex(monkeypatch):
         sb.assert_called_once_with(60)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_brightness_te(monkeypatch):
     """CB: brightness in Telugu → set_brightness(N)."""
     with patch.object(tools, "set_brightness", return_value="bright") as sb:
@@ -157,6 +168,7 @@ def test_handle_fast_intent_brightness_te(monkeypatch):
 # Media control
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_media_play_pause_multi_lang(monkeypatch):
     """CB: play/pause in multiple languages → control_media('play-pause')."""
     with patch.object(tools, "control_media", return_value="media") as cm:
@@ -167,6 +179,7 @@ def test_handle_fast_intent_media_play_pause_multi_lang(monkeypatch):
         assert cm.call_count >= 8
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_media_next(monkeypatch):
     """CB: next track → control_media('next')."""
     with patch.object(tools, "control_media", return_value="next") as cm:
@@ -176,6 +189,7 @@ def test_handle_fast_intent_media_next(monkeypatch):
         assert cm.call_count >= 5
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_media_previous(monkeypatch):
     """CB: previous track → control_media('previous')."""
     with patch.object(tools, "control_media", return_value="prev") as cm:
@@ -185,6 +199,7 @@ def test_handle_fast_intent_media_previous(monkeypatch):
         assert cm.call_count >= 5
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_media_status(monkeypatch):
     """CB: media status → control_media('status')."""
     with patch.object(tools, "control_media", return_value="status") as cm:
@@ -197,6 +212,7 @@ def test_handle_fast_intent_media_status(monkeypatch):
 # Focus mode / continuity / calendar / privacy / hardware
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_focus_mode_regex(monkeypatch):
     """CB: focus mode regex match → os_events.set_focus_mode(mode)."""
     with patch.object(tools.os_events, "set_focus_mode", return_value="focus") as sfm:
@@ -205,6 +221,7 @@ def test_handle_fast_intent_focus_mode_regex(monkeypatch):
         sfm.assert_called_once_with("work")
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_focus_status(monkeypatch):
     """CB: focus status → os_events.set_focus_mode('status')."""
     with patch.object(tools.os_events, "set_focus_mode", return_value="focus_status") as sfm:
@@ -213,6 +230,7 @@ def test_handle_fast_intent_focus_status(monkeypatch):
         sfm.assert_called_once_with("status")
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_continuity_status(monkeypatch):
     """CB: continuity status → continuity.get_continuity_status()."""
     with patch.object(tools.continuity, "get_continuity_status", return_value="cont") as gs:
@@ -223,6 +241,7 @@ def test_handle_fast_intent_continuity_status(monkeypatch):
         assert gs.call_count >= 6
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_calendar_multi_lang(monkeypatch):
     """CB: calendar in multiple languages → calendar_bridge.get_upcoming_events(days=7)."""
     with patch.object(tools.calendar_bridge, "get_upcoming_events", return_value="cal") as gae:
@@ -234,6 +253,7 @@ def test_handle_fast_intent_calendar_multi_lang(monkeypatch):
         assert gae.call_count >= 8
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_privacy_audit(monkeypatch):
     """CB: privacy audit → continuity.audit_app_permissions()."""
     with patch.object(tools.continuity, "audit_app_permissions", return_value="priv") as aap:
@@ -244,6 +264,7 @@ def test_handle_fast_intent_privacy_audit(monkeypatch):
         assert aap.call_count >= 5
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_hardware_status(monkeypatch):
     """CB: hardware status → get_hardware_capabilities()."""
     with patch.object(tools, "get_hardware_capabilities", return_value="hw") as ghc:
@@ -257,6 +278,7 @@ def test_handle_fast_intent_hardware_status(monkeypatch):
 # Dark / light mode / lock screen / screenshot
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_dark_mode_gsettings_available(monkeypatch):
     """CB: dark mode with gsettings → command_runner + 'Switched desktop to Dark Mode.'"""
     monkeypatch.setattr(tools.shutil, "which", lambda cmd: "/usr/bin/gsettings" if cmd == "gsettings" else None)
@@ -272,6 +294,7 @@ def test_handle_fast_intent_dark_mode_gsettings_missing(monkeypatch):
     assert result is None
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_light_mode_gsettings_available(monkeypatch):
     """CB: light mode with gsettings → command_runner + 'Switched desktop to Light Mode.'"""
     monkeypatch.setattr(tools.shutil, "which", lambda cmd: "/usr/bin/gsettings" if cmd == "gsettings" else None)
@@ -287,6 +310,7 @@ def test_handle_fast_intent_light_mode_gsettings_missing(monkeypatch):
     assert result is None
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_lock_screen_loginctl_available(monkeypatch):
     """CB: lock screen with loginctl → command_runner + 'Locked screen.'"""
     monkeypatch.setattr(tools.shutil, "which", lambda cmd: "/usr/bin/loginctl" if cmd == "loginctl" else None)
@@ -302,6 +326,7 @@ def test_handle_fast_intent_lock_screen_loginctl_missing(monkeypatch):
     assert result is None
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_screenshot_gnome_available_success(monkeypatch):
     """CB: screenshot with gnome-screenshot + launch_detached success → 'Opened Screenshot tool.'"""
     monkeypatch.setattr(tools.shutil, "which", lambda cmd: "/usr/bin/gnome-screenshot" if cmd == "gnome-screenshot" else None)
@@ -329,6 +354,7 @@ def test_handle_fast_intent_screenshot_gnome_missing(monkeypatch):
 # Radio toggles
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_radio_wifi_on(monkeypatch):
     """CB: radio toggle wifi on → control_connectivity('wifi', 'on')."""
     with patch.object(tools, "control_connectivity", return_value="radio") as cc:
@@ -338,6 +364,7 @@ def test_handle_fast_intent_radio_wifi_on(monkeypatch):
         assert cc.call_count >= 2
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_radio_bluetooth_off(monkeypatch):
     """CB: radio toggle bluetooth off → control_connectivity('bluetooth', 'off')."""
     with patch.object(tools, "control_connectivity", return_value="radio") as cc:
@@ -347,6 +374,7 @@ def test_handle_fast_intent_radio_bluetooth_off(monkeypatch):
         assert cc.call_count >= 2
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_radio_wifi_status(monkeypatch):
     """CB: radio wifi status → control_connectivity('wifi', 'status')."""
     with patch.object(tools, "control_connectivity", return_value="radio") as cc:
@@ -359,6 +387,7 @@ def test_handle_fast_intent_radio_wifi_status(monkeypatch):
 # Site search
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_site_search_google(monkeypatch):
     """CB: site search google → open_url_safe with google template."""
     with patch.object(tools, "open_url_safe", return_value="opened") as ous:
@@ -367,6 +396,7 @@ def test_handle_fast_intent_site_search_google(monkeypatch):
         ous.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_site_search_youtube(monkeypatch):
     """CB: site search youtube → open_url_safe with youtube template."""
     with patch.object(tools, "open_url_safe", return_value="opened") as ous:
@@ -375,6 +405,7 @@ def test_handle_fast_intent_site_search_youtube(monkeypatch):
         ous.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_site_search_direct(monkeypatch):
     """CB: 'google <query>' direct form → open_url_safe."""
     with patch.object(tools, "open_url_safe", return_value="opened") as ous:
@@ -387,6 +418,7 @@ def test_handle_fast_intent_site_search_direct(monkeypatch):
 # Open + search multi-clause
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_open_search_multi_clause(monkeypatch):
     """CB: open site and search → open_url_safe with formatted URL."""
     with patch.object(tools, "open_url_safe", return_value="opened") as ous:
@@ -399,6 +431,7 @@ def test_handle_fast_intent_open_search_multi_clause(monkeypatch):
 # Play / watch / listen
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_play_with_platform(monkeypatch):
     """CB: play with platform name → _open_media_play with platform."""
     with patch.object(tools, "_clean_media_query", return_value=("dude songs", None)), \
@@ -409,6 +442,7 @@ def test_handle_fast_intent_play_with_platform(monkeypatch):
         omp.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_play_no_platform(monkeypatch):
     """CB: play without platform → uses preferred platform."""
     with patch.object(tools, "_clean_media_query", return_value=("dude songs", None)), \
@@ -419,6 +453,7 @@ def test_handle_fast_intent_play_no_platform(monkeypatch):
         omp.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_play_frustrated(monkeypatch):
     """CB: play with frustration word → _open_media_play(frustrated=True)."""
     with patch.object(tools, "_clean_media_query", return_value=("dude songs", None)), \
@@ -429,6 +464,7 @@ def test_handle_fast_intent_play_frustrated(monkeypatch):
         omp.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_play_resume_only(monkeypatch):
     """CB: play with resume-only word → _open_media_play(platform, '')."""
     with patch.object(tools, "_clean_media_query", return_value=("", None)), \
@@ -439,6 +475,7 @@ def test_handle_fast_intent_play_resume_only(monkeypatch):
         omp.assert_called_once_with("spotify", "", frustrated=False)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_play_regular_query(monkeypatch):
     """CB: play regular query → _open_media_play with login_requested=False."""
     with patch.object(tools, "_clean_media_query", return_value=("dude songs", None)), \
@@ -449,6 +486,7 @@ def test_handle_fast_intent_play_regular_query(monkeypatch):
         omp.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_play_with_login(monkeypatch):
     """CB: play with login request → _open_media_play(login_requested=True)."""
     with patch.object(tools, "_clean_media_query", return_value=("dude songs", None)), \
@@ -463,6 +501,7 @@ def test_handle_fast_intent_play_with_login(monkeypatch):
 # Login
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_login_known_site(monkeypatch):
     """CB: login to known site → open_url_safe with LOGIN_URLS."""
     with patch.object(tools, "open_url_safe", return_value="opened") as ous:
@@ -471,6 +510,7 @@ def test_handle_fast_intent_login_known_site(monkeypatch):
         ous.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_login_web_app(monkeypatch):
     """CB: login to web app → open_url_safe with WEB_APPS."""
     with patch.object(tools, "open_url_safe", return_value="opened") as ous:
@@ -479,6 +519,7 @@ def test_handle_fast_intent_login_web_app(monkeypatch):
         ous.assert_called_once()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_login_unknown_site(monkeypatch):
     """CB: login to unknown site → open_application fallback."""
     with patch.object(tools, "open_application", return_value="opened app") as oa:
@@ -491,6 +532,7 @@ def test_handle_fast_intent_login_unknown_site(monkeypatch):
 # Open app / website
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_open_application(monkeypatch):
     """CB: open application → open_application(target)."""
     with patch.object(tools, "open_application", return_value="opened app") as oa:
@@ -499,6 +541,7 @@ def test_handle_fast_intent_open_application(monkeypatch):
         oa.assert_called_once_with("calculator")
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_handle_fast_intent_open_website(monkeypatch):
     """CB: open website URL → open_application(target)."""
     with patch.object(tools, "open_application", return_value="opened web") as oa:

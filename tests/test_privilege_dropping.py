@@ -88,6 +88,7 @@ def test_path_no_shadowing():
         ["bash", "-c", f'source "{REPO_ROOT}/core/common.sh"; echo $PATH'],
         capture_output=True,
         text=True,
+        env={"HOME": os.environ.get("HOME", "/tmp"), "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
     )
     path = result.stdout.strip()
 

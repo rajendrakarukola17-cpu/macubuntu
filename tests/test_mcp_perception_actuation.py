@@ -271,7 +271,8 @@ def test_mcp_domain_tier2_parity_and_autonomy_approval_dbus_receipt(tmp_path: Pa
             mcp_action_cb=lambda srv, tool: mcp_signals.append((srv, tool)),
             tracer=telemetry.CelinaTracer(store=store),
         )
-        eng_deny.step()
+        with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+            eng_deny.step()
         row_deny = graph.get_task("t-deny")
         assert row_deny["status"] == "blocked"
         assert row_deny["last_error"] == "mcp_approval_denied"
@@ -311,7 +312,8 @@ def test_mcp_domain_tier2_parity_and_autonomy_approval_dbus_receipt(tmp_path: Pa
             mcp_action_cb=lambda srv, tool: mcp_signals.append((srv, tool)),
             tracer=telemetry.CelinaTracer(store=store),
         )
-        eng_ok.step()
+        with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+            eng_ok.step()
         row_ok = graph.get_task("t-ok")
         assert row_ok["status"] == "done"
         assert mcp_signals == [("shadow-vision", "vision_analyze")]

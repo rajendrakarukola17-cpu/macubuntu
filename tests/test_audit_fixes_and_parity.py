@@ -406,6 +406,11 @@ def test_llm_pipeline_tool_routing_qwen3_think_coercion_and_privacy():
     ):
         assert pim in config.LOCAL_SENSITIVE_TOOLS
 
+
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disabled without a broker")
+def test_llm_pipeline_fast_intent_reflexes_legacy():
+    from celina_pkg import tools
+
     # 6. Expanded Gear 0 0ms Siri reflexes execute without waking Ollama
     assert tools.handle_fast_intent("focus status") is not None
     assert "Cross-Platform Continuity Hub" in (tools.handle_fast_intent("continuity status") or "")

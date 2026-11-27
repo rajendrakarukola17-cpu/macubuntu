@@ -643,6 +643,7 @@ def test_copy_and_write_root_file_preserve_0755_0644_under_umask_077(tmp_path: P
     assert "chmod 644 /etc/systemd/system/ollama.service" in celina_inst
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_everyday_web_open_curated_install_and_wayland_edge_glow(monkeypatch):
     """Regression test for everyday usability fixes: web apps/URLs, search, approval-gated
     Flathub installs, native Wayland Edge Lighting D-Bus bridge, and auto-reconnecting top bar."""
@@ -764,6 +765,7 @@ def test_everyday_web_open_curated_install_and_wayland_edge_glow(monkeypatch):
         assert list(Path(td).iterdir()) == []
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: everyday_agents dispatch fails closed without a broker")
 def test_six_everyday_agents_and_multi_agent_trainer(tmp_path: Path, monkeypatch):
     """Verifies all 6 Everyday Agents, the 70-case Multi-Agent Trainer Bot (100% pass),
     browser-OCR perception, 3-stage full-home file locator, zero-LLM Keychain Auto-Login,
@@ -1178,6 +1180,7 @@ def test_update10_atspi_sigabrt_shield_and_zero_raw_get_desktop(monkeypatch):
     automation._reset_atspi_probe_cache()
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: everyday_agents trainer paths fail closed without a broker")
 def test_update10_everyday_trainer_spawns_zero_autoplay_threads(monkeypatch):
     """
     Update 10 regression: celina-train dry-run evaluation MUST NOT spawn real
@@ -1207,6 +1210,7 @@ def test_update10_everyday_trainer_spawns_zero_autoplay_threads(monkeypatch):
     assert not any("autoplay-kick" in name for name in spawned)
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: LearningAgent everyday dispatch fails closed without a broker")
 def test_update11_dedup_wiring_remember_tier_bg_api_and_cleanup(tmp_path: Path, monkeypatch):
     """
     Update 11 safe deduplication & wiring regression:

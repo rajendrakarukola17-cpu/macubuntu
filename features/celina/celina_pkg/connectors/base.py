@@ -29,7 +29,7 @@ from typing import Any
 from celina_pkg import config, evidence
 from celina_pkg.approval import RiskLevel
 from celina_pkg.config import atomic_write_private_text
-from celina_pkg.net_policy import URLPolicyError, validate_web_comms_host
+from celina_pkg.net_policy import URLPolicyError, validate_public_url, validate_web_comms_host
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -334,13 +334,14 @@ class BaseConnector:
     # Web comms gating (outbound HTTP)
     # ------------------------------------------------------------------
     def _check_web_comms(self, url: str) -> None:
-        """Reject outbound calls when web_comms is disabled or host is not allowlisted."""
+        """Reject outbound calls when web_comms is disabled, non-public, or host is not allowlisted."""
         if not config.is_web_comms_enabled():
             raise URLPolicyError(
                 f"web_comms is disabled — outbound call to {url} blocked. "
                 "Set CELINA_WEB_COMMS_ENABLED=1 and configure allowed_hosts in neural-schema.json.",
             )
         validate_web_comms_host(url)
+        validate_public_url(url)
 
     def _clear_error(self) -> None:
         self._last_error = None

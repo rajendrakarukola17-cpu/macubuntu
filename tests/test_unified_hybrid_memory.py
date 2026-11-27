@@ -170,7 +170,8 @@ def test_memweave_router_and_autonomy_graph_walk_preplanning(tmp_path: Path):
                 observe_only=False,
                 memory=r._memory,
             )
-            eng.step()
+            with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+                eng.step()
 
             # Pre-planning surfaced prior failed attempt before routing!
             assert len(captured_contexts) == 1

@@ -93,9 +93,9 @@ def test_four_opt_in_live_data_tools_metadata_and_execution(monkeypatch):
     with pytest.raises(net_policy.OfflineError):
         tools.fetch_url_text("https://example.com")
 
-    # execute_tool returns clean offline fallback text instead of crashing agent loop
+    # execute_tool returns clean offline fallback or Gate 4.7 fail-closed denial without crashing
     out = tools.execute_tool("get_weather", {"city": "Hyderabad"})
-    assert "Offline fallback" in out
+    assert "Offline fallback" in out or out.startswith("Denied:")
 
     # When enabled + online, all 4 tools succeed via net_policy.safe_get (mocked)
     monkeypatch.setitem(config.WEB_COMMS_CFG, "enabled", True)

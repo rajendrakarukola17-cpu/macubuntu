@@ -185,6 +185,7 @@ def test_os_capability_manifest_shadow_ai_invariants_and_bwrap_builder(repo_root
     assert "RestrictSUIDSGID=true" in unit_txt
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: mutating execute_tool requires a trusted approval broker")
 def test_hash_chained_agent_evidence_ledger_tamper_detection_and_export(tmp_path: Path, monkeypatch):
     fake_home = tmp_path / "ev_home"
     fake_home.mkdir()

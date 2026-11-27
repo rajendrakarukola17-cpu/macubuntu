@@ -22,6 +22,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "features" / "celina"))
 
+import pytest
+
 from celina_pkg import tools  # noqa: E402
 
 
@@ -29,6 +31,7 @@ from celina_pkg import tools  # noqa: E402
 # Capability failure with is_t2=True → evidence recording path
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: Tier-2 execute_tool fails closed without a trusted broker")
 def test_execute_tool_capability_failure_t2(monkeypatch):
     """CB: capability check fails for T2 tool → evidence recorded → cap_err returned."""
     monkeypatch.setattr(tools.config, "TIER1_AUTO_TOOLS", set())
@@ -55,6 +58,7 @@ def test_execute_tool_capability_failure_t2(monkeypatch):
 # _APPROVAL_TOOL_MAP path
 # ---------------------------------------------------------------------------
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: Tier-2 execute_tool fails closed without a trusted broker")
 def test_execute_tool_approval_tool_map_path(monkeypatch):
     """CB: tool in _APPROVAL_TOOL_MAP → _coerce_and_filter → validate → call."""
     monkeypatch.setattr(tools.config, "TIER1_AUTO_TOOLS", set())

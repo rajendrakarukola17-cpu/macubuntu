@@ -19,6 +19,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CELINA_ROOT = REPO_ROOT / "features" / "celina"
@@ -158,7 +159,8 @@ def test_autonomy_engine_observe_only_approval_checkpoint_and_evidence_tamper(tm
         # 2. observe_only=False with headless ApprovalEngine() (no callback) -> fail-closed 'blocked'
         root_blk = TreePlanner(None, graph).plan("update notes blocked", available_tools=["write_file"])
         eng_blk = AutonomyEngine(graph, executor, _FakeRouter(write_decision), ApprovalEngine(None), observe_only=False)
-        assert eng_blk.run_until_idle() == 1
+        with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+            assert eng_blk.run_until_idle() == 1
         assert target_file.read_text(encoding="utf-8") == "original content"
         blk_leaf = graph.get_children(root_blk)[0]
         assert blk_leaf["status"] == "blocked"
@@ -175,7 +177,8 @@ def test_autonomy_engine_observe_only_approval_checkpoint_and_evidence_tamper(tm
             observe_only=False,
             state_cb=lambda tid, st: state_events.append((tid, st)),
         )
-        assert eng_ok.run_until_idle() == 1
+        with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+            assert eng_ok.run_until_idle() == 1
         assert target_file.read_text(encoding="utf-8") == "mutated by autonomy"
         assert any(st == "done" for _tid, st in state_events)
 
@@ -237,10 +240,11 @@ def test_legato_gui_executor_and_retry_exhaustion(tmp_path: Path):
                 }
 
         eng = AutonomyEngine(graph, exec_gui, _BrokenRouter(), ApprovalEngine(lambda _t, _d: True), observe_only=False)
-        assert eng.step() == "t-fail"
-        assert graph.get_task("t-fail")["status"] == "pending"  # 1/2 -> retried
-        assert eng.step() == "t-fail"
-        assert graph.get_task("t-fail")["status"] == "failed"   # 2/2 -> exhausted
+        with mock.patch("celina_pkg.autonomy.engine._trusted_autonomy_dispatch_available", return_value=True):
+            assert eng.step() == "t-fail"
+            assert graph.get_task("t-fail")["status"] == "pending"  # 1/2 -> retried
+            assert eng.step() == "t-fail"
+            assert graph.get_task("t-fail")["status"] == "failed"   # 2/2 -> exhausted
     finally:
         graph.close()
 

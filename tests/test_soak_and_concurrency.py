@@ -146,7 +146,7 @@ def test_per_tool_circuit_breaker_opens_recovers_and_ignores_user_denials(monkey
     monkeypatch.setitem(tools._AUTO_TOOL_MAP, "cache_status", denied_tool)
     try:
         for _ in range(5):
-            assert tools.execute_tool("cache_status", "").startswith("Denied:")
+            assert tools.execute_tool("cache_status", {}).startswith("Denied:")
         assert calls["n"] == 5
         assert tools.TOOL_CIRCUIT_BREAKER.check_open("cache_status") is None
     finally:

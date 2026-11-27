@@ -178,17 +178,18 @@ def test_open_application_searches_local_desktop_metadata(home: Path, monkeypatc
     apps = home / ".local/share/applications"
     apps.mkdir(parents=True)
     (apps / "org.example.editor.desktop").write_text("[Desktop Entry]\nName=Editor Pro\n", encoding="utf-8")
-    (apps / "org.example.diff.desktop").write_text("[Desktop Entry]\nGenericName=Document Viewer\n", encoding="utf-8")
+    (apps / "org.example.diff.desktop").write_text("[Desktop Entry]\nGenericName=Fixture Spec Viewer\n", encoding="utf-8")
     monkeypatch.setattr(tools.shutil, "which", lambda name: "/usr/bin/gtk-launch" if name == "gtk-launch" else None)
     launched: list[list[str]] = []
     monkeypatch.setattr(tools, "launch_detached", lambda cmd: launched.append(cmd) or True)
     assert "Launched" in tools.open_application("editor pro")
     assert launched[-1][-1] == "org.example.editor.desktop"
-    assert "Launched" in tools.open_application("document viewer")
+    assert "Launched" in tools.open_application("fixture spec viewer")
     assert launched[-1][-1] == "org.example.diff.desktop"
     assert "not found" in tools.open_application("not-real-app-at-all")
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_intent_web_links_and_safe_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Inspect URLs supplied to a fake launcher, with zero browser or network calls."""
     opened: list[str] = []
@@ -291,6 +292,7 @@ def test_media_actions_with_fake_adapters(monkeypatch: pytest.MonkeyPatch) -> No
     assert "Opened" in tools._open_media_play("unknown", "melody from artist")
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: handle_fast_intent disables direct actuation without a broker")
 def test_fast_intents_do_not_forward_file_actions_to_browser(monkeypatch: pytest.MonkeyPatch) -> None:
     """Adapter fakes record intent dispatch; they neither launch apps nor touch the network."""
     calls: list[str] = []

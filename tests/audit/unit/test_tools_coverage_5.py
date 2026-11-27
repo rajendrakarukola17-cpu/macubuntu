@@ -231,6 +231,7 @@ def test_handle_fast_install_intent_install_via_apt(monkeypatch):
     assert result is not None
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live fast-install fails closed without a broker")
 def test_handle_fast_install_intent_not_found(monkeypatch):
     """CB: handle_fast_install_intent reports not found."""
     monkeypatch.setattr(tools, "_search_flathub_app", lambda q: None)

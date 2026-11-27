@@ -83,14 +83,6 @@ def test_unv1_net_policy_blocks_live_loopback_metadata_and_dns_rebinding(
     assert _CountingHandler.hits == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "UNV-1 finding: BaseConnector._http_request only calls validate_web_comms_host() "
-        "which is a no-op when allowed_hosts is empty and skips validate_public_url(); "
-        "connectors/base.py is hash-locked in selfimprove/protected_hashes.json"
-    ),
-)
 def test_unv1_connector_http_request_blocks_live_loopback_and_non_https(
     staging_server: int, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

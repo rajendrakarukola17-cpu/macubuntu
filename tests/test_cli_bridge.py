@@ -72,6 +72,7 @@ def test_forbidden_flags_denylist():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: typed CLI execution fails closed without a trusted approval broker")
 def test_read_only_subcommand_succeeds_without_approval():
     """CB4: run_typed_cli git status works with approval_cb=None."""
     from celina_pkg.cli_bridge import run_typed_cli
@@ -124,13 +125,14 @@ def test_cli_prefix_stripped():
     """CB8: cli_ prefix is stripped from tool name."""
     from celina_pkg.cli_bridge import run_typed_cli
 
-    with mock.patch("shutil.which", return_value="/usr/bin/git"):
-        with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0, stdout="main", stderr="")
-            run_typed_cli("cli_git", "branch", approval_cb=None)
-            call_args = mock_run.call_args
-            argv = call_args[0][0]
-            assert argv[0] == "git"
+    with mock.patch("celina_pkg.cli_bridge._trusted_cli_dispatch_available", return_value=True):
+        with mock.patch("shutil.which", return_value="/usr/bin/git"):
+            with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
+                mock_run.return_value = mock.Mock(returncode=0, stdout="main", stderr="")
+                run_typed_cli("cli_git", "branch", approval_cb=None)
+                call_args = mock_run.call_args
+                argv = call_args[0][0]
+                assert argv[0] == "git"
 
 
 def test_forbidden_flag_blocked():
@@ -153,35 +155,38 @@ def test_tool_not_installed():
     """CB11: Tool not on PATH returns error."""
     from celina_pkg.cli_bridge import run_typed_cli
 
-    with mock.patch("shutil.which", return_value=None):
-        result = run_typed_cli("git", "status", approval_cb=None)
-        assert "not installed" in result
+    with mock.patch("celina_pkg.cli_bridge._trusted_cli_dispatch_available", return_value=True):
+        with mock.patch("shutil.which", return_value=None):
+            result = run_typed_cli("git", "status", approval_cb=None)
+            assert "not installed" in result
 
 
 def test_systemctl_forces_user_flag():
     """CB12: systemctl always appends --user."""
     from celina_pkg.cli_bridge import run_typed_cli
 
-    with mock.patch("shutil.which", return_value="/usr/bin/systemctl"):
-        with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
-            mock_run.return_value = mock.Mock(returncode=0, stdout="active", stderr="")
-            run_typed_cli("systemctl", "status", ["celina"], approval_cb=None)
-            call_args = mock_run.call_args
-            argv = call_args[0][0]
-            assert "--user" in argv
+    with mock.patch("celina_pkg.cli_bridge._trusted_cli_dispatch_available", return_value=True):
+        with mock.patch("shutil.which", return_value="/usr/bin/systemctl"):
+            with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
+                mock_run.return_value = mock.Mock(returncode=0, stdout="active", stderr="")
+                run_typed_cli("systemctl", "status", ["celina"], approval_cb=None)
+                call_args = mock_run.call_args
+                argv = call_args[0][0]
+                assert "--user" in argv
 
 
 def test_output_truncation():
     """CB13: Long output is truncated at 4000 chars."""
     from celina_pkg.cli_bridge import run_typed_cli
 
-    with mock.patch("shutil.which", return_value="/usr/bin/git"):
-        with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
-            long_out = "x" * 5000
-            mock_run.return_value = mock.Mock(returncode=0, stdout=long_out, stderr="")
-            result = run_typed_cli("git", "log", approval_cb=None)
-            assert "...[truncated]" in result
-            assert len(result) < 5200
+    with mock.patch("celina_pkg.cli_bridge._trusted_cli_dispatch_available", return_value=True):
+        with mock.patch("shutil.which", return_value="/usr/bin/git"):
+            with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
+                long_out = "x" * 5000
+                mock_run.return_value = mock.Mock(returncode=0, stdout=long_out, stderr="")
+                result = run_typed_cli("git", "log", approval_cb=None)
+                assert "...[truncated]" in result
+                assert len(result) < 5200
 
 
 # ---------------------------------------------------------------------------
@@ -209,13 +214,14 @@ def test_output_not_truncated():
     """CB17: Output <= 4000 chars is not truncated (False branch)."""
     from celina_pkg.cli_bridge import run_typed_cli
 
-    with mock.patch("shutil.which", return_value="/usr/bin/git"):
-        with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
-            short_out = "x" * 100
-            mock_run.return_value = mock.Mock(returncode=0, stdout=short_out, stderr="")
-            result = run_typed_cli("git", "log", approval_cb=None)
-            assert "...[truncated]" not in result
-            assert short_out in result
+    with mock.patch("celina_pkg.cli_bridge._trusted_cli_dispatch_available", return_value=True):
+        with mock.patch("shutil.which", return_value="/usr/bin/git"):
+            with mock.patch("celina_pkg.cli_bridge.command_runner.run_command") as mock_run:
+                short_out = "x" * 100
+                mock_run.return_value = mock.Mock(returncode=0, stdout=short_out, stderr="")
+                result = run_typed_cli("git", "log", approval_cb=None)
+                assert "...[truncated]" not in result
+                assert short_out in result
 
 
 def test_empty_tool_name_blocked():
