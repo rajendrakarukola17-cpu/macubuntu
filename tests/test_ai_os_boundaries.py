@@ -4,7 +4,7 @@ Covers:
   1. UEFI Secure Boot detection, Stage 00 warning & ./tools/enroll-mok.sh dry-run
   2. LUMOS-style Semantic Blueprint layer (stable IDs, affordances, window-switch cache
      invalidation, OCR bypass for native apps, tagged UNTRUSTED_OCR_FALLBACK for canvas)
-  3. OS-level 88-tool Capability Manifest (Shadow-AI anti-bypass invariants, Bubblewrap
+  3. OS-level 106-tool Capability Manifest (Shadow-AI anti-bypass invariants, Bubblewrap
      kernel namespace isolation flags, celina-eventd kernel seccomp AF_UNIX lockdown)
   4. Tamper-evident SHA-256 hash-chained Agent Evidence Ledger (Tier-2 recording, /why
      capture, chain verification, 1-byte tamper rejection, verifiable export)

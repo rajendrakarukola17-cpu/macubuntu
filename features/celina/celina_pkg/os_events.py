@@ -333,7 +333,9 @@ class AutoAppNapCoordinator:
     """Live occlusion tracker connecting AutoAppNapPolicy + CgroupFreezer safely:
     - Tracks how long each non-active user GUI app has been out of focus
     - Auto-thaws immediately when an app regains foreground focus OR starts PipeWire audio
-    - Guarantees thaw_all() on shutdown / SIGTERM so no app is ever left frozen!
+    - Attempts thaw_all() on shutdown / SIGTERM; failed thaws remain tracked for retry
+      while this coordinator is alive. A persistent failure or process exit can still
+      leave a cgroup frozen, so this is not a guarantee of recovery.
     """
 
     def __init__(
@@ -355,7 +357,8 @@ class AutoAppNapCoordinator:
         for pid, (_name, cg) in list(self._frozen_cgroups.items()):
             if self.freezer.set_frozen(cg, False):
                 thawed += 1
-            self._frozen_cgroups.pop(pid, None)
+                self._frozen_cgroups.pop(pid, None)
+                self._occluded_since.pop(pid, None)
         return thawed
 
     def step(
@@ -374,9 +377,9 @@ class AutoAppNapCoordinator:
             nlow = name.lower()
             has_audio = any(nlow in a.lower() or a.lower() in nlow for a in active_audio_apps if a)
             if (active_low and nlow == active_low) or has_audio:
-                self.freezer.set_frozen(cg, False)
-                self._frozen_cgroups.pop(pid, None)
-                self._occluded_since.pop(pid, None)
+                if self.freezer.set_frozen(cg, False):
+                    self._frozen_cgroups.pop(pid, None)
+                    self._occluded_since.pop(pid, None)
 
         # 2. Evaluate background candidates
         for pid, name in (candidate_pids or {}).items():

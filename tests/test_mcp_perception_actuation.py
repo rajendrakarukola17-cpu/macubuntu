@@ -14,7 +14,7 @@ Verifies:
   3. Live `MCPLoader` stdio JSON-RPC (`initialize` / `tools/list` / `tools/call`) AND
      Streamable HTTP (`ghostdesk`) execution + capability routing.
   4. Domain `"mcp_perception_actuation"` (`computer_click`, `computer_type`, `vision_ocr`,
-     `vision_analyze`, `ghostdesk_click`): ALL 5 are Tier-2 by definition & pass 7-way 99-tool parity.
+     `vision_analyze`, `ghostdesk_click`): ALL 5 are Tier-2 by definition & pass 7-way 106-tool parity.
   5. `AutonomyEngine` Tier-2 MCP approval gate (`mcp_approval_denied` on deny, `MCPActionStarted`
      signal + durable `/why` receipt with `server`, `tool`, `arguments_hash`, `mcp_transport` on allow).
   6. D-Bus `MCPActionStarted` introspection XML & GNOME Dynamic Island JS subscription + `TurnTrace` `/why` receipt.

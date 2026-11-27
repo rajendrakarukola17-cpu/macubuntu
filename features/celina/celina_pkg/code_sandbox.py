@@ -441,7 +441,7 @@ def code_sandbox(
         elif bwrap_ok:
             with tempfile.TemporaryDirectory(prefix="celina_codesandbox_bash_") as bash_work:
                 cmd = _build_bwrap_bash_cmd(code, systemd_prefix=systemd_prefix, work_dir=Path(bash_work))
-            res = command_runner.run_command(cmd, timeout=float(sec))
+                res = command_runner.run_command(cmd, timeout=float(sec))
         elif _ALLOW_UNSANDBOXED:
             clean_env = {
                 "PATH": "/usr/local/bin:/usr/bin:/bin",

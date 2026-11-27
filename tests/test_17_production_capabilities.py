@@ -11,7 +11,7 @@ Covers:
   #7  Knowledge Graph as a Priority Index (10 typed edge types + 9-stage retrieval pipeline extending MemoryDB)
   #8  Demand-Constructed Context (purpose-built per-turn payload bounded by token budget)
   #9  Unified Capability Bus across D-Bus, Unix Socket (0600 + SO_PEERCRED), and MCP
-  #10 MCP-Native System Exposure (all 94 tools via JSON-RPC 2.0, deferred loading & HITL approval)
+  #10 MCP-Native System Exposure (all 106 tools via JSON-RPC 2.0, deferred loading & HITL approval)
   #11 Kernel-Enforced Process Behaviour Policy (Landlock LSM syscalls, policy SHA-256 hash, sensitive path guard)
   #12 OpenTelemetry-Compatible Distributed Tracing (W3C TraceContext spans across autonomy loop)
   #13 Intent-Based Audit Trail (root_goal -> task -> tool linkage + prompt-injection security events)
@@ -330,9 +330,9 @@ def test_cap09_unified_capability_bus_dbus_socket_and_mcp(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# #10 MCP-Native System Exposure (all 94 tools, deferred loading, HITL)
+# #10 MCP-Native System Exposure (all 106 tools, deferred loading, HITL)
 # ---------------------------------------------------------------------------
-def test_cap10_mcp_server_exposes_all_94_tools_with_deferred_loading_and_hitl(tmp_path: Path):
+def test_cap10_mcp_server_exposes_all_106_tools_with_deferred_loading_and_hitl(tmp_path: Path):
     store = telemetry.DurableTraceStore(db_path=tmp_path / "traces.db")
     bus = capability_bus.UnifiedCapabilityBus(
         tracer=telemetry.CelinaTracer(store=store),

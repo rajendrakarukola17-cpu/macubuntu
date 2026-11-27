@@ -359,7 +359,7 @@ def test_pre_upgrade_end_to_end_wiring_connections(tmp_path):
 def test_llm_pipeline_tool_routing_qwen3_think_coercion_and_privacy():
     from celina_pkg import config, router, tools
 
-    # 1. All 78 tools partitioned across 8 domains & real macOS/Siri prompts resolve to exact target tools
+    # 1. All 106 tools partitioned across 11 domains & real macOS/Siri prompts resolve to exact target tools
     for prompt, expected in [
         ("check my upcoming calendar meetings tomorrow", "get_upcoming_events"),
         ("schedule a calendar meeting with Raj at 3pm", "create_calendar_event"),

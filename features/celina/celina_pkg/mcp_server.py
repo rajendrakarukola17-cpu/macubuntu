@@ -1,6 +1,6 @@
 """Celina AI — Capability #10: MCP-Native System Exposure (`celina-mcp-server`)
 
-Wraps ALL Celina Linux OS tools (94 tools across 8 domains) as a standards-compliant
+Wraps ALL Celina Linux OS tools (106 tools across 11 domains) as a standards-compliant
 JSON-RPC 2.0 Model Context Protocol (MCP) Server over stdio (`python3 -m celina_pkg.mcp_server`)
 with:
   - Deferred domain/lazy tool loading (`domain` filter or `summary_only` in `tools/list`)
