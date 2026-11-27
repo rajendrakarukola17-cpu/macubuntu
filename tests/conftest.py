@@ -27,6 +27,14 @@ os.environ["HOME"] = str(_TEST_HOME)
 os.environ["XDG_CONFIG_HOME"] = str(_TEST_XDG_CONFIG)
 os.environ["XDG_DATA_HOME"] = str(_TEST_XDG_DATA)
 
+# When the suite runs as root (CI containers, sudo), tests that spawn fresh
+# interpreter processes must inherit an isolated target home too.  config.py
+# resolves TARGET_HOME -> SUDO_USER -> Path.home(); pin TARGET_HOME to the
+# temp home and clear SUDO_USER so subprocesses never write to /root.
+if os.geteuid() == 0:
+    os.environ["TARGET_HOME"] = str(_TEST_HOME)
+    os.environ.pop("SUDO_USER", None)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CELINA_ROOT = REPO_ROOT / "features" / "celina"
 if str(CELINA_ROOT) not in sys.path:

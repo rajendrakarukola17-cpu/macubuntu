@@ -13,7 +13,15 @@
 set -Eeuo pipefail
 umask 077
 
-if [[ $EUID -eq 0 ]]; then
+# Root guard: never touch the system as root. Dry-run mode is exempt because
+# it performs zero side effects (used by CI / test harnesses in containers).
+_readonly_mode=0
+for _arg in "$@"; do
+    case "$_arg" in
+        --dry-run|-h|--help) _readonly_mode=1; break ;;
+    esac
+done
+if [[ $EUID -eq 0 && $_readonly_mode -ne 1 ]]; then
     echo "❌ Do NOT run as root. Execute as your normal desktop user." >&2
     exit 1
 fi

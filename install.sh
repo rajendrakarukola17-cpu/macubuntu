@@ -23,7 +23,17 @@ set -Eeuo pipefail
 umask 077
 trap 'echo "🚨 Critical error at line $LINENO (exit $?)" >&2' ERR
 
-if [[ $EUID -eq 0 ]]; then
+# Root guard: never touch the system as root. Read-only / zero-side-effect
+# modes (--dry-run, --list, --help, -h) are exempt so CI / test harnesses
+# running inside containers as root can exercise argument validation and
+# introspection.  These flags are parsed later, so pre-scan argv here.
+_readonly_mode=0
+for _arg in "$@"; do
+    case "$_arg" in
+        --dry-run|--list|-h|--help) _readonly_mode=1; break ;;
+    esac
+done
+if [[ $EUID -eq 0 && $_readonly_mode -ne 1 ]]; then
     echo "❌ Do NOT run as root. Execute as your normal desktop user." >&2
     exit 1
 fi
