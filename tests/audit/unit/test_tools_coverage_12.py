@@ -383,12 +383,14 @@ def test_gcts_gear_fast_core_fast_tools(monkeypatch):
     }
     monkeypatch.setattr(config_mod, "TOOL_DOMAINS", domains)
     with patch.object(tools, "get_enabled_tool_schemas", return_value=ALL_SCHEMAS):
-        result = tools.get_contextual_tool_schemas("hello", gear="fast")
-        # No non-core domain matched; fast gear uses core_fast_tools only
-        assert "os_hardware(fast)" in result[1]
-        names = [t["function"]["name"] for t in result[0]]
-        assert "read_file" in names
-        assert "write_file" not in names
+        with patch.object(tools, "_lexical_rank_tools", return_value=[]):
+            with patch.object(tools, "_semantic_rank_tools", return_value=[]):
+                result = tools.get_contextual_tool_schemas("hello", gear="fast")
+                # No non-core domain matched; fast gear uses core_fast_tools only
+                assert "os_hardware(fast)" in result[1]
+                names = [t["function"]["name"] for t in result[0]]
+                assert "read_file" in names
+                assert "write_file" not in names
 
 
 def test_gcts_gear_fast_with_matched_non_core(monkeypatch):
@@ -412,11 +414,13 @@ def test_gcts_gear_fast_with_matched_non_core(monkeypatch):
     }
     monkeypatch.setattr(config_mod, "TOOL_DOMAINS", domains)
     with patch.object(tools, "get_enabled_tool_schemas", return_value=ALL_SCHEMAS):
-        result = tools.get_contextual_tool_schemas("write file", gear="fast")
-        # matched_non_core=True → normal path, includes all os_hardware tools
-        assert "os_hardware" in result[1]
-        names = [t["function"]["name"] for t in result[0]]
-        assert "get_system_stats" in names
+        with patch.object(tools, "_lexical_rank_tools", return_value=[]):
+            with patch.object(tools, "_semantic_rank_tools", return_value=[]):
+                result = tools.get_contextual_tool_schemas("write file", gear="fast")
+                # matched_non_core=True → normal path, includes all os_hardware tools
+                assert "os_hardware" in result[1]
+                names = [t["function"]["name"] for t in result[0]]
+                assert "get_system_stats" in names
 
 
 def test_gcts_gear_fast_no_core_fast_tools(monkeypatch):
