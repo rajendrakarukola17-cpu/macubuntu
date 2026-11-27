@@ -9,9 +9,8 @@ After=network-online.target
 # celina-web-watch.timer.d/override.conf if desired.
 OnBootSec=5min
 OnUnitActiveSec=2h
-# Only run on AC power (laptop-friendly): skip when on battery.
-# ConditionACPower=true requires systemd 255+; graceful if unsupported.
-ConditionACPower=true
+# AC-power gating lives in celina-web-watch@.service [Unit] (ConditionACPower),
+# where it is evaluated when the service is activated — not valid in [Timer].
 Persistent=true
 # If the machine was off at the scheduled time, run soon after boot.
 RandomizedDelaySec=5min

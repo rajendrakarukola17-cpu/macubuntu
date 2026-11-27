@@ -240,3 +240,43 @@ if __name__ == "__main__":
     test_bwrap_python_cmd_no_ro_bind_root()
     test_bwrap_bash_cmd_mounts_workdir()
     print("All code_sandbox tests passed!")
+
+
+def test_bash_bwrap_workdir_exists_when_run_command_executes():
+    """Regression: the bwrap bash workdir must still exist when run_command runs.
+
+    The workdir TemporaryDirectory must not be cleaned up before execution —
+    the --bind source path is embedded in cmd at build time, so a dir deleted
+    between build and exec makes bwrap fail on a missing mount source.
+    """
+    observed: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        # Locate the workdir bind: "--bind" <src> "/tmp/work"
+        work_src = None
+        for i, arg in enumerate(cmd):
+            if arg == "--bind" and i + 2 < len(cmd) and cmd[i + 2] == "/tmp/work":
+                work_src = Path(cmd[i + 1])
+                break
+        assert work_src is not None, f"no /tmp/work bind found in cmd: {cmd}"
+        observed["work_src"] = work_src
+        observed["work_exists_at_exec"] = work_src.exists()
+        return MagicMock(returncode=0, stdout="ok\n", stderr="", timed_out=False)
+
+    def fake_which(name, *args, **kwargs):
+        if name == "bwrap":
+            return "/usr/bin/bwrap"
+        if name == "bash":
+            return "/usr/bin/bash"
+        return None
+
+    with patch.object(code_sandbox.shutil, "which", side_effect=fake_which), \
+         patch.object(code_sandbox.command_runner, "run_command", side_effect=fake_run):
+        result = code_sandbox.code_sandbox(
+            "echo ok", language="bash", timeout=5, approval_cb=lambda *a, **k: True,
+        )
+
+    assert observed["work_exists_at_exec"] is True, (
+        f"workdir {observed['work_src']} was already deleted when run_command executed"
+    )
+    assert "Verified OK (exit=0)" in result
