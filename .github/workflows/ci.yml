@@ -22,7 +22,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y shellcheck libglib2.0-bin dpkg-dev
-          python3 -m pip install --upgrade pip pytest pytest-cov pytest-asyncio jsonschema defusedxml requests PyYAML numpy httpx filelock
+          python3 -m pip install --upgrade pip pytest pytest-cov pytest-asyncio jsonschema defusedxml requests PyYAML numpy httpx filelock types-defusedxml types-requests types-PyYAML
           python3 -m pip install ruff mypy bandit pip-audit detect-secrets
 
       - name: "Security: ruff lint check (fail on violations)"
