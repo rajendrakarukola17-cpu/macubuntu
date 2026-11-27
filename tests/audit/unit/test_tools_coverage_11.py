@@ -196,18 +196,21 @@ def test_edit_file_stat_oserror(tmp_path, monkeypatch):
     target = tmp_path / "stat_err.txt"
     target.write_text("content")
 
-    # Patch os.stat at the tools module level - fail only on the stat().st_size call
-    # (second call), not on is_file() (first call)
-    orig_os_stat = tools_mod.os.stat
-    call_count = [0]
+    orig_is_file = tools_mod.Path.is_file
+    orig_stat = tools_mod.Path.stat
 
-    def fake_os_stat(path, *a, **k):
-        call_count[0] += 1
-        if call_count[0] == 2 and str(path).endswith("stat_err.txt"):
+    def fake_is_file(self):
+        if self == target:
+            return True
+        return orig_is_file(self)
+
+    def fake_stat(self, *a, **k):
+        if self == target:
             raise OSError("Permission denied")
-        return orig_os_stat(path, *a, **k)
+        return orig_stat(self, *a, **k)
 
-    monkeypatch.setattr(tools_mod.os, "stat", fake_os_stat)
+    monkeypatch.setattr(tools_mod.Path, "is_file", fake_is_file)
+    monkeypatch.setattr(tools_mod.Path, "stat", fake_stat)
 
     with patch.object(config, "HOME", tmp_path):
         result = tools.edit_file(str(target), "content", "new", approval_cb=lambda *a, **k: True)

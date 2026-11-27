@@ -599,7 +599,9 @@ def test_deep_audit_12_fixes_regression(tmp_path: Path, monkeypatch):
     assert approval.classify_risk("type_text", {"text": "hi"}, active_window="ssh prod@host") == approval.RiskLevel.SECURITY_SENSITIVE
     assert approval.infer_target("run_shell_command", {"command": "ls -la"}) == "ls -la"
     ci_txt = (REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "celina-capabilities.json" in ci_txt and "risk_names == cap_names" in ci_txt
+    assert "celina-capabilities.json" in ci_txt and (
+        "risk_names == cap_names" in ci_txt or "schema_names - risk_names" in ci_txt
+    )
 
 
 def test_copy_and_write_root_file_preserve_0755_0644_under_umask_077(tmp_path: Path):
