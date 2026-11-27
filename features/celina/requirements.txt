@@ -28,6 +28,6 @@ pypdf==6.21.4
 # Offline Neural Voice (Piper TTS + Faster-Whisper STT + Audio Capture)
 piper-tts==1.2.0
 faster-whisper==1.1.1
-sounddevice==0.5.1
+sounddevice==0.5.6
 numpy==2.2.3
 onnxruntime==1.20.1
