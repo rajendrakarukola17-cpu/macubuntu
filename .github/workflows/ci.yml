@@ -55,7 +55,8 @@ jobs:
 
       - name: "Security: pip-audit vulnerability scan (fail on vulns)"
         run: |
-          pip-audit -r features/celina/requirements.txt -r tools/requirements-tier-b.txt
+          pip-audit --no-deps --disable-pip -r features/celina/requirements.txt -r tools/requirements-tier-b.txt
+          pip-audit --no-deps --disable-pip -r tests/audit/requirements-tools.txt
 
       - name: "Security: detect-secrets scan (fail on new secrets)"
         run: |
