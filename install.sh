@@ -332,7 +332,7 @@ if [[ "$UPGRADE_MODE" -eq 1 && "${DRY_RUN:-0}" == "1" ]]; then
         DIFF_TMP_HOME="$(mktemp -d)"
         trap 'rm -rf "$DIFF_TMP_HOME"' RETURN
         REAL_HOME_VAL="$HOME" \
-        HOME="$DIFF_TMP_HOME" XDG_CONFIG_HOME="$DIFF_TMP_HOME/.config" XDG_DATA_HOME="$DIFF_TMP_HOME/.local/share" \
+        HOME="$DIFF_TMP_HOME" TARGET_HOME="$DIFF_TMP_HOME" XDG_CONFIG_HOME="$DIFF_TMP_HOME/.config" XDG_DATA_HOME="$DIFF_TMP_HOME/.local/share" \
         PYTHONDONTWRITEBYTECODE=1 REPO_DIR="$REPO_DIR" python3 - <<'PY' || true
 import hashlib
 import json

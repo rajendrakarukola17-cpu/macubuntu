@@ -113,9 +113,10 @@ def test_forbidden_flag_config_blocked():
 # ---------------------------------------------------------------------------
 
 
+@mock.patch("celina_pkg.cli_bridge._trusted_cli_dispatch_available", return_value=True)
 @mock.patch("celina_pkg.cli_bridge.command_runner.run_command")
 @mock.patch("celina_pkg.cli_bridge.shutil.which", return_value="/usr/bin/systemctl")
-def test_systemctl_forces_user(mock_which, mock_run):
+def test_systemctl_forces_user(mock_which, mock_run, _mock_trusted):
     mock_run.return_value = type("R", (), {"stdout": "active", "stderr": "", "returncode": 0})()
     run_typed_cli("systemctl", "status", ["celina.service"])
     called_argv = mock_run.call_args[0][0]

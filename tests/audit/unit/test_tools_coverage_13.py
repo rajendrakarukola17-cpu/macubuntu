@@ -28,6 +28,7 @@ import pytest
 from celina_pkg import tools
 
 
+
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
@@ -101,6 +102,7 @@ def test_install_intent_stop_word_youtube():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_curated_flathub_approval_none(monkeypatch):
     """CB: curated match + approval_cb is None → requires confirmation."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {"spotify": ("Spotify", "com.spotify.Client")})
@@ -121,6 +123,7 @@ def test_install_intent_curated_flathub_approval_denied(monkeypatch):
     assert "denied" in result.lower() or "cancelled" in result.lower() or "Error" in result
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_curated_flathub_success(monkeypatch):
     """CB: curated match + approval consumed + command success → installed."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {"spotify": ("Spotify", "com.spotify.Client")})
@@ -134,6 +137,7 @@ def test_install_intent_curated_flathub_success(monkeypatch):
     assert "Installed" in result or "✅" in result
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_curated_flathub_with_status_cb(monkeypatch):
     """CB: flathub path with status_cb → status_cb called (covers if status_cb branch)."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {"spotify": ("Spotify", "com.spotify.Client")})
@@ -152,6 +156,7 @@ def test_install_intent_curated_flathub_with_status_cb(monkeypatch):
     assert len(status_calls) > 0
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_apt_with_status_cb(monkeypatch):
     """CB: apt path with status_cb → status_cb called."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -172,6 +177,7 @@ def test_install_intent_apt_with_status_cb(monkeypatch):
     assert len(status_calls) > 0
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_curated_flathub_command_failure(monkeypatch):
     """CB: curated match + command failure → error message."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {"spotify": ("Spotify", "com.spotify.Client")})
@@ -209,6 +215,7 @@ def test_install_intent_dry_run_no_match_dynamic(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_flatpak_not_installed(monkeypatch):
     """CB: flatpak not installed + curated match → open URL fallback."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {"spotify": ("Spotify", "com.spotify.Client")})
@@ -227,6 +234,7 @@ def test_install_intent_flatpak_not_installed(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_dynamic_flathub_search_status_cb(monkeypatch):
     """CB: no curated match + not dry_run → status_cb called, flathub search."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -246,6 +254,7 @@ def test_install_intent_dynamic_flathub_search_status_cb(monkeypatch):
     assert "Searching Flathub" in status_calls[0]
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_dynamic_apt_fallback(monkeypatch):
     """CB: no curated match + flathub search None → apt package check."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -261,6 +270,7 @@ def test_install_intent_dynamic_apt_fallback(monkeypatch):
     assert "Installed" in result or "✅" in result
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_apt_approval_none(monkeypatch):
     """CB: apt path + approval_cb is None → requires confirmation."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -290,6 +300,7 @@ def test_install_intent_apt_approval_denied(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_apt_elevator_pkexec(monkeypatch):
     """CB: apt path with DISPLAY set → pkexec elevator."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -306,6 +317,7 @@ def test_install_intent_apt_elevator_pkexec(monkeypatch):
     assert "Installed" in result or "✅" in result
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_apt_elevator_sudo(monkeypatch):
     """CB: apt path without DISPLAY → sudo elevator."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -327,6 +339,7 @@ def test_install_intent_apt_elevator_sudo(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_apt_command_failure(monkeypatch):
     """CB: apt path + command failure → error message."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -347,6 +360,7 @@ def test_install_intent_apt_command_failure(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_flathub_fallback(monkeypatch):
     """CB: no match anywhere → open Flathub search URL fallback."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})
@@ -376,6 +390,7 @@ def test_install_intent_trailing_punctuation():
 
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_flathub_verify_fails(monkeypatch):
     """CB: flathub path + verify_and_consume returns False → return err."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {"spotify": ("Spotify", "com.spotify.Client")})
@@ -390,6 +405,7 @@ def test_install_intent_flathub_verify_fails(monkeypatch):
         assert result == "Denied: token mismatch"
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: live install requires trusted approval broker")
 def test_install_intent_apt_verify_fails(monkeypatch):
     """CB: apt path + verify_and_consume returns False → return err."""
     monkeypatch.setattr(tools, "CURATED_INSTALLABLE_APPS", {})

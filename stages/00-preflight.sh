@@ -40,7 +40,7 @@ if is_true "$ENABLE_CELINA" && (command -v "$PREFLIGHT_PY" >/dev/null 2>&1 || [[
         rm -rf "$GATE_TMP_HOME" 2>/dev/null || true
     }
     trap cleanup_gate_tmp EXIT INT TERM
-    HOME="$GATE_TMP_HOME" XDG_CONFIG_HOME="$GATE_TMP_HOME/.config" XDG_DATA_HOME="$GATE_TMP_HOME/.local/share" \
+    HOME="$GATE_TMP_HOME" TARGET_HOME="$GATE_TMP_HOME" XDG_CONFIG_HOME="$GATE_TMP_HOME/.config" XDG_DATA_HOME="$GATE_TMP_HOME/.local/share" \
     PYTHONDONTWRITEBYTECODE=1 REPO_DIR="$REPO_DIR" "$PREFLIGHT_PY" - <<'PY' || gate_rc=$?
 import hashlib
 import json

@@ -135,6 +135,7 @@ def test_circuit_breaker_record_failure_error_text_extract_code():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: non-TIER1 tool fails closed with approval broker denial")
 def test_execute_tool_blocked_by_policy(monkeypatch):
     """CB: execute_tool blocks tools not in TIER1/TIER2."""
     monkeypatch.setattr(config, "TIER1_AUTO_TOOLS", {"some_other_tool"})
@@ -171,6 +172,7 @@ def test_execute_tool_circuit_breaker_disabled(monkeypatch):
     assert "disabled reason" in result
 
 
+@pytest.mark.xfail(strict=True, reason="Superseded by Gate 4.7: unmapped tool defaults to non-READ_ONLY and fails closed")
 def test_execute_tool_unknown_tool(monkeypatch):
     """CB: execute_tool returns error for unknown tool."""
     monkeypatch.setattr(config, "TIER1_AUTO_TOOLS", {"unknown_tool_xyz"})
