@@ -47,7 +47,7 @@ if apt_has systemd-zram-generator; then
 else
     step "systemd-zram-generator unavailable; configuring zram-tools fallback..."
     apt_install zram-tools || record_fail "zram-tools"
-    local zram_sz; zram_sz="$(_zram_size_mb)"
+    zram_sz="$(_zram_size_mb)"
     if [[ "$DRY_RUN" == "1" ]]; then
         echo "      [dry-run] would write /etc/default/zramswap zram-size=${zram_sz}M"
     else
@@ -559,19 +559,19 @@ if grep -qE '^[^#].*\sswap\s' /etc/fstab 2>/dev/null; then
             fstab_bak="/etc/fstab.macubuntu.bak.$$(date +%s)"
             snapshot_file /etc/fstab
             # P5 Atomic: transform /etc/fstab via temp file + findmnt verify + write_root_file
-            local fstab_tmp; fstab_tmp="$(mktemp "$WORKDIR/fstab.XXXXXX")"
-            trap 'rm -f "$fstab_tmp" 2>/dev/null' RETURN
+            fstab_tmp="$(mktemp "$WORKDIR/fstab.XXXXXX")"
+            trap 'rm -f "${fstab_tmp:-}" 2>/dev/null' EXIT
             # Comment out all swap lines (retire disk swap in favor of ZRAM)
             awk '$1 !~ /^#/ && $2 ~ /swap/ && $3 ~ /swap/ {print "# " $0; next} { print }' /etc/fstab > "$fstab_tmp"
             if ! findmnt --verify --tab-file "$fstab_tmp" >/dev/null 2>&1; then
                 log_error "Generated fstab failed findmnt --verify; aborting write."
                 rm -f "$fstab_tmp"
-                trap - RETURN
+                trap - EXIT
                 record_fail "fstab edit invalid — use --rollback to restore"
             else
                 write_root_file /etc/fstab 644 < "$fstab_tmp"
                 rm -f "$fstab_tmp"
-                trap - RETURN
+                trap - EXIT
                 record_manual "Reboot to apply noatime on / (rollback via ./install.sh --rollback, exit 3)"
             fi
             run sudo swapoff -a 2>/dev/null || record_fail "swapoff -a failed"
