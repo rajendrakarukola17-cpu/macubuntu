@@ -15,7 +15,7 @@
 requests==2.33.0
 urllib3==2.8.0
 certifi==2026.10.18
-charset-normalizer==3.4.1
+charset-normalizer==3.5.3
 idna==3.15
 
 # Document & Office Suite (DOCX / XLSX / PPTX / ODT / PDF)
