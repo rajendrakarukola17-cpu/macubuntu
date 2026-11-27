@@ -22,7 +22,7 @@ llama-cpp-python==0.2.97
 pyaudio==0.2.14
 
 # System monitoring
-psutil==6.0.0
+psutil==7.2.2
 
 # JSON Schema validation (Gear 0.5 intent validation requires this)
 jsonschema==4.23.0
