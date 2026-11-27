@@ -392,6 +392,6 @@ if [[ "${LOCALE_AUDIT_ONLY:-0}" == "1" ]]; then
     exit 0
 fi
 
-# Hard Pre-Flight Security Gate: 7-way 88-tool parity, Tier-2 files_office invariant & OS capability manifest
+# Hard Pre-Flight Security Gate: 7-way 106-tool parity, Tier-2 files_office invariant & OS capability manifest
 # Runs strictly read-only (PYTHONDONTWRITEBYTECODE=1, zero HOME mutations). Aborts install on any drift.
 fi

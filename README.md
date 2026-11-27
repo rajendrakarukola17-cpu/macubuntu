@@ -12,7 +12,7 @@ Beyond visual polish, `macubuntu` closes the core **system-level** and **cross-p
 |---|---|---|
 | **AirDrop (Universal)** | Cross-OS LAN file & text drop (`iOS/Mac/Android/Win/Linux`) | `LocalSend` (`v1.18.2`, Apache-2.0) |
 | **iPhone / iPad Continuity (Full Open-Source Stack)** | AirDrop (`LocalSend`), AirPlay 2 Audio+Video (`Shairport-Sync` + `UxPlay`), BLE ANCS Notifications & Call Accept/Dismiss (`ios_ancs.py`), USB/Wi-Fi Sync & Mount (`libimobiledevice` + `ifuse` → `~/iPhone`), Continuity Camera Webcam (`UxPlay` → `v4l2loopback` `/dev/video10`), KDE Connect iOS ↔ `GSConnect`, & 60 FPS iPad Sidecar + Apple Pencil (`Weylus` / `gnome-remote-desktop`) | `LocalSend`, `Shairport-Sync`, `UxPlay` (`v1.73.7`), `libimobiledevice` + `ifuse`, `v4l2loopback`, `GSConnect` (`v74`), `Weylus` (MIT), `celina_pkg/{continuity,ios_ancs}.py` |
-| **Deep Ubuntu 26.04 Wayland OS Hooks & Celina v4.4 Cognition** | **99 tools across 8 domains (`92` offline-capable / `7` web-gated)**: Hybrid Semantic & Embedding Engine (`embeddings.py`: Ollama `embeddinggemma` / `Model2Vec` + SQLite `float16` BLOBs + RRF + Semantic Tool Router + Semantic Cache + Hybrid CoreSpotlight), Ebbinghaus temporal memory decay & KG contradiction resolution, 0-token Gear 0 AST math & compound `prepare_meeting_context`, offline PipeWire loopback meeting transcription (`transcribe_system_audio`), self-verifying `bwrap` Python sandbox (`run_python_sandbox`), zero-polling Systemd Crash Doctor + UDisks2 USB Guard + Freedesktop Secret Service vault lock check + MIME default app manager | `celina_pkg/{embeddings,memory,cache,spotlight_index,app_intents,voice,tools,os_events,island_ui}.py` |
+| **Deep Ubuntu 26.04 Wayland OS Hooks & Celina v4.4 Cognition** | **106 tools across 11 domains (capability-manifest `network_egress` classification: `85` `none` / `21` declared — manifest metadata, not a verified offline/online capability count)**: Hybrid Semantic & Embedding Engine (`embeddings.py`: Ollama `embeddinggemma` / `Model2Vec` + SQLite `float16` BLOBs + RRF + Semantic Tool Router + Semantic Cache + Hybrid CoreSpotlight), Ebbinghaus temporal memory decay & KG contradiction resolution, 0-token Gear 0 AST math & compound `prepare_meeting_context`, offline PipeWire loopback meeting transcription (`transcribe_system_audio`), self-verifying `bwrap` Python sandbox (`run_python_sandbox`), zero-polling Systemd Crash Doctor + UDisks2 USB Guard + Freedesktop Secret Service vault lock check + MIME default app manager | `celina_pkg/{embeddings,memory,cache,spotlight_index,app_intents,voice,tools,os_events,island_ui}.py` |
 | **iPhone Mirroring & SMS/Notifs** | 60fps USB/Wi-Fi Android screen control + bidirectional notifications, clipboard & SMS | `Genymobile/scrcpy` (`v5.0.1`, Apache-2.0, commit `a60891ae...`) + `GSConnect` (`v74`, GPL-2.0) |
 | **Universal Control** | Share mouse, keyboard & clipboard seamlessly across Ubuntu, Windows, macOS & Linux | `Deskflow` (`v1.27.0`, GPL-2.0, commit `081f6478...`) + opt-in `lan-mouse` (`v0.11.0`, GPL-3.0, commit `0d2190e7...`) |
 | **iCloud Drive (P2P)** | End-to-end encrypted, zero-cloud cross-OS folder sync | `Syncthing` (`v2.1.7`, MPL-2.0) |
@@ -49,7 +49,7 @@ Beyond visual polish, `macubuntu` closes the core **system-level** and **cross-p
 3. **Centralized Network, URL & SSRF Policy (`celina_pkg/net_policy.py`):**
    - Single egress policy enforcing `https://` port `443`, rejecting embedded credentials, resolving DNS upfront to block private/loopback/link-local/cloud metadata (`169.254.169.254`)/IPv4-mapped IPv6/DNS rebinding, revalidating redirects, and requiring explicit host/port/method allowlisting in `~/.config/celina/iot-allowlist.json` (`0600`) for IoT webhooks.
 4. **Risk-Tiered Argument-Bound Approvals & MCP Hardening (`celina_pkg/approval.py`, `mcp_client.py`):**
-   - Exact SHA-256 `arguments_hash` binding (`tool`, `target`, `arguments_hash`, `risk`, `expires_at`, single-use consumption) across all **99 tools** (`92` offline-capable, `7` web-gated).
+   - SHA-256 `arguments_hash` binding (`tool`, `target`, `arguments_hash`, `risk`, `expires_at`, single-use consumption) is defined for all **106 tools** in `TOOL_RISK_MAP`; this is argument-binding coverage of the current approval flow, **not a proven trusted approval boundary** — `GATE47_APPROVAL_SECURITY_DESIGN.md` states a Boolean callback returned to an untrusted caller is not that boundary.
    - High-risk actions (shell, destructive files, messaging, webhooks, MCP, raw coordinates, terminal/password typing, skill promotion, Android/AirPlay mirroring) require fresh confirmation.
 5. **Skill Quarantine, Capability Sandbox & Scoped Wayland Input (`skills.py`, `tools.py`, `portal_input.py`, `automation.py`, `computer_use.py`):**
    - Community Markdown skills download strictly into `skills/quarantine/` with URL/publisher/SHA-256 metadata, never auto-activate, and require verified promotion (`approve_quarantined_skill`) to `skills/trusted/`.
@@ -58,7 +58,7 @@ Beyond visual polish, `macubuntu` closes the core **system-level** and **cross-p
 6. **Verification, Rollback & Automated CI (`stages/99-verify.sh`, `uninstall.sh`, `tests/`, `.github/workflows/ci.yml`):**
    - 5-state verification classifier (`HEALTHY`, `INSTALLED (INACTIVE)`, `NOT INSTALLED`, `NOT SELECTED`, `FAILED`) that exits nonzero on any required failure.
    - Full rollback utility (`./uninstall.sh --dry-run` / `--purge-data`) cleaning all services, udev rules, `oomd` drop-ins, Nautilus extensions, and optional Tier B research venv/sandbox.
-   - **215 automated `pytest` tests** across 24 test suites (including live Linux Landlock ABI 2 kernel enforcement, `systemd-analyze security < 5.0`, fail-closed evidence ledger anchors, `TaskGraph` crash recovery, Gear 0 AST math, Secure Boot MOK, LUMOS semantic blueprints, OS capability manifest & kernel bwrap isolation, operational-trust export/import/undo/migrate/checkpoints/locale, 50W+50R SQLite WAL concurrency & soak) + hard Stage 00 **7-way** 99-tool (`92` offline / `7` web-gated) schema/config/handler/domain/risk/capability parity gate.
+   - **215 automated `pytest` tests** across 24 test suites (including live Linux Landlock ABI 2 kernel enforcement, `systemd-analyze security < 5.0`, fail-closed evidence ledger anchors, `TaskGraph` crash recovery, Gear 0 AST math, Secure Boot MOK, LUMOS semantic blueprints, OS capability manifest & kernel bwrap isolation, operational-trust export/import/undo/migrate/checkpoints/locale, 50W+50R SQLite WAL concurrency & soak) + hard Stage 00 **7-way** 106-tool schema/config/handler/domain/risk/capability parity gate.
 
 ---
 
@@ -77,7 +77,7 @@ macubuntu/
 ├── docs/
 │   ├── imessage-safe-path.md          # Production-safe BlueBubbles iMessage bridge vs. Tier B research-only guidance
 │   └── v5-roadmap-cross-device-actuation.md # Planned v5 Hub-and-Spoke mTLS gRPC cross-device actuation spec
-├── .github/workflows/ci.yml           # CI: bash -n, shellcheck, py_compile, JSON check, 7-way 99-tool parity, pytest (24 suites) + soak/concurrency, zero-side-effect dry-run
+├── .github/workflows/ci.yml           # CI: bash -n, shellcheck, py_compile, JSON check, 7-way 106-tool parity, pytest (24 suites) + soak/concurrency, zero-side-effect dry-run
 │
 ├── tools/                             # Standalone diagnostics, Secure Boot MOK, release packager & opt-in Tier B sandbox
 │   ├── doctor.sh                      # Read-only fast-path health check (`./install.sh --doctor`, top 17 failure modes + fixes)
@@ -97,7 +97,7 @@ macubuntu/
 │
 ├── system/                            # Declarative OS configs, capability manifest & supply-chain lockfiles
 │   ├── download-locks.sha256          # Exact 40-char commit SHAs, 64-char SHA-256 artifacts & Anisette Docker OCI digest (24 pinned entries; 0 floating URLs)
-│   ├── capabilities/celina-capabilities.json # Declarative 99-tool OS capability manifest (FS, network, D-Bus, PipeWire, bwrap kernel boundary, 0 credential access)
+│   ├── capabilities/celina-capabilities.json # Declarative 106-tool OS capability manifest (FS, network, D-Bus, PipeWire, bwrap kernel boundary, 0 credential access)
 │   ├── sysctl/99-macubuntu-vm.conf    # Authoritative ZRAM + bounded dirty-bytes + BBR/fq + inotify sysctl profile
 │   ├── environment.d/90-macubuntu-smooth.conf # Native Wayland acceleration (Electron/Firefox/Qt/SDL)
 │   ├── keyd/                          # Opt-in Wayland terminal-aware macOS Cmd+C/V/Q remapping (macubuntu.conf + app.conf)
@@ -122,10 +122,10 @@ macubuntu/
 │   ├── 70-feature-celina.sh           # Built-In Celina AI + celina-export/celina-import/celina undo/celina migrate + celina-eventd.service
 │   └── 99-verify.sh                   # Strict 5-state audit (verifies 0700/0600, no input group, extensions.lock, --accessibility, --verify-models, all continuity & OS-level parity drop-ins)
 │
-├── features/celina/                   # Built-In Celina AI (Celly) Subsystem (99 tools: 92 offline / 7 web-gated)
+├── features/celina/                   # Built-In Celina AI (Celly) Subsystem (106 tools; manifest network_egress: 85 none / 21 declared)
 │   ├── install.sh                     # Private 0700/0600 installer (pinned Ollama archive, model-digests.sha256, pinned requirements.txt / --require-hashes .lock, embeddinggemma pull, Piper voices, celina-dbus/export/import launchers, automatic celina migrate, systemd user units, D-Bus activation, GNOME Shell extension, quarantine dirs)
 │   ├── requirements.txt               # Pinned core Python dependencies (+ requirements-optional.txt)
-│   ├── config/                        # env.template, neural-schema.json (99 tools), celina-capabilities.json, mcp-servers.json, iot-allowlist.json
+│   ├── config/                        # env.template, neural-schema.json (106 tools), celina-capabilities.json, mcp-servers.json, iot-allowlist.json
 │   ├── skills/                        # 5 bundled trusted SKILL.md playbooks
 │   ├── celina_pkg/                    # 34-module hardened Python agent (+ dbus_service, ebpf_sensor, capabilities, evidence ledger, semantic_blueprint, state_ops [export/import/undo/migrate], Astra checkpoints, embeddings, portal_input, os_events, spotlight_index, continuity, ios_ancs, writing_tools, calendar_bridge, app_intents, biometric_anim)
 │   └── celina_hardware/               # 5-module hardware & biometric layer (+ compute.py NPU/GPU offload, BatteryChargeLimit, PrivacyIndicator, PipeWireRouting)
@@ -191,7 +191,7 @@ celina-export ~/celina-backup.tar.gz          # Tamper-evident WAL-safe SQLite +
 celina-import ~/celina-backup.tar.gz --dry-run
 celina undo --list                            # Pre-execution SHA-256 backups for all 7 files_office mutation tools
 celina undo --last                            # Atomically revert the last Tier-2 file edit/move/trash
-celina capabilities --audit                   # Validate 99-tool OS capability manifest (0 Shadow-AI drift)
+celina capabilities --audit                   # Validate 106-tool OS capability manifest (0 Shadow-AI drift)
 celina evidence verify                        # Verify SHA-256 hash chain across every Tier-2 execution
 celina evidence export ~/celina-audit.jsonl   # Export self-verifying Tier-2 evidence bundle + .sha256
 celina migrate --dry-run                      # Diff tools added/removed/tier-changed before migrating
