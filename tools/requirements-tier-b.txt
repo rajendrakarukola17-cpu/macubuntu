@@ -8,7 +8,7 @@
 #   protobuf 5.29.3 → 5.29.6 (PYSEC-2026-1805, PYSEC-2026-1806)
 #   aiohttp 3.11.13 → 3.14.4 (20+ PYSEC-2026-*, 4x CVE-2026-*)
 
-cryptography==50.0.0
+cryptography==50.0.2
 pycryptodomex==3.21.0
 requests==2.33.0
 protobuf==5.29.6
